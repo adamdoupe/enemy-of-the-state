@@ -1,0 +1,18 @@
+--- runpy.py.old	2008-10-19 16:02:18.000000000 -0700
++++ runpy.py	2008-10-19 16:13:44.000000000 -0700
+@@ -79,10 +79,13 @@
+     loader = get_loader(mod_name)
+     if loader is None:
+         raise ImportError("No module named %s" % mod_name)
+     if loader.is_package(mod_name):
+-        raise ImportError(("%s is a package and cannot " +
+-                          "be directly executed") % mod_name)
++        try:
++            return _get_module_details('.'.join((mod_name, '__main__')))
++        except ImportError, e:
++            raise ImportError(("%s; %s is a package and cannot " +
++                               "be directly executed") %(e, mod_name))
+     code = loader.get_code(mod_name)
+     if code is None:
+         raise ImportError("No code object available for %s" % mod_name)
+     filename = _get_filename(loader, mod_name)

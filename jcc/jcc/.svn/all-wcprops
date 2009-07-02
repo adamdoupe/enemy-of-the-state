@@ -1,0 +1,29 @@
+K 25
+svn:wc:ra_dav:version-url
+V 56
+/repos/asf/!svn/ver/786355/lucene/pylucene/trunk/jcc/jcc
+END
+__init__.py
+K 25
+svn:wc:ra_dav:version-url
+V 68
+/repos/asf/!svn/ver/743179/lucene/pylucene/trunk/jcc/jcc/__init__.py
+END
+__main__.py
+K 25
+svn:wc:ra_dav:version-url
+V 68
+/repos/asf/!svn/ver/769530/lucene/pylucene/trunk/jcc/jcc/__main__.py
+END
+python.py
+K 25
+svn:wc:ra_dav:version-url
+V 66
+/repos/asf/!svn/ver/786355/lucene/pylucene/trunk/jcc/jcc/python.py
+END
+cpp.py
+K 25
+svn:wc:ra_dav:version-url
+V 63
+/repos/asf/!svn/ver/786355/lucene/pylucene/trunk/jcc/jcc/cpp.py
+END

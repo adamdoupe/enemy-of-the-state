@@ -1,0 +1,135 @@
+Index: setuptools/extension.py
+===================================================================
+--- setuptools/extension.py	(revision 66382)
++++ setuptools/extension.py	(working copy)
+@@ -28,6 +28,11 @@
+ class Library(Extension):
+     """Just like a regular Extension, but built as a library instead"""
+ 
++    def __init__(self, *args, **kwds):
++        self.force_shared = kwds.pop('force_shared', False)
++        Extension.__init__(self, *args, **kwds)
++
++
+ import sys, distutils.core, distutils.extension
+ distutils.core.Extension = Extension
+ distutils.extension.Extension = Extension
+Index: setuptools/command/build_ext.py
+===================================================================
+--- setuptools/command/build_ext.py	(revision 66382)
++++ setuptools/command/build_ext.py	(working copy)
+@@ -84,8 +84,12 @@
+         filename = _build_ext.get_ext_filename(self,fullname)
+         ext = self.ext_map[fullname]
+         if isinstance(ext,Library):
++            if ext.force_shared and not use_stubs:
++                _libtype = 'shared'
++            else:
++                _libtype = libtype
+             fn, ext = os.path.splitext(filename)
+-            return self.shlib_compiler.library_filename(fn,libtype)
++            return self.shlib_compiler.library_filename(fn,_libtype)
+         elif use_stubs and ext._links_to_dynamic:
+             d,fn = os.path.split(filename)
+             return os.path.join(d,'dl-'+fn)
+@@ -170,14 +174,22 @@
+     def build_extension(self, ext):
+         _compiler = self.compiler
+         try:
++            force_shared = False
+             if isinstance(ext,Library):
+                 self.compiler = self.shlib_compiler
++                force_shared = ext.force_shared and not use_stubs
++                if force_shared:
++                    self.compiler.link_shared_object = \
++                        sh_link_shared_object.__get__(self.compiler)
+             _build_ext.build_extension(self,ext)
+             if ext._needs_stub:
+                 self.write_stub(
+                     self.get_finalized_command('build_py').build_lib, ext
+                 )
+         finally:
++            if force_shared:
++                self.compiler.link_shared_object = \
++                    link_shared_object.__get__(self.compiler)
+             self.compiler = _compiler
+ 
+     def links_to_dynamic(self, ext):
+@@ -244,44 +256,41 @@
+                 os.unlink(stub_file)
+ 
+ 
+-if use_stubs or os.name=='nt':
+-    # Build shared libraries
+-    #
+-    def link_shared_object(self, objects, output_libname, output_dir=None,
+-        libraries=None, library_dirs=None, runtime_library_dirs=None,
+-        export_symbols=None, debug=0, extra_preargs=None,
+-        extra_postargs=None, build_temp=None, target_lang=None
+-    ):  self.link(
+-            self.SHARED_LIBRARY, objects, output_libname,
+-            output_dir, libraries, library_dirs, runtime_library_dirs,
+-            export_symbols, debug, extra_preargs, extra_postargs,
+-            build_temp, target_lang
+-        )
+-else:
+-    # Build static libraries everywhere else
+-    libtype = 'static'
++def sh_link_shared_object(self, objects, output_libname, output_dir=None,
++    libraries=None, library_dirs=None, runtime_library_dirs=None,
++    export_symbols=None, debug=0, extra_preargs=None,
++    extra_postargs=None, build_temp=None, target_lang=None
++):  self.link(self.SHARED_LIBRARY, objects, output_libname,
++              output_dir, libraries, library_dirs, runtime_library_dirs,
++              export_symbols, debug, extra_preargs, extra_postargs,
++              build_temp, target_lang)
+ 
+-    def link_shared_object(self, objects, output_libname, output_dir=None,
+-        libraries=None, library_dirs=None, runtime_library_dirs=None,
+-        export_symbols=None, debug=0, extra_preargs=None,
+-        extra_postargs=None, build_temp=None, target_lang=None
+-    ):
+-        # XXX we need to either disallow these attrs on Library instances,
+-        #     or warn/abort here if set, or something...
+-        #libraries=None, library_dirs=None, runtime_library_dirs=None,
+-        #export_symbols=None, extra_preargs=None, extra_postargs=None,
+-        #build_temp=None
++def st_link_shared_object(self, objects, output_libname, output_dir=None,
++    libraries=None, library_dirs=None, runtime_library_dirs=None,
++    export_symbols=None, debug=0, extra_preargs=None,
++    extra_postargs=None, build_temp=None, target_lang=None
++):
++    # XXX we need to either disallow these attrs on Library instances,
++    #     or warn/abort here if set, or something...
++    #libraries=None, library_dirs=None, runtime_library_dirs=None,
++    #export_symbols=None, extra_preargs=None, extra_postargs=None,
++    #build_temp=None
+ 
+-        assert output_dir is None   # distutils build_ext doesn't pass this
+-        output_dir,filename = os.path.split(output_libname)
+-        basename, ext = os.path.splitext(filename)
+-        if self.library_filename("x").startswith('lib'):
+-            # strip 'lib' prefix; this is kludgy if some platform uses
+-            # a different prefix
+-            basename = basename[3:]
++    assert output_dir is None   # distutils build_ext doesn't pass this
++    output_dir,filename = os.path.split(output_libname)
++    basename, ext = os.path.splitext(filename)
++    if self.library_filename("x").startswith('lib'):
++        # strip 'lib' prefix; this is kludgy if some platform uses
++        # a different prefix
++        basename = basename[3:]
+ 
+-        self.create_static_lib(
+-            objects, basename, output_dir, debug, target_lang
+-        )
++    self.create_static_lib(objects, basename, output_dir, debug, target_lang)
+ 
+ 
++if use_stubs or os.name=='nt':
++    # Build shared libraries
++    link_shared_object = sh_link_shared_object
++else:
++    # Build static libraries everywhere else (unless force_shared)
++    libtype = 'static'
++    link_shared_object = st_link_shared_object
