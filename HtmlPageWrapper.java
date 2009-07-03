@@ -19,5 +19,9 @@ public class HtmlPageWrapper  {
         return res;
     }
 
-    public HtmlPage _htmlPage;
+    public HtmlPage getHtmlPage() {
+        return _htmlPage;
+    }
+
+    private HtmlPage _htmlPage;
 }
