@@ -62,7 +62,8 @@ class Crawler:
 
     def createPage(self, htmlpage):
         htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
-        anchors = [htmlunit.HtmlAnchor.cast_(i).getHrefAttribute() for i in  htmlpagewrapped.getAnchors()]
+        #anchors = [htmlunit.HtmlAnchor.cast_(i).getHrefAttribute() for i in  htmlpagewrapped.getAnchors()]
+        anchors = htmlpagewrapped.getAnchors()
         #forms = [i.getActionAttribute()  for i in htmlpage.getForms()]
         url = htmlpage.getWebResponse().getRequestUrl().toString()
         print url
@@ -82,6 +83,7 @@ if __name__ == "__main__":
     print "rootpage", rootpage
     pageset.add(rootpage)
     anchors = [htmlunit.HtmlAnchor.cast_(i) for i in  htmlpagewrapped.getAnchors()]
+    anchors = htmlpagewrapped.getAnchors()
     nextpage, nexthtmlpagewrapped = cr.clickAnchor(anchors[0])
     rootpage.links[anchors[0].getHrefAttribute()] = True
     websitegraph[rootpage].add(nextpage)

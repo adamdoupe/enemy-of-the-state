@@ -9,10 +9,10 @@ public class HtmlPageWrapper  {
         _htmlPage = htmlPage;
     }
 
-    public Object[] getAnchors() {
+    public HtmlAnchor[] getAnchors() {
         List<HtmlAnchor> anchors = _htmlPage.getAnchors();
-        Object[] res = new Object[anchors.size()];
-        ListIterator it = anchors.listIterator();
+        HtmlAnchor[] res = new HtmlAnchor[anchors.size()];
+        ListIterator<HtmlAnchor> it = anchors.listIterator();
         for(int i = 0; it.hasNext(); ++i) {
             res[i] = it.next();
         }
