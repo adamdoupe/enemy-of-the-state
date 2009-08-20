@@ -389,7 +389,14 @@ def jcc(args):
                     shared, compiler, modules, wininst)
     else:
         for className in classNames:
-            cls = findClass(className.replace('.', '/'))
+            try:
+                cls = findClass(className.replace('.', '/'))
+            except JavaError:
+                import traceback
+                print "Error finding class", className
+                traceback.print_exc()
+                continue
+
             if cls is None:
                 raise ValueError, className
             if cls in excludes:
