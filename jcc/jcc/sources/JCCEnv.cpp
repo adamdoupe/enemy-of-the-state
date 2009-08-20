@@ -328,7 +328,7 @@ void JCCEnv::reportException()
 
     if (throwable)
     {
-//        if (!env->handlers)
+        if (!env->handlers)
             vm_env->ExceptionDescribe();
 
         vm_env->ExceptionClear();

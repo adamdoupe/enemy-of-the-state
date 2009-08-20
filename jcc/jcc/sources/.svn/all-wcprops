@@ -1,7 +1,7 @@
 K 25
 svn:wc:ra_dav:version-url
 V 64
-/repos/asf/!svn/ver/775516/lucene/pylucene/trunk/jcc/jcc/sources
+/repos/asf/!svn/ver/800403/lucene/pylucene/trunk/jcc/jcc/sources
 END
 jcc.cpp
 K 25
@@ -61,7 +61,7 @@ JArray.h
 K 25
 svn:wc:ra_dav:version-url
 V 73
-/repos/asf/!svn/ver/748053/lucene/pylucene/trunk/jcc/jcc/sources/JArray.h
+/repos/asf/!svn/ver/800403/lucene/pylucene/trunk/jcc/jcc/sources/JArray.h
 END
 JCCEnv.h
 K 25

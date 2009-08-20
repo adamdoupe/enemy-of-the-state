@@ -48,11 +48,9 @@ else:
 class JavaError(Exception):
 
     def getJavaException(self):
-
         return self.args[0]
 
     def __str__(self):
-
         writer = StringWriter()
         self.getJavaException().printStackTrace(PrintWriter(writer))
 

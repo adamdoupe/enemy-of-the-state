@@ -292,10 +292,11 @@ template<> class JArray<jstring> : public java::lang::Object {
         PyObject *list = PyList_New(hi - lo);
 
         for (int i = lo; i < hi; i++) {
-            jstring value = (jstring)
+            jstring str = (jstring)
                 env->getObjectArrayElement((jobjectArray) this$, i);
-            PyObject *obj = env->fromJString(value);
+            PyObject *obj = env->fromJString(str);
 
+            env->get_vm_env()->DeleteLocalRef(str);
             PyList_SET_ITEM(list, i - lo, obj);
         }
          
@@ -313,8 +314,10 @@ template<> class JArray<jstring> : public java::lang::Object {
             {
                 jstring str = (jstring)
                     env->getObjectArrayElement((jobjectArray) this$, n);
+                PyObject *obj = env->fromJString(str);
 
-                return env->fromJString(str);
+                env->get_vm_env()->DeleteLocalRef(str);
+                return obj;
             }
         }
 

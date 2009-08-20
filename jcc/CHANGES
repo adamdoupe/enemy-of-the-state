@@ -3,6 +3,7 @@ Version 2.3 ->
 ------------------
  - added 'typeof' to reserved word list
  - added Java stacktrace to __str__() of JavaError, fixing half of PYLUCENE-1
+ - fixed local string ref leaks in JArray<jstring>.get/toSequence (Aric Coady)
  - 
 
 Version 2.2 -> 2.3

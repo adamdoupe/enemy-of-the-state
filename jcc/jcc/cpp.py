@@ -48,11 +48,9 @@ else:
 class JavaError(Exception):
 
     def getJavaException(self):
-
         return self.args[0]
 
     def __str__(self):
-
         writer = StringWriter()
         self.getJavaException().printStackTrace(PrintWriter(writer))
 
@@ -391,11 +389,7 @@ def jcc(args):
                     shared, compiler, modules, wininst)
     else:
         for className in classNames:
-            try:
-                cls = findClass(className.replace('.', '/'))
-            except JavaError:
-                print "Exception when looking for class", className
-                continue
+            cls = findClass(className.replace('.', '/'))
             if cls is None:
                 raise ValueError, className
             if cls in excludes:
