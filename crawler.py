@@ -3,6 +3,7 @@
 from collections import defaultdict
 import hashlib
 import struct
+import logging
 
 class WebsiteGraph(defaultdict):
     """ dictionary from Page to set of Pages """
@@ -17,16 +18,27 @@ class PageSet(set):
         set.__init__(self)
 
 
+class Anchor:
+    def __init__(self, url, visited=False, target=None):
+        self.url = url
+        self.visited = visited
+        self.target = target
 
+    def __repr__(self):
+        return 'Anchor(url=%r, visited=%r, target=%r)' \
+                % (self.url, self.visited, self.target)
 
 class Page:
 
-    def __init__(self, url, links=defaultdict(bool), cookies=frozenset(), forms=frozenset()):
+    def __init__(self, url, links=[], cookies=frozenset(), forms=frozenset()):
         self.url = url
-        self.links = links
+        self.links = [Anchor(l) for l in links]
         self.cookies = cookies
         self.forms = forms
-        self.str = str(self.url) + str(self.links.keys()) + str(self.cookies) + str(self.forms)
+        self.str = ' '.join([str(self.url),
+            str([l.url for l in self.links]),
+            str(self.cookies),
+            str(self.forms)])
         self.md5val = hashlib.md5(self.str)
         self.hashval = struct.unpack('i', self.md5val.digest()[:4])[0]
         self.history = [] # list of ordered lists of pages
@@ -50,48 +62,38 @@ class Crawler:
 
     def __init__(self):
         self.webclient = htmlunit.WebClient()
+        self.currentPage = None
 
-    def getPage(self, url):
+    def open(self, url):
         htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(url))
-        return self.createPage(htmlpage)
+        return self.newPage(htmlpage)
 
-    def clickAnchor(self, anchor):
-        htmlpage = anchor.click()
-        return self.createPage(htmlpage)
+    def newPage(self, htmlpage):
+        self.htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
+        self.url = htmlpage.getWebResponse().getRequestUrl().toString()
+        self.anchors = self.htmlpagewrapped.getAnchors()
+        self.page = Page(url=self.url,
+                links=[a.getHrefAttribute() for a in self.anchors])
+        return self.page
 
-
-    def createPage(self, htmlpage):
-        htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
-        #anchors = [htmlunit.HtmlAnchor.cast_(i).getHrefAttribute() for i in  htmlpagewrapped.getAnchors()]
-        anchors = htmlpagewrapped.getAnchors()
-        #forms = [i.getActionAttribute()  for i in htmlpage.getForms()]
-        url = htmlpage.getWebResponse().getRequestUrl().toString()
-        print url
-        anchorsdict = defaultdict(bool)
-        for a in anchors:
-            anchorsdict[a] = False
-
-        return (Page(url=url, links=anchorsdict), htmlpagewrapped) #, forms=forms)
+    def clickAnchor(self, idx):
+        htmlpage = self.anchors[idx].click()
+        return self.newPage(htmlpage)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger("main")
     cr = Crawler()
     pageset = PageSet()
     websitegraph = WebsiteGraph()
-    rootpage, htmlpagewrapped = cr.getPage("http://www.cs.ucsb.edu/~cavedon/")
-    htmlpage = htmlpagewrapped.getHtmlPage()
-    print "rootpage", rootpage
+    rootpage = cr.open("http://www.cs.ucsb.edu/~cavedon/")
+    logger.debug("ROOTPAGE %s", rootpage)
     pageset.add(rootpage)
-    anchors = [htmlunit.HtmlAnchor.cast_(i) for i in  htmlpagewrapped.getAnchors()]
-    anchors = htmlpagewrapped.getAnchors()
-    nextpage, nexthtmlpagewrapped = cr.clickAnchor(anchors[0])
-    rootpage.links[anchors[0].getHrefAttribute()] = True
+    nextpage = cr.clickAnchor(0)
+    logger.debug("LINK %s", rootpage.links)
+    rootpage.links[0].visited = True
     websitegraph[rootpage].add(nextpage)
-
-    print "pageset", pageset
-    print "websitegraph", websitegraph
-    print "rootpage", rootpage
-    print "nextpage", nextpage
 
 
 
