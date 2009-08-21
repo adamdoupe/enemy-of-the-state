@@ -61,26 +61,45 @@ import htmlunit
 
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
+class CrawlerEmptyHistory(Exception):
+    pass
+
 class Crawler:
 
     def __init__(self):
         self.webclient = htmlunit.WebClient()
 
     def open(self, url):
+        self.history = []
         htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(url))
         return self.newPage(htmlpage)
 
-    def newPage(self, htmlpage):
-        self.htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
+    def updateInternalData(self, htmlpage):
+        self.htmlpage = htmlpage
+        htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
         self.url = htmlpage.getWebResponse().getRequestUrl().toString()
-        self.anchors = self.htmlpagewrapped.getAnchors()
+        self.anchors = htmlpagewrapped.getAnchors()
         self.page = Page(url=self.url,
                 links=[a.getHrefAttribute() for a in self.anchors])
+
+    def newPage(self, htmlpage):
+        self.updateInternalData(htmlpage)
         return self.page
 
     def clickAnchor(self, idx):
+        self.history.append(self.htmlpage)
         htmlpage = self.anchors[idx].click()
         return self.newPage(htmlpage)
+
+    def back(self):
+        try:
+            htmlpage = self.history.pop()
+        except IndexError:
+            raise CrawlerEmptyHistory()
+        self.updateInternalData(htmlpage)
+        return self.page
+
+
 
 class Engine:
 
@@ -93,7 +112,7 @@ class Engine:
         newheads = {}
         while heads:
             for h,p in heads.iteritems():
-                if not h.links[-1].visited:
+                if h.links and not h.links[-1].visited:
                     if not (h, len(h.links)-1) in self.unvisited:
                         self.logger.error("last link from page %r should be in unvisited list (%s)" % (h, self.unvisited))
                     # exclude the starting page from the path
@@ -139,6 +158,28 @@ class Engine:
             page = self.pageset[page]
         return page
 
+    def findNextStep(self, page):
+        nextAnchorIdx = None
+        while nextAnchorIdx == None:
+            nextAnchorIdx = self.processPage(page)
+            if nextAnchorIdx == None:
+                if not len(self.unvisited):
+                    # we are done
+                    return (None, page)
+                self.logger.info("still %d unvisited links",
+                        len(self.unvisited))
+                path = self.findPathToUnvisited(page)
+                if path:
+                    self.logger.debug("found path: %r", path)
+                    page = self.navigatePath(page, path)
+                    nextAnchorIdx = self.processPage(page)
+                    assert nextAnchorIdx != None
+                else:
+                    self.logger.info("no path found, stepping back")
+                    page = self.cr.back()
+                    page = self.mapToPageset(page)
+        return (nextAnchorIdx, page)
+
     def main(self, url):
         self.unvisited = set()
         self.cr = Crawler()
@@ -157,18 +198,7 @@ class Engine:
             self.websitegraph[page].add(newpage)
             self.unvisited.remove((page, nextAnchorIdx))
             page = newpage
-            nextAnchorIdx = self.processPage(page)
-            if nextAnchorIdx == None:
-                if not len(self.unvisited):
-                    # we are done
-                    break
-                self.logger.info("still %d unvisited links",
-                        len(self.unvisited))
-                path = self.findPathToUnvisited(page)
-                self.logger.debug("found path: %r", path)
-                page = self.navigatePath(page, path)
-                nextAnchorIdx = self.processPage(page)
-                assert nextAnchorIdx != None
+            nextAnchorIdx, page = self.findNextStep(page)
 
 
 
