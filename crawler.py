@@ -65,7 +65,6 @@ class Crawler:
 
     def __init__(self):
         self.webclient = htmlunit.WebClient()
-        self.currentPage = None
 
     def open(self, url):
         htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(url))
@@ -88,8 +87,39 @@ class Engine:
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def processPage(self, page):
+    def findPathToUnvisited(self, page):
+        seen = set([page])
+        heads = {page: []}
+        newheads = {}
+        while heads:
+            for h,p in heads.iteritems():
+                if not h.links[-1].visited:
+                    if not (h, len(h.links)-1) in self.unvisited:
+                        self.logger.error("last link from page %r should be in unvisited list (%s)" % (h, self.unvisited))
+                    # exclude the starting page from the path
+                    return [i for i in reversed([h]+p[:-1])]
+                newpath = [h]+p
+                newheads.update([(newh, newpath)
+                    for newh in (self.websitegraph[h] - seen)])
+                seen |= set(newheads.keys())
+            heads = newheads
+            newheads = {}
 
+    def navigatePath(self, page, path):
+        assert page == self.cr.page
+        for p in path:
+            anchorIdx = None
+            for i,l in enumerate(page.links):
+                if l.target == p:
+                    anchorIdx = i
+                    break
+            assert anchorIdx != None
+            page = self.cr.clickAnchor(anchorIdx)
+            page = self.mapToPageset(page)
+        return page
+
+
+    def processPage(self, page):
         nextlink = None
         for i,l in enumerate(page.links):
             if not l.visited:
@@ -97,9 +127,6 @@ class Engine:
                 break
         if nextlink != None:
             return nextlink
-        else:
-            # TODO: find unvisited
-            return None
 
     def mapToPageset(self, page):
         if not page in self.pageset:
@@ -128,8 +155,22 @@ class Engine:
             page.links[nextAnchorIdx].visited = True
             page.links[nextAnchorIdx].target = newpage
             self.websitegraph[page].add(newpage)
+            self.unvisited.remove((page, nextAnchorIdx))
             page = newpage
             nextAnchorIdx = self.processPage(page)
+            if nextAnchorIdx == None:
+                if not len(self.unvisited):
+                    # we are done
+                    break
+                self.logger.info("still %d unvisited links",
+                        len(self.unvisited))
+                path = self.findPathToUnvisited(page)
+                self.logger.debug("found path: %r", path)
+                page = self.navigatePath(page, path)
+                nextAnchorIdx = self.processPage(page)
+                assert nextAnchorIdx != None
+
+
 
 
     def writeDot(self):
