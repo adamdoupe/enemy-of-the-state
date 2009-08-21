@@ -11,11 +11,13 @@ class WebsiteGraph(defaultdict):
     def __init__(self):
         defaultdict.__init__(self, set)
 
-class PageSet(set):
-    """ set of visited pages (unordered) """
+class PageSet(dict):
+    """ set of visited pages (unordered) 
+        use a map instead of a set because we want to get a reference to
+        the object in the set"""
 
     def __init__(self):
-        set.__init__(self)
+        dict.__init__(self)
 
 
 class Anchor:
@@ -47,10 +49,10 @@ class Page:
     def __hash__(self):
         return self.hashval
 
-    def __cmp__(self, rhs):
-        self.md5val == rhs.md5val
+    def __eq__(self, rhs):
+        return self.md5val.digest() == rhs.md5val.digest()
 
-    def __str__(self):
+    def __repr__(self):
         return self.str
 
 
@@ -80,20 +82,67 @@ class Crawler:
         htmlpage = self.anchors[idx].click()
         return self.newPage(htmlpage)
 
+class Engine:
+
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    def processPage(self, page):
+
+        nextlink = None
+        for i,l in enumerate(page.links):
+            if not l.visited:
+                nextlink = i
+                break
+        if nextlink != None:
+            return nextlink
+        else:
+            # TODO: find unvisited
+            return None
+
+    def mapToPageset(self, page):
+        if not page in self.pageset:
+            self.pageset[page] = page
+            self.unvisited.update([(page, i) for i in range(len(page.links))])
+            self.logger.info("new page %s", page.url)
+        else:
+            self.logger.info("known page %s", page.url)
+            # use reference to the pre-existing page
+            page = self.pageset[page]
+        return page
+
+    def main(self, url):
+        self.unvisited = set()
+        self.cr = Crawler()
+        self.pageset = PageSet()
+        self.websitegraph = WebsiteGraph()
+        page = self.cr.open(url)
+        page = self.mapToPageset(page)
+        nextAnchorIdx = self.processPage(page)
+        while nextAnchorIdx != None:
+            newpage = self.cr.clickAnchor(nextAnchorIdx)
+            # use reference to the pre-existing page
+            newpage = self.mapToPageset(newpage)
+
+            page.links[nextAnchorIdx].visited = True
+            page.links[nextAnchorIdx].target = newpage
+            self.websitegraph[page].add(newpage)
+            page = newpage
+            nextAnchorIdx = self.processPage(page)
+
+
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
+    import sys
     logging.basicConfig(level=logging.DEBUG)
-    logger = logging.getLogger("main")
-    cr = Crawler()
-    pageset = PageSet()
-    websitegraph = WebsiteGraph()
-    rootpage = cr.open("http://www.cs.ucsb.edu/~cavedon/")
-    logger.debug("ROOTPAGE %s", rootpage)
-    pageset.add(rootpage)
-    nextpage = cr.clickAnchor(0)
-    logger.debug("LINK %s", rootpage.links)
-    rootpage.links[0].visited = True
-    websitegraph[rootpage].add(nextpage)
+    Engine().main(sys.argv[1])
 
 
 
