@@ -4,6 +4,7 @@ from collections import defaultdict
 import hashlib
 import struct
 import logging
+import pydot
 
 class WebsiteGraph(defaultdict):
     """ dictionary from Page to set of Pages """
@@ -131,6 +132,21 @@ class Engine:
             nextAnchorIdx = self.processPage(page)
 
 
+    def writeDot(self):
+        dot = pydot.Dot()
+        nodes = dict([(p, pydot.Node(p.url.split('/')[-1])) for p in self.pageset])
+        for n in nodes.itervalues():
+            dot.add_node(n)
+
+        for p,l in self.websitegraph.iteritems():
+            src = nodes[p]
+            for dst in l:
+                dot.add_edge(pydot.Edge(src, nodes[dst]))
+
+        dot.write_ps('graph.ps')
+
+
+
 
 
 
@@ -142,7 +158,9 @@ class Engine:
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.DEBUG)
-    Engine().main(sys.argv[1])
+    e = Engine()
+    e.main(sys.argv[1])
+    e.writeDot()
 
 
 
