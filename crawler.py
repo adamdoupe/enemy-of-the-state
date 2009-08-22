@@ -32,6 +32,8 @@ class Anchor:
                 % (self.url, self.visited, self.target)
 
 class Page:
+    HASHVALFMT = 'i'
+    HASHVALFNMTSIZE = struct.calcsize(HASHVALFMT)
 
     def __init__(self, url, links=[], cookies=frozenset(), forms=frozenset()):
         self.url = url
@@ -42,8 +44,13 @@ class Page:
             str([l.url for l in self.links]),
             str(self.cookies),
             str(self.forms)])
+        self.calchash()
+
+    def calchash(self):
         self.md5val = hashlib.md5(self.str)
-        self.hashval = struct.unpack('i', self.md5val.digest()[:4])[0]
+        # we need an int, so get only the first part of the md5 digest
+        self.hashval = struct.unpack(Page.HASHVALFMT,
+                self.md5val.digest()[:Page.HASHVALFNMTSIZE])[0]
         self.history = [] # list of ordered lists of pages
         self.raw = defaultdict(int) # raw text of pages, i.e. cluster of similar pages
 
@@ -92,6 +99,7 @@ class Crawler:
         return self.newPage(htmlpage)
 
     def back(self):
+        # htmlunit has not "back" functrion
         try:
             htmlpage = self.history.pop()
         except IndexError:
@@ -135,6 +143,8 @@ class Engine:
             assert anchorIdx != None
             page = self.cr.clickAnchor(anchorIdx)
             page = self.mapToPageset(page)
+            assert page != p, "unexpected link target '%s' instead of '%s'" \
+                    % (page, p)
         return page
 
 
