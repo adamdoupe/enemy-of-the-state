@@ -8,12 +8,6 @@ import pydot
 
 import config
 
-class WebsiteGraph(defaultdict):
-    """ dictionary from Page to set of Pages """
-
-    def __init__(self):
-        defaultdict.__init__(self, set)
-
 class Anchor:
     def __init__(self, url, visited=False, target=None):
         self.url = url
@@ -88,12 +82,18 @@ class PageMapper:
                     self.logger.info("new similar page %s", page.url)
                     inner[page] = page
                     if len(inner) >= config.SIMILAR_JOIN_THRESHOLD:
-                        self.logger.info("aggregating similar pages",
+                        self.logger.info("aggregating similar pages %r",
                                 [p.url for p in inner])
                         inner.merged = inner.original
                         for p in inner:
-                            assert len(set([l.target for l in p.links if l])) \
-                                    <= 1, "TODO %r" % p.links
+                            for pred, anchor in p.backlinks:
+                                assert pred.links[anchor].target == p
+                                pred.links[anchor].target = inner.merged
+                            assert len(set([l.target for l in p.links
+                                if l.target])) <= 1, "TODO %r" % p.links
+                        oldpages = set([p for p in inner if p != inner.merged])
+                        self.unvisited = set([i for i in self.unvisited
+                            if i[0] not in oldpages])
                         # XXX: may get thr crawler status out-of-sync
                         page = inner.merged
                     else:
@@ -143,7 +143,7 @@ class Page:
     def linkto(self, anchorIdx, targetpage):
             self.links[anchorIdx].visited = True
             self.links[anchorIdx].target = targetpage
-            targetpage.backlinks.add(self)
+            targetpage.backlinks.add((self, anchorIdx))
 
 class TempletizedPage(Page):
 
@@ -216,8 +216,8 @@ class Engine:
                     # exclude the starting page from the path
                     return [i for i in reversed([h]+p[:-1])]
                 newpath = [h]+p
-                newheads.update([(newh, newpath)
-                    for newh in (self.websitegraph[h] - seen)])
+                newheads.update([(newh, newpath) for newh in
+                    (set([l.target for l in self.pagemap[h].links]) - seen)])
                 seen |= set(newheads.keys())
             heads = newheads
             newheads = {}
@@ -273,7 +273,6 @@ class Engine:
         self.cr = Crawler()
         self.pagemap = PageMapper()
         self.templates = defaultdict(lambda: set())
-        self.websitegraph = WebsiteGraph()
         page = self.cr.open(url)
         page = self.pagemap[page]
         nextAnchorIdx = self.processPage(page)
@@ -283,8 +282,11 @@ class Engine:
             newpage = self.pagemap[newpage]
 
             page.linkto(nextAnchorIdx, newpage)
-            self.websitegraph[page].add(newpage)
-            self.pagemap.unvisited.remove((page, nextAnchorIdx))
+            try:
+                self.pagemap.unvisited.remove((page, nextAnchorIdx))
+            except KeyError:
+                # might have been alredy removed by a page merge
+                pass
             page = newpage
             nextAnchorIdx, page = self.findNextStep(page)
 
@@ -294,10 +296,10 @@ class Engine:
         for n in nodes.itervalues():
             dot.add_node(n)
 
-        for p,l in self.websitegraph.iteritems():
-            src = nodes[p]
-            for dst in l:
-                dot.add_edge(pydot.Edge(src, nodes[dst]))
+        for n,dn in nodes.iteritems():
+            src = dn
+            for dst in n.links:
+                dot.add_edge(pydot.Edge(src, nodes[dst.target]))
 
         dot.write_ps('graph.ps')
 
