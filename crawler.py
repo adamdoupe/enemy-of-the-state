@@ -123,6 +123,13 @@ class PageMapper:
 
         if self.aggregatable(page):
             self.logger.info("aggregating %r", page)
+            inner.merged = inner.original
+            inner.aggregation = PageMapper.AGGREGATED
+            for p in inner:
+                # update links from other pages to the merged ones
+                for pred, anchor in p.backlinks:
+                    assert pred.links[anchor].target == p
+                    pred.links[anchor].target = inner.merged
         else:
             self.logger.info("impossible to aggregate %r", page)
             inner.aggregation = PageMapper.AGGREG_IMPOSS
@@ -144,20 +151,6 @@ class PageMapper:
                 # and they do not point to pages in the aggregatable set
                 return False
         return True
-        """
-                        inner.merged = inner.original
-                        for p in inner:
-                            for pred, anchor in p.backlinks:
-                                assert pred.links[anchor].target == p
-                                pred.links[anchor].target = inner.merged
-                            assert len(set([l.target for l in p.links
-                                if l.target])) <= 1, "TODO %r" % p.links
-                        oldpages = set([p for p in inner if p != inner.merged])
-                        self.unvisited = set([i for i in self.unvisited
-                            if i[0] not in oldpages])
-                        # XXX: may get thr crawler status out-of-sync
-                        page = inner.merged
-                        """
 
 
 class Page:
