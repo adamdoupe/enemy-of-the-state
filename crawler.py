@@ -19,6 +19,9 @@ class Anchor:
                 % (self.url, self.visited, self.target)
 
 class PageMapper:
+    NOT_AGGREG = 0
+    AGGREGATED = 1
+    AGGREG_PENDING = 2
 
     class Inner:
         def __init__(self, page):
@@ -27,6 +30,7 @@ class PageMapper:
             # we ant to use the first reached page as reference for all the
             # similar pages
             self.original = page
+            self.aggregation = PageMapper.NOT_AGGREG
 
         def __getitem__(self, page):
             return self.pages[page]
@@ -65,25 +69,38 @@ class PageMapper:
         else:
             inner = self.first[page.templetized]
             if page in inner:
-                if inner.merged:
-                    self.logger.info("known merged page %s", page.url)
+                if inner.aggregation == PageMapper.AGGREGATED:
+                    self.logger.info("known aggregated page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
                     page = inner.merged
+                elif inner.aggregation == PageMapper.AGGREG_PENDING:
+                    self.logger.info("known aggregatable page %s", page.url)
+                    # XXX: may get thr crawler status out-of-sync
+                    page = inner[page]
                 else:
                     self.logger.info("known page %s", page.url)
                     page = inner[page]
             else:
-                if inner.merged:
-                    self.logger.info("new merged page %s", page.url)
+                if inner.aggregation == PageMapper.AGGREGATED:
+                    self.logger.info("new aggregated page %s", page.url)
                     inner[page] = page
                     # XXX: may get thr crawler status out-of-sync
                     page = inner.merged
+                elif inner.aggregation == PageMapper.AGGREG_PENDING:
+                    self.logger.info("new aggregatable page %s", page.url)
+                    inner[page] = page
+                    page.aggregation = PageMapper.AGGREG_PENDING
                 else:
                     self.logger.info("new similar page %s", page.url)
                     inner[page] = page
                     if len(inner) >= config.SIMILAR_JOIN_THRESHOLD:
-                        self.logger.info("aggregating similar pages %r",
+                        self.logger.info("aggregatable pages %r",
                                 [p.url for p in inner])
+                        inner.aggregation = PageMapper.AGGREG_PENDING
+                    self.unvisited.update([(page, i)
+                        for i in range(len(page.links))])
+
+                    """
                         inner.merged = inner.original
                         for p in inner:
                             for pred, anchor in p.backlinks:
@@ -96,8 +113,7 @@ class PageMapper:
                             if i[0] not in oldpages])
                         # XXX: may get thr crawler status out-of-sync
                         page = inner.merged
-                    else:
-                        self.unvisited.update([(page, i) for i in range(len(page.links))])
+                        """
 
         return page
 
@@ -116,13 +132,14 @@ class Page:
         self.links = [Anchor(l) for l in links]
         self.cookies = cookies
         self.forms = forms
-        self.str = ' '.join([str(self.url),
+        self.str = 'Page(%s)' % ','.join([str(self.url),
             str([l.url for l in self.links]),
             str(self.cookies),
             str(self.forms)])
         self.history = [] # list of ordered lists of pages
         self.calchash()
         self.backlinks = set()
+        self.aggregation = PageMapper.NOT_AGGREG
         self.templetized = TempletizedPage(self)
 
     def calchash(self):
@@ -150,7 +167,7 @@ class TempletizedPage(Page):
     def __init__(self, page):
         self.page = page
         self.strippedlinks = [str(l.url).split('?')[0] for l in page.links]
-        self.str = ' '.join([str(self.strippedlinks),
+        self.str = 'TempletizedPage(%s)' % ','.join([str(self.strippedlinks),
             str(page.cookies),
             str(page.forms)])
         self.calchash()
@@ -239,6 +256,9 @@ class Engine:
 
 
     def processPage(self, page):
+        if page.aggregation == PageMapper.AGGREG_PENDING:
+            self.logger.info("not exploring additional aggregatable pages")
+            return None
         nextlink = None
         for i,l in enumerate(page.links):
             if not l.visited:
@@ -257,7 +277,12 @@ class Engine:
                     return (None, page)
                 self.logger.info("still %d unvisited links",
                         len(self.pagemap.unvisited))
-                path = self.findPathToUnvisited(page)
+                self.logger.debug("unvisited links %r",
+                        self.pagemap.unvisited)
+                if page.aggregation != PageMapper.AGGREG_PENDING:
+                    path = self.findPathToUnvisited(page)
+                else:
+                    path = None
                 if path:
                     self.logger.debug("found path: %r", path)
                     page = self.navigatePath(page, path)
@@ -292,14 +317,17 @@ class Engine:
 
     def writeDot(self):
         dot = pydot.Dot()
-        nodes = dict([(p, pydot.Node(p.url.split('/')[-1])) for p in self.pagemap])
+        nodes = dict([(p, pydot.Node(p.url.split('/')[-1]))
+            for p in self.pagemap
+            if p.aggregation != PageMapper.AGGREG_PENDING])
         for n in nodes.itervalues():
             dot.add_node(n)
 
         for n,dn in nodes.iteritems():
             src = dn
             for dst in n.links:
-                dot.add_edge(pydot.Edge(src, nodes[dst.target]))
+                if dst.target.aggregation != PageMapper.AGGREG_PENDING:
+                    dot.add_edge(pydot.Edge(src, nodes[dst.target]))
 
         dot.write_ps('graph.ps')
 
