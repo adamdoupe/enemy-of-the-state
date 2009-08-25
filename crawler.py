@@ -22,6 +22,7 @@ class PageMapper:
     NOT_AGGREG = 0
     AGGREGATED = 1
     AGGREG_PENDING = 2
+    AGGREG_IMPOSS = 2
 
     class Inner:
         def __init__(self, page):
@@ -73,7 +74,8 @@ class PageMapper:
                     self.logger.info("known aggregated page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
                     page = inner.merged
-                elif inner.aggregation == PageMapper.AGGREG_PENDING:
+                elif inner.aggregation in \
+                        [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
                     self.logger.info("known aggregatable page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
                     page = inner[page]
@@ -86,7 +88,8 @@ class PageMapper:
                     inner[page] = page
                     # XXX: may get thr crawler status out-of-sync
                     page = inner.merged
-                elif inner.aggregation == PageMapper.AGGREG_PENDING:
+                elif inner.aggregation in \
+                        [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
                     self.logger.info("new aggregatable page %s", page.url)
                     inner[page] = page
                     page.aggregation = PageMapper.AGGREG_PENDING
@@ -100,7 +103,48 @@ class PageMapper:
                     self.unvisited.update([(page, i)
                         for i in range(len(page.links))])
 
-                    """
+        return page
+
+    def __iter__(self):
+        for i in self.first.itervalues():
+            for j in i.smartiter():
+                yield j
+
+    def checkAggregatable(self, page):
+        inner = self.first[page.templetized]
+        if inner.aggregation != PageMapper.AGGREG_PENDING:
+            return
+        # make sure we have visited all the links of the first
+        # config.SIMILAR_JOIN_THRESHOLD pages
+        for p in inner:
+            if p.aggregation != PageMapper.AGGREG_PENDING and \
+                    (p, len(p.links)-1) in self.unvisited:
+                        return
+
+        if self.aggregatable(page):
+            self.logger.info("aggregating %r", page)
+        else:
+            self.logger.info("impossible to aggregate %r", page)
+            inner.aggregation = PageMapper.AGGREG_IMPOSS
+
+
+
+
+    def aggregatable(self, page):
+        # aggregate only if all the links across aggregatable pages
+        # point to the same page
+        inner = self.first[page.templetized]
+        for i in range(len(page.links)):
+            targetset = set([p.links[i].target for p in inner
+                if p.aggregation != PageMapper.AGGREG_PENDING])
+            print "TARGETSET", targetset
+            if len(targetset) > 1 and \
+                    not all([p in inner for p in targetset]):
+                # different pages have different outgoing links
+                # and they do not point to pages in the aggregatable set
+                return False
+        return True
+        """
                         inner.merged = inner.original
                         for p in inner:
                             for pred, anchor in p.backlinks:
@@ -114,13 +158,6 @@ class PageMapper:
                         # XXX: may get thr crawler status out-of-sync
                         page = inner.merged
                         """
-
-        return page
-
-    def __iter__(self):
-        for i in self.first.itervalues():
-            for j in i.smartiter():
-                yield j
 
 
 class Page:
@@ -312,6 +349,7 @@ class Engine:
             except KeyError:
                 # might have been alredy removed by a page merge
                 pass
+            self.pagemap.checkAggregatable(page)
             page = newpage
             nextAnchorIdx, page = self.findNextStep(page)
 
