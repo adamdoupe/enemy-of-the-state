@@ -22,7 +22,7 @@ class PageMapper:
     NOT_AGGREG = 0
     AGGREGATED = 1
     AGGREG_PENDING = 2
-    AGGREG_IMPOSS = 2
+    AGGREG_IMPOSS = 3
 
     class Inner:
         def __init__(self, page):
@@ -48,6 +48,9 @@ class PageMapper:
 
         def __iter__(self):
             return self.pages.__iter__()
+
+        def iteritems(self):
+            return self.pages.iteritems()
 
         def smartiter(self):
             if self.merged:
@@ -125,6 +128,7 @@ class PageMapper:
             self.logger.info("aggregating %r", page)
             inner.merged = inner.original
             inner.aggregation = PageMapper.AGGREGATED
+            inner.merged.aggregation = PageMapper.AGGREGATED
             for p in inner:
                 # update links from other pages to the merged ones
                 for pred, anchor in p.backlinks:
@@ -133,6 +137,11 @@ class PageMapper:
         else:
             self.logger.info("impossible to aggregate %r", page)
             inner.aggregation = PageMapper.AGGREG_IMPOSS
+            for p,v in inner.iteritems():
+                assert p == v, "%r != %r" % (p, v)
+                if p.aggregation != PageMapper.AGGREG_PENDING:
+                    # XXX AGGREG_PENDING is used to explude nodes from plot
+                    p.aggregation = PageMapper.AGGREG_IMPOSS
 
 
 
@@ -348,9 +357,16 @@ class Engine:
 
     def writeDot(self):
         dot = pydot.Dot()
-        nodes = dict([(p, pydot.Node(p.url.split('/')[-1]))
-            for p in self.pagemap
-            if p.aggregation != PageMapper.AGGREG_PENDING])
+        nodes = {}
+        for p in self.pagemap:
+            if p.aggregation != PageMapper.AGGREG_PENDING:
+                node = pydot.Node(p.url.split('/')[-1])
+                if p.aggregation == PageMapper.AGGREGATED:
+                    node.set_color('green')
+                elif p.aggregation == PageMapper.AGGREG_IMPOSS:
+                    node.set_color('red')
+                nodes[p] = node
+
         for n in nodes.itervalues():
             dot.add_node(n)
 
