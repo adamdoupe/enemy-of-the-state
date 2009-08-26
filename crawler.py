@@ -69,7 +69,7 @@ class PageMapper:
         if page.templetized  not in self.first:
             self.logger.info("new page %s", page.url)
             self.first[page.templetized] = PageMapper.Inner(page)
-            self.unvisited.update([(page, i) for i in range(len(page.links))])
+            self.unvisited.update((page, i) for i in range(len(page.links)))
         else:
             inner = self.first[page.templetized]
             if page in inner:
@@ -151,11 +151,11 @@ class PageMapper:
         # point to the same page
         inner = self.first[page.templetized]
         for i in range(len(page.links)):
-            targetset = set([p.links[i].target for p in inner
-                if p.aggregation != PageMapper.AGGREG_PENDING])
+            targetset = set(p.links[i].target for p in inner
+                if p.aggregation != PageMapper.AGGREG_PENDING)
             print "TARGETSET", targetset
             if len(targetset) > 1 and \
-                    not all([p in inner for p in targetset]):
+                    not all(p in inner for p in targetset):
                 # different pages have different outgoing links
                 # and they do not point to pages in the aggregatable set
                 return False
@@ -289,8 +289,8 @@ class Engine:
                     # exclude the starting page from the path
                     return [i for i in reversed([h]+p[:-1])]
                 newpath = [h]+p
-                newheads.update([(newh, newpath) for newh in
-                    (set([l.target for l in self.pagemap[h].links]) - seen)])
+                newheads.update((newh, newpath) for newh in
+                    (set(l.target for l in self.pagemap[h].links) - seen))
                 seen |= set(newheads.keys())
             heads = newheads
             newheads = {}
