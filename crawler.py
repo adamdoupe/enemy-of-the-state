@@ -222,6 +222,7 @@ class CrawlerEmptyHistory(Exception):
 class Crawler:
 
     def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.webclient = htmlunit.WebClient()
 
     def open(self, url):
@@ -233,7 +234,9 @@ class Crawler:
         self.htmlpage = htmlpage
         htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
         self.url = htmlpage.getWebResponse().getRequestUrl().toString()
-        self.anchors = htmlpagewrapped.getAnchors()
+        self.anchors = [a for a in htmlpagewrapped.getAnchors()
+                if not a.getHrefAttribute().split(':', 1)[0].lower()
+                in ['mailto']]
         self.page = Page(url=self.url,
                 links=[a.getHrefAttribute() for a in self.anchors])
 
@@ -243,7 +246,16 @@ class Crawler:
 
     def clickAnchor(self, idx):
         self.history.append(self.htmlpage)
-        htmlpage = self.anchors[idx].click()
+        try:
+            htmlpage = self.anchors[idx].click()
+        except htmlunit.JavaError, e:
+            javaex = htmlunit.FailingHttpStatusCodeException.cast_(
+                    e.getJavaException())
+            ecode = javaex.getStatusCode()
+            emsg = javaex.getStatusMessage()
+            self.logger.warn("%d %s, %s", ecode, emsg,
+                    self.anchors[idx].getHrefAttribute())
+            return self.errorPage(ecode)
         return self.newPage(htmlpage)
 
     def back(self):
@@ -254,6 +266,11 @@ class Crawler:
             raise CrawlerEmptyHistory()
         self.updateInternalData(htmlpage)
         return self.page
+
+    def errorPage(self, code):
+        self.page = Page(url="%d" % code)
+        return self.page
+
 
 class Engine:
 
@@ -377,6 +394,7 @@ class Engine:
                     dot.add_edge(pydot.Edge(src, nodes[dst.target]))
 
         dot.write_ps('graph.ps')
+        #dot.write_pdf('graph.pdf')
 
 if __name__ == "__main__":
     import sys
