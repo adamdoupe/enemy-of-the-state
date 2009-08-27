@@ -3,7 +3,6 @@ import com.gargoylesoftware.htmlunit.html.HtmlAnchor;
 import com.gargoylesoftware.htmlunit.html.HtmlForm;
 
 import java.util.List;
-import java.util.ListIterator;
 
 public class HtmlPageWrapper  {
     public HtmlPageWrapper(HtmlPage htmlPage) {
@@ -30,3 +29,4 @@ public class HtmlPageWrapper  {
 
     private HtmlPage _htmlPage;
 }
+

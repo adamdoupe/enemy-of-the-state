@@ -300,31 +300,42 @@ class Crawler:
 
     def submitForm(self, idx, input=None):
         assert not input, "Not implemented"
+        self.history.append(self.htmlpage)
+        htmlpage = None
+
         try:
-            submitter = self.forms[idx].\
-                    getOneHtmlElementByAttribute("input", "type", "submit")
-            submitter.click()
+            for submittable in [("input", "type", "submit"),
+                    ("input", "type", "image"),
+                    ("button", "type", "submit")]:
+                try:
+                    submitter = self.forms[idx].\
+                            getOneHtmlElementByAttribute(*submittable)
+                    htmlpage = submitter.click()
+                except htmlunit.JavaError, e:
+                    javaex = e.getJavaException()
+                    if not htmlunit.ElementNotFoundException.instance_(javaex):
+                        raise
+                    continue
+            assert htmlpage, "Could not find submit button"
         except htmlunit.JavaError, e:
             javaex = e.getJavaException()
-            if not htmlunit.ElementNotFoundException.instance_(javaex):
+            if not htmlunit.FailingHttpStatusCodeException.instance_(javaex):
                 raise
-        try:
-            submitter = self.forms[idx].\
-                    getOneHtmlElementByAttribute("input", "type", "image")
-            submitter.click()
-        except htmlunit.JavaError, e:
-            javaex = e.getJavaException()
-            if not htmlunit.ElementNotFoundException.instance_(javaex):
-                raise
-        try:
-            submitter = self.forms[idx].\
-                    getOneHtmlElementByAttribute("button", "type", "submit")
-            submitter.click()
-        except htmlunit.JavaError, e:
-            javaex = e.getJavaException()
-            if not htmlunit.ElementNotFoundException.instance_(javaex):
-                raise
-        assert False, "Could not find submit button"
+            javaex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
+            ecode = javaex.getStatusCode()
+            emsg = javaex.getStatusMessage()
+            self.logger.warn("%d %s, %s", ecode, emsg,
+                    self.anchors[idx].getHrefAttribute())
+            return self.errorPage(ecode)
+        return self.newPage(htmlpage)
+
+
+
+
+#        for f in self.forms:
+#            print "***", f
+#            for n in htmlunit.HtmlElementWrapper(f).getHtmlElementsByTagName("input"):
+#                print n
 
     def back(self):
         # htmlunit has not "back" functrion
