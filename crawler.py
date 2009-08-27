@@ -287,8 +287,10 @@ class Crawler:
         try:
             htmlpage = self.anchors[idx].click()
         except htmlunit.JavaError, e:
-            javaex = htmlunit.FailingHttpStatusCodeException.cast_(
-                    e.getJavaException())
+            javaex = e.getJavaException()
+            if not htmlunit.FailingHttpStatusCodeException.instance_(javaex):
+                raise
+            javaex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
             ecode = javaex.getStatusCode()
             emsg = javaex.getStatusMessage()
             self.logger.warn("%d %s, %s", ecode, emsg,
@@ -298,18 +300,30 @@ class Crawler:
 
     def submitForm(self, idx, input=None):
         assert not input, "Not implemented"
-        submitter = self.forms[idx].\
-                getOneHtmlElementByAttribute("input", "type", "submit")
-        if submitter:
-            return submitter.click()
-        submitter = self.forms[idx].\
-                getOneHtmlElementByAttribute("input", "type", "image")
-        if submitter:
-            return submitter.click()
-        submitter = self.forms[idx].\
-                getOneHtmlElementByAttribute("button", "type", "submit")
-        if submitter:
-            return submitter.click()
+        try:
+            submitter = self.forms[idx].\
+                    getOneHtmlElementByAttribute("input", "type", "submit")
+            submitter.click()
+        except htmlunit.JavaError, e:
+            javaex = e.getJavaException()
+            if not htmlunit.ElementNotFoundException.instance_(javaex):
+                raise
+        try:
+            submitter = self.forms[idx].\
+                    getOneHtmlElementByAttribute("input", "type", "image")
+            submitter.click()
+        except htmlunit.JavaError, e:
+            javaex = e.getJavaException()
+            if not htmlunit.ElementNotFoundException.instance_(javaex):
+                raise
+        try:
+            submitter = self.forms[idx].\
+                    getOneHtmlElementByAttribute("button", "type", "submit")
+            submitter.click()
+        except htmlunit.JavaError, e:
+            javaex = e.getJavaException()
+            if not htmlunit.ElementNotFoundException.instance_(javaex):
+                raise
         assert False, "Could not find submit button"
 
     def back(self):
@@ -389,16 +403,12 @@ class Engine:
         if page.aggregation == PageMapper.AGGREG_PENDING:
             self.logger.info("not exploring additional aggregatable pages")
             return None
-        nextlink = None
         for i,l in enumerate(page.links):
             if not l.visited:
-                nextlink = (Engine.ANCHOR, i)
-                break
+                return (Engine.ANCHOR, i)
         for i,l in enumerate(page.forms):
             if not l.visited:
-                nextlink = (Engine.FORM, i)
-                break
-        return nextlink
+                return (Engine.FORM, i)
 
     def findNextStep(self, page):
         nextAction = None
