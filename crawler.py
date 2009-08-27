@@ -272,8 +272,8 @@ class Crawler:
         self.anchors = [a for a in htmlpagewrapped.getAnchors()
                 if not a.getHrefAttribute().split(':', 1)[0].lower()
                 in ['mailto']]
-        self.forms = [f for f in htmlpagewrapped.getForms()
-                if f.getMethodAttribute().lower() == 'get']
+        self.forms = [f for f in htmlpagewrapped.getForms()]
+#                if f.getMethodAttribute().lower() == 'get']
         self.page = Page(url=self.url,
                 links=[self.createAnchor(a) for a in self.anchors],
                 forms=[self.createForm(f) for f in self.forms])
