@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 from collections import defaultdict
-import hashlib
 import struct
 import logging
 import urlparse
@@ -340,16 +339,13 @@ class Page:
         self.templetized = TempletizedPage(self)
 
     def calchash(self):
-        self.md5val = hashlib.md5(self.str)
-        # we need an int, so get only the first part of the md5 digest
-        self.hashval = struct.unpack(Page.HASHVALFMT,
-                self.md5val.digest()[:Page.HASHVALFNMTSIZE])[0]
+        self.hashval = self.str.__hash__()
 
     def __hash__(self):
         return self.hashval
 
     def __eq__(self, rhs):
-        return self.md5val.digest() == rhs.md5val.digest()
+        return self.hashval == rhs.hashval
 
     def __repr__(self):
         return self.str
