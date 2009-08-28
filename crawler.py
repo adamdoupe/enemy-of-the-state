@@ -27,7 +27,7 @@ class Anchor:
 class Form:
     def __init__(self, method, action, inputs=None, textarea=None,
             selects=None):
-        self.method = method
+        self.method = method.lower()
         self.action = action
         self.inputs = inputs
         self.textarea = textarea
@@ -629,7 +629,13 @@ class Engine:
                 if not dst.target:
                     self.logger.warn("found null target")
                 elif dst.target.aggregation != PageMapper.AGGREG_PENDING:
-                    dot.add_edge(pydot.Edge(src, nodes[dst.target]))
+                    edge = pydot.Edge(src, nodes[dst.target])
+                    if dst.__class__.__name__ == 'Form':
+                        if dst.method == 'post':
+                            edge.set_color('purple')
+                        else:
+                            edge.set_color('blue')
+                    dot.add_edge(edge)
 
         dot.write_ps('graph.ps')
         #dot.write_pdf('graph.pdf')
