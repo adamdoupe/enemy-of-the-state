@@ -69,17 +69,17 @@ class Links:
 
     def hashData(self):
         return '([%s], [%s])' % (','.join(i.hashData() for i in self.anchors),
-                ','.join(','.join(i.hashData() for i in self.forms)))
+                ','.join(i.hashData() for i in self.forms))
 
     def strippedHashData(self):
         return '([%s], [%s])' % (','.join(i.strippedHashData()
                     for i in self.anchors),
-                ','.join(','.join(i.hashData() for i in self.forms)))
+                ','.join(i.hashData() for i in self.forms))
 
     def __getitem__(self, idx):
         if idx[0] == Links.ANCHOR:
             return self.anchors[idx[1]]
-        elif idx[1] == Links.FORM:
+        elif idx[0] == Links.FORM:
             return self.forms[idx[1]]
         else:
             raise KeyError(idx)
@@ -498,7 +498,8 @@ class Engine:
                     return [i for i in reversed([h]+p[:-1])]
                 newpath = [h]+p
                 newheads.update((newh, newpath) for newh in
-                    (set(l.target for l in self.pagemap[h].links.iter(how)) - seen))
+                    (set(l.target for l in self.pagemap[h].links.iter(how)
+                        if l.visited) - seen))
                 seen |= set(newheads.keys())
             heads = newheads
             newheads = {}
