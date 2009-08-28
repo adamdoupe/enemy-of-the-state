@@ -4,6 +4,7 @@ from collections import defaultdict
 import hashlib
 import struct
 import logging
+import urlparse
 import pydot
 
 import config
@@ -613,7 +614,7 @@ class Engine:
         nodes = {}
         for p in self.pagemap:
             if p.aggregation != PageMapper.AGGREG_PENDING:
-                node = pydot.Node(p.url.split('/')[-1])
+                node = pydot.Node(urlparse.urlparse(p.url).path)
                 if p.aggregation == PageMapper.AGGREGATED:
                     node.set_color('green')
                 elif p.aggregation == PageMapper.AGGREG_IMPOSS:
@@ -625,17 +626,25 @@ class Engine:
 
         for n,dn in nodes.iteritems():
             src = dn
+            links = defaultdict(int)
             for dst in n.links:
                 if not dst.target:
                     self.logger.warn("found null target")
                 elif dst.target.aggregation != PageMapper.AGGREG_PENDING:
-                    edge = pydot.Edge(src, nodes[dst.target])
                     if dst.__class__.__name__ == 'Form':
                         if dst.method == 'post':
-                            edge.set_color('purple')
+                            color = 'purple'
                         else:
-                            edge.set_color('blue')
-                    dot.add_edge(edge)
+                            color = 'blue'
+                    else:
+                        color = 'black'
+                    links[(dst.target, color)] += 1
+            for k,num in links.iteritems():
+                target, color = k
+                edge = pydot.Edge(src, nodes[target])
+                edge.set_color(color)
+                edge.set_label("%d" % num)
+                dot.add_edge(edge)
 
         dot.write_ps('graph.ps')
         #dot.write_pdf('graph.pdf')
