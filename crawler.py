@@ -18,6 +18,12 @@ class Anchor:
         return 'Anchor(url=%r, visited=%r, target=%r)' \
                 % (self.url, self.visited, self.target)
 
+    def hashData(self):
+        return self.url
+
+    def strippedHashData(self):
+        return self.url.split('?')[0]
+
 class Form:
     def __init__(self, method, action, inputs=None, textarea=None,
             selects=None):
@@ -26,13 +32,147 @@ class Form:
         self.inputs = inputs
         self.textarea = textarea
         self.selects = selects
-        self.target = []
+        self.target = None
         self.visited = False
 
     def __repr__(self):
         return ('Form(method=%r, action=%r, inputs=%r, textarea=%r,' +
                     'selects=%r)') % (self.method, self.action, self.inputs,
                             self.textarea, self.selects)
+
+    def hashData(self):
+        return self.action
+
+class Links:
+    ANCHOR = 0
+    FORM = 1
+    def __init__(self, anchors, forms):
+        self.anchors = anchors
+        self.forms = forms
+
+    def nAnchors(self):
+        return len(self.anchors)
+
+    def nForms(self):
+        return len(self.forms)
+
+    def len(self, what):
+        if what == Links.ANCHOR:
+            return self.nAnchors()
+        elif what == Links.FORM:
+            return self.nForms()
+        else:
+            raise KeyError(idx)
+
+    def __repr__(self):
+        return '(%s, %s)' % (self.anchors, self.forms)
+
+    def hashData(self):
+        return '([%s], [%s])' % (','.join(i.hashData() for i in self.anchors),
+                ','.join(','.join(i.hashData() for i in self.forms)))
+
+    def strippedHashData(self):
+        return '([%s], [%s])' % (','.join(i.strippedHashData()
+                    for i in self.anchors),
+                ','.join(','.join(i.hashData() for i in self.forms)))
+
+    def __getitem__(self, idx):
+        if idx[0] == Links.ANCHOR:
+            return self.anchors[idx[1]]
+        elif idx[1] == Links.FORM:
+            return self.forms[idx[1]]
+        else:
+            raise KeyError(idx)
+
+    def __iter__(self):
+        return self.iter(Links.FORM)
+
+    def getLast(self, what):
+        if what == Links.ANCHOR:
+            if self.anchors:
+                return self.anchors[-1]
+        elif what == Links.FORM:
+            if self.forms:
+                return self.forms[-1]
+        else:
+            raise KeyError(idx)
+
+    def getLastIdx(self):
+        if self.forms:
+            return (Links.FORM, len(self.forms)-1)
+        else:
+            return (Links.ANCHOR, len(self.anchors)-1)
+
+    def getUnvisited(self):
+        for i,l in enumerate(self.anchors):
+            if not l.visited:
+                return (Links.ANCHOR, i)
+        for i,l in enumerate(self.forms):
+            if not l.visited:
+                return (Links.FORM, i)
+
+    def iter(self, what):
+        if what == Links.ANCHOR:
+            iterlist = [self.anchors]
+        elif what == Links.FORM:
+            iterlist = [self.anchors, self.forms]
+        else:
+            raise KeyError(idx)
+
+        for i in iterlist:
+            for j in i:
+                yield j
+
+    def enumerate(self):
+        for i,k in enumerate(self.anchors):
+            yield ((Links.ANCHOR, i), k)
+        for i,k in enumerate(self.forms):
+            yield ((Links.FORM, i), k)
+
+class Unvisited:
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.anchors = set()
+        self.forms = set()
+
+    def addPage(self, page):
+        self.anchors.update((page, i) for i in range(page.links.nAnchors()))
+        self.forms.update((page, i) for i in range(page.links.nForms()))
+
+    def remove(self, page, link):
+        if link[0] == Links.ANCHOR:
+            self.anchors.remove((page, link[1]))
+        if link[0] == Links.FORM:
+            self.forms.remove((page, link[1]))
+        else:
+            raise KeyError(link)
+
+    def __nonzero__(self):
+        return True if self.anchors or self.forms else False
+
+    def logInfo(self):
+        self.logger.info("still unvisited: %d anchors, %d forms",
+                len(self.anchors), len(self.forms))
+
+    def len(self, what):
+        if what == Links.ANCHOR:
+            return len(self.anchors)
+        elif what == Links.FORM:
+            return len(self.forms)
+        else:
+            raise KeyError(idx)
+
+    def __contains__(self, link):
+        print "+++", link
+        if link[1][0] == Links.ANCHOR:
+            return (link[0], link[1][1]) in self.anchors
+        if link[1][0] == Links.FORM:
+            return (link[0], link[1][1]) in self.forms
+        return False
+
+    def __repr__(self):
+        return "Unvisited(%r, %r)" % (self.anchors, self.forms)
+
 
 class PageMapper:
     NOT_AGGREG = 0
@@ -78,7 +218,7 @@ class PageMapper:
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.unvisited = set()
+        self.unvisited = Unvisited()
         self.unsubmitted = set()
         self.first = {}
 
@@ -86,8 +226,7 @@ class PageMapper:
         if page.templetized  not in self.first:
             self.logger.info("new page %s", page.url)
             self.first[page.templetized] = PageMapper.Inner(page)
-            self.unvisited.update((page, i) for i in range(len(page.links)))
-            self.unsubmitted.update((page, i) for i in range(len(page.forms)))
+            self.unvisited.addPage(page)
         else:
             inner = self.first[page.templetized]
             if page in inner:
@@ -121,11 +260,7 @@ class PageMapper:
                         self.logger.info("aggregatable pages %r",
                                 [p.url for p in inner])
                         inner.aggregation = PageMapper.AGGREG_PENDING
-                    self.unvisited.update([(page, i)
-                        for i in range(len(page.links))])
-                    self.unsubmitted.update([(page, i)
-                        for i in range(len(page.forms))])
-
+                    self.unvisited.addPage(page)
         return page
 
     def __iter__(self):
@@ -142,8 +277,8 @@ class PageMapper:
         # config.SIMILAR_JOIN_THRESHOLD pages
         for p in inner:
             if p.aggregation != PageMapper.AGGREG_PENDING and \
-                    ((p, len(p.links)-1) in self.unvisited or
-                        (p, len(p.forms)-1) in self.unsubmitted):
+                    (p, p.links.getLastIdx()) in self.unvisited:
+                # assumptions: links are visited in order
                 return
 
         if self.aggregatable(page):
@@ -172,7 +307,7 @@ class PageMapper:
         # aggregate only if all the links across aggregatable pages
         # point to the same page
         inner = self.first[page.templetized]
-        for i in range(len(page.links)):
+        for i,l in page.links.enumerate():
             targetset = set(p.links[i].target for p in inner
                 if p.aggregation != PageMapper.AGGREG_PENDING)
             print "TARGETSET", targetset
@@ -188,15 +323,14 @@ class Page:
     HASHVALFMT = 'i'
     HASHVALFNMTSIZE = struct.calcsize(HASHVALFMT)
 
-    def __init__(self, url, links=[], cookies=frozenset(), forms=frozenset()):
+    def __init__(self, url, anchors=[], forms=[], cookies=frozenset()):
         self.url = url
-        self.links = links
+        self.links = Links(anchors, forms)
         self.cookies = cookies
         self.forms = forms
         self.str = 'Page(%s)' % ','.join([str(self.url),
-            str([l.url for l in self.links]),
-            str(self.cookies),
-            str(self.forms)])
+            self.links.hashData(),
+            str(self.cookies)])
         self.history = [] # list of ordered lists of pages
         self.calchash()
         self.backlinks = set()
@@ -219,24 +353,21 @@ class Page:
     def __repr__(self):
         return self.str
 
-    def linkto(self, anchorIdx, targetpage):
-            self.links[anchorIdx].visited = True
-            self.links[anchorIdx].target = targetpage
-            targetpage.backlinks.add((self, anchorIdx))
+    def linkto(self, idx, targetpage):
+            self.links[idx].visited = True
+            self.links[idx].target = targetpage
+            targetpage.backlinks.add((self, idx))
 
-    def linkFormto(self, formIdx, targetpage):
-            self.forms[formIdx].visited = True
-            self.forms[formIdx].target = targetpage
-            targetpage.backformlinks.add((self, formIdx))
+    def getUnvisitedLink(self):
+        return self.links.getUnvisited()
 
 class TempletizedPage(Page):
 
     def __init__(self, page):
         self.page = page
-        self.strippedlinks = [str(l.url).split('?')[0] for l in page.links]
-        self.str = 'TempletizedPage(%s)' % ','.join([str(self.strippedlinks),
-            str(page.cookies),
-            str(page.forms)])
+        self.str = 'TempletizedPage(%s)' % \
+                ','.join([page.links.strippedHashData(),
+                    str(page.cookies)])
         self.calchash()
 
 
@@ -275,7 +406,7 @@ class Crawler:
         self.forms = [f for f in htmlpagewrapped.getForms()]
 #                if f.getMethodAttribute().lower() == 'get']
         self.page = Page(url=self.url,
-                links=[self.createAnchor(a) for a in self.anchors],
+                anchors=[self.createAnchor(a) for a in self.anchors],
                 forms=[self.createForm(f) for f in self.forms])
 
     def newPage(self, htmlpage):
@@ -352,58 +483,55 @@ class Crawler:
 
 
 class Engine:
-    ANCHOR = 0
-    FORM = 1
-
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def findPathToUnvisited(self, page):
+    def findPathToUnvisited_(self, page, what, how):
         seen = set([page])
         heads = {page: []}
         newheads = {}
         while heads:
             for h,p in heads.iteritems():
-                if h.links and not h.links[-1].visited:
-                    if not (h, len(h.links)-1) in self.pagemap.unvisited:
-                        self.logger.error("last link from page %r should be in unvisited list (%s)" % (h, self.pagemap.unvisited))
+                lastlink = h.links.getLast(what)
+                if lastlink and not lastlink.visited:
                     # exclude the starting page from the path
                     return [i for i in reversed([h]+p[:-1])]
                 newpath = [h]+p
                 newheads.update((newh, newpath) for newh in
-                    (set(l.target for l in self.pagemap[h].links) - seen))
+                    (set(l.target for l in self.pagemap[h].links.iter(how)) - seen))
                 seen |= set(newheads.keys())
             heads = newheads
             newheads = {}
 
-    def findPathToUnsubmitted(self, page):
-        seen = set([page])
-        heads = {page: []}
-        newheads = {}
-        while heads:
-            for h,p in heads.iteritems():
-                if h.forms and not h.forms[-1].visited:
-                    if not (h, len(h.forms)-1) in self.pagemap.unsubmitted:
-                        self.logger.error("last form from page %r should be in unsubmitted list (%s)" % (h, self.pagemap.unsubmitted))
-                    # exclude the starting page from the path
-                    return [i for i in reversed([h]+p[:-1])]
-                newpath = [h]+p
-                newheads.update((newh, newpath) for newh in
-                    (set(l.target for l in self.pagemap[h].links) - seen))
-                seen |= set(newheads.keys())
-            heads = newheads
-            newheads = {}
+
+    def findPathToUnvisited(self, page):
+        if self.pagemap.unvisited.len(Links.ANCHOR):
+            path = self.findPathToUnvisited_(page, Links.ANCHOR, Links.ANCHOR)
+            if not path:
+                self.logger.info("unexplored anchors not reachable using anchors")
+                path = self.findPathToUnvisited_(page, Links.ANCHOR, Links.FORM)
+            if path:
+                return path
+                self.logger.warn("unexplored anchors not reachable!")
+        if self.pagemap.unvisited.len(Links.FORM):
+            path = self.findPathToUnvisited_(page, Links.FORM, Links.ANCHOR)
+            if not path:
+                self.logger.info("unexplored anchors not reachable using forms")
+                path = self.findPathToUnvisited_(page, Links.FORM, Links.FORM)
+            if path:
+                return path
+            self.logger.warn("unexplored forms not reachable!")
 
     def navigatePath(self, page, path):
         assert page == self.cr.page
         for p in path:
-            anchorIdx = None
-            for i,l in enumerate(page.links):
+            linkidx = None
+            for i,l in page.links.enumerate():
                 if l.target == p:
-                    anchorIdx = i
+                    linkidx = i
                     break
-            assert anchorIdx != None
-            page = self.cr.clickAnchor(anchorIdx)
+            assert linkidx != None
+            page = self.doAction(page, linkidx)
             page = self.pagemap[page]
             assert page == p, 'unexpected link target "%s" instead of "%s"' \
                     % (page, p)
@@ -412,14 +540,12 @@ class Engine:
 
     def processPage(self, page):
         if page.aggregation == PageMapper.AGGREG_PENDING:
+            # XXX in this way we forse the crawler to use the "back" function
+            # instead of using a potential back-link; what happen if the latest 
+            # page we are not exploring changes the in-server status?
             self.logger.info("not exploring additional aggregatable pages")
             return None
-        for i,l in enumerate(page.links):
-            if not l.visited:
-                return (Engine.ANCHOR, i)
-        for i,l in enumerate(page.forms):
-            if not l.visited:
-                return (Engine.FORM, i)
+        return page.getUnvisitedLink()
 
     def findNextStep(self, page):
         nextAction = None
@@ -427,20 +553,10 @@ class Engine:
             nextAction = self.processPage(page)
             if nextAction == None:
                 path = None
-                if len(self.pagemap.unvisited):
-                    self.logger.info("still %d unvisited links",
-                            len(self.pagemap.unvisited))
-                    self.logger.debug("unvisited links %r",
-                            self.pagemap.unvisited)
+                if self.pagemap.unvisited:
+                    self.pagemap.unvisited.logInfo()
                     if page.aggregation != PageMapper.AGGREG_PENDING:
                         path = self.findPathToUnvisited(page)
-                elif len(self.pagemap.unsubmitted):
-                    self.logger.info("still %d unsubmitted forms",
-                            len(self.pagemap.unsubmitted))
-                    self.logger.debug("unsubmitted forms %r",
-                            self.pagemap.unsubmitted)
-                    if page.aggregation != PageMapper.AGGREG_PENDING:
-                        path = self.findPathToUnsubmitted(page)
                 else:
                     self.logger.info("we are done")
                     # we are done
@@ -458,31 +574,23 @@ class Engine:
         return (nextAction, page)
 
     def doAction(self, page, action):
-        if action[0] == Engine.ANCHOR:
+        if action[0] == Links.ANCHOR:
             newpage = self.cr.clickAnchor(action[1])
-            # use reference to the pre-existing page
-            newpage = self.pagemap[newpage]
-
-            page.linkto(action[1], newpage)
-            try:
-                self.pagemap.unvisited.remove((page, action[1]))
-            except KeyError:
-                # might have been alredy removed by a page merge
-                pass
-
-        elif action[0] == Engine.FORM:
+        elif action[0] == Links.FORM:
             newpage = self.cr.submitForm(action[1])
-            # use reference to the pre-existing page
-            newpage = self.pagemap[newpage]
-
-            page.linkFormto(action[1], newpage)
-            try:
-                self.pagemap.unsubmitted.remove((page, action[1]))
-            except KeyError:
-                # might have been alredy removed by a page merge
-                pass
         else:
             assert False, "Unknown action %r" % action
+
+        # use reference to the pre-existing page
+        newpage = self.pagemap[newpage]
+
+        page.linkto(action, newpage)
+        try:
+            self.pagemap.unvisited.remove(page, action)
+        except KeyError:
+            # might have been alredy removed by a page merge
+            pass
+
         return newpage
 
     def main(self, url):
