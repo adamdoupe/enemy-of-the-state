@@ -13,6 +13,7 @@ class Anchor:
         self.url = url
         self.visited = visited
         self.target = target
+        self.ignore = False
 
     def __repr__(self):
         return 'Anchor(url=%r, visited=%r, target=%r)' \
@@ -25,8 +26,8 @@ class Anchor:
         return self.url.split('?')[0]
 
 class Form:
-    def __init__(self, method, action, inputs=None, textarea=None,
-            selects=None):
+    def __init__(self, method, action, inputs=[], textarea=[],
+            selects=[]):
         self.method = method.lower()
         self.action = action
         self.inputs = inputs
@@ -34,6 +35,7 @@ class Form:
         self.selects = selects
         self.target = None
         self.visited = False
+        self.ignore = False
 
     def __repr__(self):
         return ('Form(method=%r, action=%r, inputs=%r, textarea=%r,' +
@@ -42,6 +44,9 @@ class Form:
 
     def hashData(self):
         return self.action
+
+    def getFormKeys(self):
+        return self.inputs + self.textarea + self.selects
 
 class Links:
     ANCHOR = 0
@@ -105,10 +110,10 @@ class Links:
 
     def getUnvisited(self):
         for i,l in enumerate(self.anchors):
-            if not l.visited:
+            if not l.visited and not l.ignore:
                 return (Links.ANCHOR, i)
         for i,l in enumerate(self.forms):
-            if not l.visited:
+            if not l.visited and not l.ignore:
                 return (Links.FORM, i)
 
     def iter(self, what):
@@ -121,13 +126,16 @@ class Links:
 
         for i in iterlist:
             for j in i:
-                yield j
+                if not j.ignore:
+                    yield j
 
     def enumerate(self):
         for i,k in enumerate(self.anchors):
-            yield ((Links.ANCHOR, i), k)
+            if not k.ignore:
+                yield ((Links.ANCHOR, i), k)
         for i,k in enumerate(self.forms):
-            yield ((Links.FORM, i), k)
+            if not k.ignore:
+                yield ((Links.FORM, i), k)
 
 class Unvisited:
     def __init__(self):
@@ -163,7 +171,6 @@ class Unvisited:
             raise KeyError(idx)
 
     def __contains__(self, link):
-        print "+++", link
         if link[1][0] == Links.ANCHOR:
             return (link[0], link[1][1]) in self.anchors
         if link[1][0] == Links.FORM:
@@ -310,7 +317,7 @@ class PageMapper:
         for i,l in page.links.enumerate():
             targetset = set(p.links[i].target for p in inner
                 if p.aggregation != PageMapper.AGGREG_PENDING)
-            print "TARGETSET", targetset
+            #print "TARGETSET", targetset
             if len(targetset) > 1 and \
                     not all(p in inner for p in targetset):
                 # different pages have different outgoing links
@@ -323,7 +330,7 @@ class Page:
     HASHVALFMT = 'i'
     HASHVALFNMTSIZE = struct.calcsize(HASHVALFMT)
 
-    def __init__(self, url, anchors=[], forms=[], cookies=frozenset()):
+    def __init__(self, url, anchors=[], forms=[], cookies=[]):
         self.url = url
         self.links = Links(anchors, forms)
         self.cookies = cookies
@@ -368,11 +375,28 @@ class TempletizedPage(Page):
         self.calchash()
 
 
+class FormFiller:
+    def __init__(self):
+        self.forms = {}
+
+    def add(self, k):
+        self.forms[tuple(sorted(k.keys()))] = k
+
+    def __getitem__(self, k):
+        return self.forms[tuple(sorted([i for i in k if i]))]
+
+
 import htmlunit
 
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
 class CrawlerEmptyHistory(Exception):
+    pass
+
+class CrawlerActionFailure(Exception):
+    pass
+
+class CrawlerUnsubmittableForm(CrawlerActionFailure):
     pass
 
 class Crawler:
@@ -390,8 +414,11 @@ class Crawler:
         return Anchor(a.getHrefAttribute())
 
     def createForm(self, f):
+        inputs = [n.getAttribute('name') for n in
+            htmlunit.HtmlElementWrapper(f).getHtmlElementsByTagName('input')]
         return Form(method=f.getMethodAttribute(),
-                action=f.getActionAttribute())
+                action=f.getActionAttribute(),
+                inputs=inputs)
 
     def updateInternalData(self, htmlpage):
         self.htmlpage = htmlpage
@@ -426,12 +453,36 @@ class Crawler:
             return self.errorPage(ecode)
         return self.newPage(htmlpage)
 
-    def submitForm(self, idx, input=None):
-        assert not input, "Not implemented"
-        self.history.append(self.htmlpage)
+    def printChild(self, e, n=0):
+        print ' '*n, e
+        try:
+            for i in e.getChildElements():
+                self.printChild(i, n+1)
+        except AttributeError:
+            pass
+
+    def submitForm(self, idx, params):
         htmlpage = None
 
+        form = self.forms[idx]
+
+        self.logger.info("submitting form %s %r and params: %r",
+                form.getMethodAttribute().upper(), form.getActionAttribute(),
+                params)
+
+#        print "===========", self.url
+#        for f in self.forms:
+#            print "***", f
+#            for n in htmlunit.HtmlElementWrapper(f).getHtmlElementsByTagName("input"):
+#                print n
+#            self.printChild(f)
+
+        for k,v in params.iteritems():
+            form.getInputByName(k).setValueAttribute(v)
+
         try:
+            # find an element to click in order to submit the form
+            # TODO: explore clickable regions in input type=image
             for submittable in [("input", "type", "submit"),
                     ("input", "type", "image"),
                     ("button", "type", "submit")]:
@@ -439,12 +490,18 @@ class Crawler:
                     submitter = self.forms[idx].\
                             getOneHtmlElementByAttribute(*submittable)
                     htmlpage = submitter.click()
+                    break
                 except htmlunit.JavaError, e:
                     javaex = e.getJavaException()
                     if not htmlunit.ElementNotFoundException.instance_(javaex):
                         raise
                     continue
-            assert htmlpage, "Could not find submit button"
+
+            if not htmlpage:
+                self.logger.warn("could not find submit button for form %s %r in page %r",
+                        form.getMethodAttribute().upper(),
+                        form.getActionAttribute(), self.url)
+                raise CrawlerUnsubmittableForm()
         except htmlunit.JavaError, e:
             javaex = e.getJavaException()
             if not htmlunit.FailingHttpStatusCodeException.instance_(javaex):
@@ -454,16 +511,15 @@ class Crawler:
             emsg = javaex.getStatusMessage()
             self.logger.warn("%d %s, %s", ecode, emsg,
                     self.anchors[idx].getHrefAttribute())
+            self.history.append(self.htmlpage)
             return self.errorPage(ecode)
+
+        self.history.append(self.htmlpage)
         return self.newPage(htmlpage)
 
 
 
 
-#        for f in self.forms:
-#            print "***", f
-#            for n in htmlunit.HtmlElementWrapper(f).getHtmlElementsByTagName("input"):
-#                print n
 
     def back(self):
         # htmlunit has not "back" functrion
@@ -480,8 +536,9 @@ class Crawler:
 
 
 class Engine:
-    def __init__(self):
+    def __init__(self, formfiller=None):
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.formfiller = formfiller
 
     def findPathToUnvisited_(self, page, what, how):
         seen = set([page])
@@ -575,7 +632,13 @@ class Engine:
         if action[0] == Links.ANCHOR:
             newpage = self.cr.clickAnchor(action[1])
         elif action[0] == Links.FORM:
-            newpage = self.cr.submitForm(action[1])
+            try:
+                formkeys = page.links[action].getFormKeys()
+                params = self.formfiller[formkeys]
+            except KeyError:
+                # we do not have parameters for the form
+                params = {}
+            newpage = self.cr.submitForm(action[1], params)
         else:
             assert False, "Unknown action %r" % action
 
@@ -599,10 +662,14 @@ class Engine:
         page = self.pagemap[page]
         nextAction = self.processPage(page)
         while nextAction != None:
-            newpage = self.doAction(page, nextAction)
+            try:
+                newpage = self.doAction(page, nextAction)
+                self.pagemap.checkAggregatable(page)
+                page = newpage
+            except CrawlerActionFailure:
+                page.links[nextAction].ignore = True
+                self.pagemap.unvisited.remove(page, nextAction)
 
-            self.pagemap.checkAggregatable(page)
-            page = newpage
             nextAction, page = self.findNextStep(page)
 
     def writeDot(self):
@@ -648,7 +715,10 @@ class Engine:
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.DEBUG)
-    e = Engine()
+    ff = FormFiller()
+    login = {'username': 'ludo', 'password': 'duuwhe782osjs'}
+    ff.add(login)
+    e = Engine(ff)
     try:
         e.main(sys.argv[1])
     except:
