@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import with_statement
+
 from collections import defaultdict
 import struct
 import logging
@@ -92,31 +94,16 @@ class Links:
     def __iter__(self):
         return self.iter(Links.FORM)
 
-    def getLast(self, what):
-        if what == Links.ANCHOR:
-            if self.anchors:
-                return self.anchors[-1]
-        elif what == Links.FORM:
-            if self.forms:
-                return self.forms[-1]
-        else:
-            raise KeyError(idx)
-
-    def getLastIdx(self):
-        if self.forms:
-            return (Links.FORM, len(self.forms)-1)
-        else:
-            return (Links.ANCHOR, len(self.anchors)-1)
-
-    def getUnvisited(self):
+    def getUnvisited(self, what=FORM):
         for i,l in enumerate(self.anchors):
             if not l.visited and not l.ignore:
                 return (Links.ANCHOR, i)
-        for i,l in enumerate(self.forms):
-            if not l.visited and not l.ignore:
-                return (Links.FORM, i)
+        if what >= Links.FORM:
+            for i,l in enumerate(self.forms):
+                if not l.visited and not l.ignore:
+                    return (Links.FORM, i)
 
-    def iter(self, what):
+    def iter(self, what=FORM):
         if what == Links.ANCHOR:
             iterlist = [self.anchors]
         elif what == Links.FORM:
@@ -283,10 +270,10 @@ class PageMapper:
         # make sure we have visited all the links of the first
         # config.SIMILAR_JOIN_THRESHOLD pages
         for p in inner:
-            if p.aggregation != PageMapper.AGGREG_PENDING and \
-                    (p, p.links.getLastIdx()) in self.unvisited:
-                # assumptions: links are visited in order
-                return
+            if p.aggregation != PageMapper.AGGREG_PENDING:
+                unvisited = p.links.getUnvisited()
+                if unvisited:
+                    return
 
         if self.aggregatable(page):
             self.logger.info("aggregating %r", page)
@@ -546,8 +533,8 @@ class Engine:
         newheads = {}
         while heads:
             for h,p in heads.iteritems():
-                lastlink = h.links.getLast(what)
-                if lastlink and not lastlink.visited:
+                unvisited = h.links.getUnvisited(what)
+                if unvisited:
                     # exclude the starting page from the path
                     return [i for i in reversed([h]+p[:-1])]
                 newpath = [h]+p
@@ -673,16 +660,24 @@ class Engine:
             nextAction, page = self.findNextStep(page)
 
     def writeDot(self):
+        self.logger.info("creating DOT graph")
         dot = pydot.Dot()
         nodes = {}
         for p in self.pagemap:
             if p.aggregation != PageMapper.AGGREG_PENDING:
-                node = pydot.Node(urlparse.urlparse(p.url).path)
+                url = urlparse.urlparse(p.url)
+                name = url.path
+                if url.query:
+                    name += '?' + url.query
+                name += '@%x' % p.__hash__()
+                node = pydot.Node(name)
                 if p.aggregation == PageMapper.AGGREGATED:
                     node.set_color('green')
                 elif p.aggregation == PageMapper.AGGREG_IMPOSS:
                     node.set_color('red')
                 nodes[p] = node
+
+        self.logger.debug("%d DOT nodes", len(nodes))
 
         for n in nodes.itervalues():
             dot.add_node(n)
@@ -711,6 +706,9 @@ class Engine:
 
         dot.write_ps('graph.ps')
         #dot.write_pdf('graph.pdf')
+        with open('graph.dot', 'w') as f:
+            f.write(dot.to_string())
+        self.logger.debug("DOT graph written")
 
 if __name__ == "__main__":
     import sys
