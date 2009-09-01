@@ -45,7 +45,8 @@ class Form:
                             self.textarea, self.selects)
 
     def hashData(self):
-        return self.action
+        return '(%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
+                self.selects)
 
     def getFormKeys(self):
         return self.inputs + self.textarea + self.selects
