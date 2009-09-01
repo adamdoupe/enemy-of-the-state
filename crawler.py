@@ -645,7 +645,6 @@ class Engine:
     def main(self, url):
         self.cr = Crawler()
         self.pagemap = PageMapper()
-        self.templates = defaultdict(lambda: set())
         page = self.cr.open(url)
         page = self.pagemap[page]
         nextAction = self.processPage(page)
