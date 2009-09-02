@@ -6,20 +6,22 @@ from collections import defaultdict
 import struct
 import logging
 import urlparse
+import copy
 import pydot
 
 import config
 
 class Anchor:
-    def __init__(self, url, visited=False, target=None):
+    def __init__(self, url, nvisits=0, target=None):
         self.url = url
-        self.visited = visited
+        self.nvisits = nvisits
         self.target = target
         self.ignore = False
+        self.history = None
 
     def __repr__(self):
-        return 'Anchor(url=%r, visited=%r, target=%r)' \
-                % (self.url, self.visited, self.target)
+        return 'Anchor(url=%r, nvisits=%d, target=%r)' \
+                % (self.url, self.nvisits, self.target)
 
     def hashData(self):
         return self.url
@@ -36,8 +38,9 @@ class Form:
         self.textarea = textarea
         self.selects = selects
         self.target = None
-        self.visited = False
+        self.nvisits = 0
         self.ignore = False
+        self.history = None
 
     def __repr__(self):
         return ('Form(method=%r, action=%r, inputs=%r, textarea=%r,' +
@@ -97,11 +100,11 @@ class Links:
 
     def getUnvisited(self, what=FORM):
         for i,l in enumerate(self.anchors):
-            if not l.visited and not l.ignore:
+            if not l.nvisits and not l.ignore:
                 return (Links.ANCHOR, i)
         if what >= Links.FORM:
             for i,l in enumerate(self.forms):
-                if not l.visited and not l.ignore:
+                if not l.nvisits and not l.ignore:
                     return (Links.FORM, i)
 
     def iter(self, what=FORM):
@@ -124,6 +127,14 @@ class Links:
         for i,k in enumerate(self.forms):
             if not k.ignore:
                 yield ((Links.FORM, i), k)
+
+    def clone(self):
+        cloned = copy.copy(self)
+        cloned.anchors = [copy.copy(i) for i in self.anchors]
+        cloned.forms = [copy.copy(i) for i in self.forms]
+        for l in cloned.anchors + cloned.forms:
+            l.nvisits = 0
+        return cloned
 
 class Unvisited:
     def __init__(self):
@@ -174,6 +185,7 @@ class PageMapper:
     AGGREGATED = 1
     AGGREG_PENDING = 2
     AGGREG_IMPOSS = 3
+    STATUS_SPLIT = 4
 
     class Inner:
         def __init__(self, page):
@@ -224,7 +236,12 @@ class PageMapper:
             self.unvisited.addPage(page)
         else:
             inner = self.first[page.templetized]
-            if page in inner:
+            if inner.aggregation == PageMapper.STATUS_SPLIT:
+                self.logger.info("known status splitted page %s", page.url)
+                assert page == inner.latest, "Impossible to aggregate when status splitting"
+                # remeber that __eq__ for Page has been redefined
+                page = inner.latest
+            elif page in inner:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("known aggregated page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
@@ -313,6 +330,18 @@ class PageMapper:
                 return False
         return True
 
+    def setLatest(self, page):
+        inner = self.first[page]
+        assert inner.aggregation in [PageMapper.NOT_AGGREG,
+                PageMapper.STATUS_SPLIT], "Mixing aggregation and status splitting not supported yet"
+        inner.latest = page
+        if inner.aggregation == PageMapper.STATUS_SPLIT:
+            inner[page.exact] = page
+        else:
+            assert len(inner) == 1
+            inner = {page.exact: page}
+            inner.aggregation = PageMapper.STATUS_SPLIT
+
 
 class Page:
     HASHVALFMT = 'i'
@@ -322,16 +351,15 @@ class Page:
         self.url = url
         self.links = Links(anchors, forms)
         self.cookies = cookies
-        self.forms = forms
         self.str = 'Page(%s)' % ','.join([str(self.url),
             self.links.hashData(),
             str(self.cookies)])
-        self.history = [] # list of ordered lists of pages
+        self.histories = []
         self.calchash()
         self.backlinks = set()
-        self.backformlinks = set()
         self.aggregation = PageMapper.NOT_AGGREG
         self.templetized = TempletizedPage(self)
+        self.exact = ExactPage(self)
 
     def calchash(self):
         self.hashval = self.str.__hash__()
@@ -346,12 +374,25 @@ class Page:
         return self.str
 
     def linkto(self, idx, targetpage):
-            self.links[idx].visited = True
-            self.links[idx].target = targetpage
-            targetpage.backlinks.add((self, idx))
+        link = self.links[idx]
+        assert not link.nvisits
+        link.nvisits += 1
+        link.target = targetpage
+        link.history = self.histories[-1]
+        targetpage.backlinks.add((self, idx))
 
     def getUnvisitedLink(self):
         return self.links.getUnvisited()
+
+    def clone(self):
+        cloned = copy.copy(self)
+        cloned.histories = []
+        cloned.backlinks = set()
+        cloned.links = self.links.clone()
+        assert False, "XXX define str"
+        return cloned
+
+
 
 class TempletizedPage(Page):
 
@@ -361,6 +402,13 @@ class TempletizedPage(Page):
                 ','.join([page.links.strippedHashData(),
                     str(page.cookies)])
         self.calchash()
+
+class ExactPage(Page):
+
+    def __init__(self, page):
+        self.page = page
+        self.str = "Exact" + page.str
+        self.hashval = id(self.page)
 
 
 class FormFiller:
@@ -506,9 +554,6 @@ class Crawler:
         return self.newPage(htmlpage)
 
 
-
-
-
     def back(self):
         # htmlunit has not "back" functrion
         try:
@@ -541,7 +586,7 @@ class Engine:
                 newpath = [h]+p
                 newheads.update((newh, newpath) for newh in
                     (set(l.target for l in self.pagemap[h].links.iter(how)
-                        if l.visited) - seen))
+                        if l.target) - seen))
                 seen |= set(newheads.keys())
             heads = newheads
             newheads = {}
@@ -574,11 +619,44 @@ class Engine:
                     linkidx = i
                     break
             assert linkidx != None
-            page = self.doAction(page, linkidx)
-            page = self.pagemap[page]
-            assert page == p, 'unexpected link target "%s" instead of "%s"' \
-                    % (page, p)
+            newpage = self.doAction(page, linkidx)
+            link = page.links[linkidx]
+            if newpage != p:
+                if link.nvisits == 1:
+                    self.logger.info('overriding link target "%s" with "%s"',
+                            p, newpage)
+                    link.nvisits = 0
+                    self.updateOutLinks(page, linkidx, newpage)
+                else:
+                    self.logger.info('unexpected link target "%s" instead of "%s"',
+                            newpage, p)
+                    clonedpage = self.splitPage(page, linkidx, newpage)
+                    self.history = clonedpage.histories[-1] + \
+                            [(clonedpage, linkidx)]
+                    newpage.histories[-1] = self.history[:]
+                    return newpage
+            else:
+                link.nvisits += 1
+            page = newpage
         return page
+
+    def splitPage(self, page, linkidx, newpage):
+        self.logger.info("splitting %r", page)
+        clonedpage = page.clone()
+        clonedpage.linkto(linkidx, newpage)
+        # proppagate the change of status backwards
+        prevpage, prevlinkidx = clonedpage.histories[-1][-1]
+        prevlink =  prevpage[prevlinkidx]
+        assert prevlink > 0
+        if prevlink.nvisits > 1:
+            clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
+            assert len(clonedprev.histories) == 1
+            clonedpage.histories = [clonedprev.histories[-1] +
+                    [(clonedprev, prevlinkidx)]]
+        else:
+            prevlink.target = clonedpage
+        self.pagemap.setLatest(clonedpage)
+        return clonedpage
 
 
     def processPage(self, page):
@@ -633,6 +711,11 @@ class Engine:
         # use reference to the pre-existing page
         newpage = self.pagemap[newpage]
 
+        self.history.append((page, action))
+        newpage.histories.append(self.history[:])
+
+
+    def updateOutLinks(self, page, action, newpage)
         page.linkto(action, newpage)
         try:
             self.pagemap.unvisited.remove(page, action)
@@ -640,17 +723,18 @@ class Engine:
             # might have been alredy removed by a page merge
             pass
 
-        return newpage
-
     def main(self, url):
         self.cr = Crawler()
         self.pagemap = PageMapper()
+        self.history = []
         page = self.cr.open(url)
         page = self.pagemap[page]
         nextAction = self.processPage(page)
         while nextAction != None:
             try:
                 newpage = self.doAction(page, nextAction)
+                self.updateOutLinks(page, nextAction, newpage)
+
                 self.pagemap.checkAggregatable(page)
                 page = newpage
             except CrawlerActionFailure:
