@@ -100,11 +100,11 @@ class Links:
 
     def getUnvisited(self, what=FORM):
         for i,l in enumerate(self.anchors):
-            if not l.nvisits and not l.ignore:
+            if not l.target and not l.ignore:
                 return (Links.ANCHOR, i)
         if what >= Links.FORM:
             for i,l in enumerate(self.forms):
-                if not l.nvisits and not l.ignore:
+                if not l.target and not l.ignore:
                     return (Links.FORM, i)
 
     def iter(self, what=FORM):
@@ -160,6 +160,8 @@ class Unvisited:
     def logInfo(self):
         self.logger.info("still unvisited: %d anchors, %d forms",
                 len(self.anchors), len(self.forms))
+        #self.logger.debug("still unvisited: %r anchors, %r forms",
+        #        self.anchors, self.forms)
 
     def len(self, what):
         if what == Links.ANCHOR:
@@ -200,8 +202,10 @@ class PageMapper:
             return self.pages[page]
 
         def __setitem__(self, page, samepage):
-            assert page == samepage
-            self.pages[page] = page
+            self.pages[page] = samepage
+
+        def clear(self):
+            self.pages = {}
 
         def __len__(self):
             return len(self.pages)
@@ -215,12 +219,16 @@ class PageMapper:
         def iteritems(self):
             return self.pages.iteritems()
 
+        def itervalues(self):
+            return self.pages.itervalues()
+
         def smartiter(self):
             if self.merged:
                 for i in [self.merged]:
                     yield i
             else:
-                for i in self.pages:
+                # iter on values, as keys may be ExactPage()
+                for i in self.pages.itervalues():
                     yield i
 
     def __init__(self):
@@ -331,15 +339,19 @@ class PageMapper:
         return True
 
     def setLatest(self, page):
-        inner = self.first[page]
+        inner = self.first[page.templetized]
         assert inner.aggregation in [PageMapper.NOT_AGGREG,
                 PageMapper.STATUS_SPLIT], "Mixing aggregation and status splitting not supported yet"
         inner.latest = page
         if inner.aggregation == PageMapper.STATUS_SPLIT:
             inner[page.exact] = page
         else:
-            assert len(inner) == 1
-            inner = {page.exact: page}
+            assert len(inner) == 1, "page %r inner %r" % (page, inner.pages)
+            oldpage = inner.itervalues().next()
+            inner.clear()
+            inner[oldpage.exact] = oldpage
+            inner[page.exact] = page
+            assert len(inner) == 2
             inner.aggregation = PageMapper.STATUS_SPLIT
 
 
@@ -389,7 +401,8 @@ class Page:
         cloned.histories = []
         cloned.backlinks = set()
         cloned.links = self.links.clone()
-        assert False, "XXX define str"
+        cloned.exact = ExactPage(cloned)
+        #assert False, "XXX define str"
         return cloned
 
 
@@ -581,12 +594,13 @@ class Engine:
             for h,p in heads.iteritems():
                 unvisited = h.links.getUnvisited(what)
                 if unvisited:
+                    assert (h, unvisited) in self.pagemap.unvisited, "page %r  link %r not in %r" % (h, unvisited, self.pagemap.unvisited)
                     # exclude the starting page from the path
                     return [i for i in reversed([h]+p[:-1])]
                 newpath = [h]+p
                 newheads.update((newh, newpath) for newh in
                     (set(l.target for l in self.pagemap[h].links.iter(how)
-                        if l.target) - seen))
+                        if l.target and not l.ignore) - seen))
                 seen |= set(newheads.keys())
             heads = newheads
             newheads = {}
@@ -634,7 +648,7 @@ class Engine:
                     self.history = clonedpage.histories[-1] + \
                             [(clonedpage, linkidx)]
                     newpage.histories[-1] = self.history[:]
-                    return newpage
+                return newpage
             else:
                 link.nvisits += 1
             page = newpage
@@ -643,11 +657,11 @@ class Engine:
     def splitPage(self, page, linkidx, newpage):
         self.logger.info("splitting %r", page)
         clonedpage = page.clone()
-        clonedpage.linkto(linkidx, newpage)
+        assert clonedpage.links.__iter__().next().nvisits == 0
         # proppagate the change of status backwards
-        prevpage, prevlinkidx = clonedpage.histories[-1][-1]
-        prevlink =  prevpage[prevlinkidx]
-        assert prevlink > 0
+        prevpage, prevlinkidx = page.histories[-1][-1]
+        prevlink =  prevpage.links[prevlinkidx]
+        assert prevlink.nvisits > 0
         if prevlink.nvisits > 1:
             clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
             assert len(clonedprev.histories) == 1
@@ -655,6 +669,10 @@ class Engine:
                     [(clonedprev, prevlinkidx)]]
         else:
             prevlink.target = clonedpage
+            assert len(clonedpage.histories) == 0
+            clonedpage.histories = [page.histories[-1]]
+        # linkto() must be called affter setting history
+        clonedpage.linkto(linkidx, newpage)
         self.pagemap.setLatest(clonedpage)
         return clonedpage
 
@@ -665,6 +683,8 @@ class Engine:
             # instead of using a potential back-link; what happen if the latest 
             # page we are not exploring changes the in-server status?
             self.logger.info("not exploring additional aggregatable pages")
+            prevpage, prevlink = page.histories[-1][-1]
+            prevpage.links[prevlink].ignore = True
             return None
         return page.getUnvisitedLink()
 
@@ -686,7 +706,6 @@ class Engine:
                     self.logger.debug("found path: %r", path)
                     page = self.navigatePath(page, path)
                     nextAction = self.processPage(page)
-                    assert nextAction != None
                 else:
                     self.logger.info("no path found, stepping back")
                     page = self.cr.back()
@@ -714,8 +733,10 @@ class Engine:
         self.history.append((page, action))
         newpage.histories.append(self.history[:])
 
+        return newpage
 
-    def updateOutLinks(self, page, action, newpage)
+
+    def updateOutLinks(self, page, action, newpage):
         page.linkto(action, newpage)
         try:
             self.pagemap.unvisited.remove(page, action)
@@ -729,6 +750,8 @@ class Engine:
         self.history = []
         page = self.cr.open(url)
         page = self.pagemap[page]
+        assert len(page.histories) == 0
+        page.histories = [[]]
         nextAction = self.processPage(page)
         while nextAction != None:
             try:
@@ -753,13 +776,13 @@ class Engine:
                 name = url.path
                 if url.query:
                     name += '?' + url.query
-                name += '@%x' % p.__hash__()
+                name += '@%x' % id(p)
                 node = pydot.Node(name)
                 if p.aggregation == PageMapper.AGGREGATED:
                     node.set_color('green')
                 elif p.aggregation == PageMapper.AGGREG_IMPOSS:
                     node.set_color('red')
-                nodes[p] = node
+                nodes[p.exact] = node
 
         self.logger.debug("%d DOT nodes", len(nodes))
 
@@ -767,6 +790,7 @@ class Engine:
             dot.add_node(n)
 
         for n,dn in nodes.iteritems():
+            n = n.page
             src = dn
             links = defaultdict(int)
             for dst in n.links:
@@ -780,13 +804,21 @@ class Engine:
                             color = 'blue'
                     else:
                         color = 'black'
-                    links[(dst.target, color)] += 1
+                    if not dst.nvisits:
+                        style = 'dotted'
+                    else:
+                        style = 'solid'
+                    links[(dst.target, color, style)] += 1
             for k,num in links.iteritems():
-                target, color = k
-                edge = pydot.Edge(src, nodes[target])
-                edge.set_color(color)
-                edge.set_label("%d" % num)
-                dot.add_edge(edge)
+                try:
+                    target, color, style = k
+                    edge = pydot.Edge(src, nodes[target.exact])
+                    edge.set_color(color)
+                    edge.set_style(style)
+                    edge.set_label("%d" % num)
+                    dot.add_edge(edge)
+                except KeyError:
+                    self.logger.error("unable to find target node")
 
         dot.write_ps('graph.ps')
         #dot.write_pdf('graph.pdf')
@@ -800,13 +832,19 @@ if __name__ == "__main__":
     ff = FormFiller()
     login = {'username': 'ludo', 'password': 'duuwhe782osjs'}
     ff.add(login)
+    login = {'user': 'ludo', 'pass': 'ludo'}
+    ff.add(login)
     e = Engine(ff)
     try:
         e.main(sys.argv[1])
     except:
         raise
     finally:
-        e.writeDot()
+        try:
+            e.writeDot()
+        except:
+            import traceback
+            traceback.print_exc()
 
 
 
