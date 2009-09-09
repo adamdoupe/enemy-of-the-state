@@ -687,12 +687,14 @@ class Engine:
         assert prevlink.nvisits > 0
         if prevlink.nvisits > 1:
             clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
-            # XXX remove last history form the original page being cloned
             clonedpage.histories.append(clonedprev.histories[-1] +
                     [(clonedprev, prevlinkidx)])
+            prevlink.nvisits -= 1
         else:
             prevlink.target = clonedpage
             clonedpage.histories.append(page.histories[-1])
+        # remove last histories entry as it proved to be incorrect
+        page.histories.pop()
         # linkto() must be called affter setting history
         if clonedpage.links[linkidx].nvisits:
             # pre-existing clone
