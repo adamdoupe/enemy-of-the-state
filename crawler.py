@@ -345,15 +345,33 @@ class PageMapper:
         inner.latest = page
         if inner.aggregation == PageMapper.STATUS_SPLIT:
             inner[page.exact] = page
+            page.aggregation = PageMapper.STATUS_SPLIT
         else:
             assert len(inner) == 1, "page %r inner %r" % (page, inner.pages)
             oldpage = inner.itervalues().next()
+            assert oldpage.exact != page.exact
             inner.clear()
             inner[oldpage.exact] = oldpage
             inner[page.exact] = page
-            assert len(inner) == 2
+            assert len(inner) == 2, len(inner)
             inner.aggregation = PageMapper.STATUS_SPLIT
+            oldpage.aggregation = PageMapper.STATUS_SPLIT
+            page.aggregation = PageMapper.STATUS_SPLIT
 
+
+    def findClone(self, page, link, target):
+        assert page.links[link].target != target
+        inner = self.first[page.templetized]
+        for p in inner.itervalues():
+            ptarget = p.links[link].target
+            if (ptarget.aggregation != PageMapper.STATUS_SPLIT and \
+                    ptarget == target) or \
+                    ptarget.exact == target.exact:
+                assert p.exact != page.exact, "%r->%r, %r->%r, %r" \
+                        % (p, p.target, page, page.links[link].target,
+                                target)
+                return p
+        return None
 
 class Page:
     HASHVALFMT = 'i'
@@ -656,23 +674,32 @@ class Engine:
 
     def splitPage(self, page, linkidx, newpage):
         self.logger.info("splitting %r", page)
-        clonedpage = page.clone()
-        assert clonedpage.links.__iter__().next().nvisits == 0
+        clonedpage = self.pagemap.findClone(page, linkidx, newpage)
+        if not clonedpage:
+            self.logger.info("splitting %r", page)
+            clonedpage = page.clone()
+            assert clonedpage.links.__iter__().next().nvisits == 0
+        assert clonedpage.exact != page.exact, "%x %x" % \
+                (id(clonedpage.exact), id(page.exact))
         # proppagate the change of status backwards
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
         assert prevlink.nvisits > 0
         if prevlink.nvisits > 1:
             clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
-            assert len(clonedprev.histories) == 1
-            clonedpage.histories = [clonedprev.histories[-1] +
-                    [(clonedprev, prevlinkidx)]]
+            # XXX remove last history form the original page being cloned
+            clonedpage.histories.append(clonedprev.histories[-1] +
+                    [(clonedprev, prevlinkidx)])
         else:
             prevlink.target = clonedpage
-            assert len(clonedpage.histories) == 0
-            clonedpage.histories = [page.histories[-1]]
+            clonedpage.histories.append(page.histories[-1])
         # linkto() must be called affter setting history
-        clonedpage.linkto(linkidx, newpage)
+        if clonedpage.links[linkidx].nvisits:
+            # pre-existing clone
+            assert clonedpage.links[linkidx].target == newpage
+            clonedpage.links[linkidx].nvisits += 1
+        else:
+            clonedpage.linkto(linkidx, newpage)
         self.pagemap.setLatest(clonedpage)
         return clonedpage
 
