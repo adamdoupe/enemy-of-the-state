@@ -266,6 +266,7 @@ class PageMapper:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("new aggregated page %s", page.url)
                     inner[page] = page
+                    page.aggregation = PageMapper.AGGREGATED
                     # XXX: may get thr crawler status out-of-sync
                     page = inner.merged
                 elif inner.aggregation in \
@@ -308,6 +309,9 @@ class PageMapper:
             inner.merged.aggregation = PageMapper.AGGREGATED
             for p in inner:
                 # update links from other pages to the merged ones
+                if p.aggregation != PageMapper.AGGREG_PENDING:
+                    # XXX AGGREG_PENDING is used to explude nodes from plot
+                    p.aggregation = PageMapper.AGGREGATED
                 for pred, anchor in p.backlinks:
                     assert pred.links[anchor].target == p
                     pred.links[anchor].target = inner.merged
@@ -341,7 +345,7 @@ class PageMapper:
     def setLatest(self, page):
         inner = self.first[page.templetized]
         assert inner.aggregation in [PageMapper.NOT_AGGREG,
-                PageMapper.STATUS_SPLIT], "Mixing aggregation and status splitting not supported yet"
+                PageMapper.STATUS_SPLIT], "Mixing aggregation and status splitting not supported yet [%d] %r" % (inner.aggregation, page)
         inner.latest = page
         if inner.aggregation == PageMapper.STATUS_SPLIT:
             inner[page.exact] = page
@@ -360,15 +364,25 @@ class PageMapper:
 
 
     def findClone(self, page, link, target):
-        assert page.links[link].target != target
+        pagetarget = page.links[link].target
+        assert pagetarget.aggregation != PageMapper.STATUS_SPLIT and \
+                pagetarget != target or pagetarget.exact != target.exact, \
+                "%d %x(%x) %x(%x)" % (pagetarget.aggregation,
+                        pagetarget.__hash__(), pagetarget.exact.__hash__(),
+                        target.__hash__(), target.exact.__hash__())
         inner = self.first[page.templetized]
         for p in inner.itervalues():
             ptarget = p.links[link].target
-            if (ptarget.aggregation != PageMapper.STATUS_SPLIT and \
-                    ptarget == target) or \
+            assert not ptarget or \
+                    ptarget.aggregation == pagetarget.aggregation, \
+                    "%r != %r" % (ptarget.aggregation, pagetarget.aggregation)
+            if not ptarget or \
+                    (pagetarget.aggregation != PageMapper.STATUS_SPLIT \
+                    and ptarget == target) or \
                     ptarget.exact == target.exact:
-                assert p.exact != page.exact, "%r->%r, %r->%r, %r" \
-                        % (p, p.target, page, page.links[link].target,
+                assert p.exact != page.exact, "[%d], %r->%r, %r->%r, %r" \
+                        % (ptarget.aggregation, p, ptarget, page,
+                                page.links[link].target,
                                 target)
                 return p
         return None
@@ -400,6 +414,9 @@ class Page:
     def __eq__(self, rhs):
         return self.hashval == rhs.hashval
 
+    def __ne__(self, rhs):
+        return self.hashval != rhs.hashval
+
     def __repr__(self):
         return self.str
 
@@ -410,6 +427,7 @@ class Page:
         link.target = targetpage
         link.history = self.histories[-1]
         targetpage.backlinks.add((self, idx))
+        print "***", self, idx, targetpage, targetpage.links
 
     def getUnvisitedLink(self):
         return self.links.getUnvisited()
@@ -652,28 +670,67 @@ class Engine:
                     break
             assert linkidx != None
             newpage = self.doAction(page, linkidx)
+
+            self.validateHistory(page)
+            # that old page might be newpage, so nthe history may have changed
+            # so do not add the following exception
+            # (actually also the check about might be at riks)
+            #self.validateHistory(page.histories[-1][-1][0])
+
             link = page.links[linkidx]
-            if newpage != p:
-                if link.nvisits == 1:
+            print "^^^", newpage.aggregation, p.aggregation
+            if newpage != p or newpage.aggregation == PageMapper.STATUS_SPLIT \
+                    and newpage.exact != p.exact:
+                if link.nvisits == 0:
+                    # the link was never really visited, but was a result of
+                    # a page split
                     self.logger.info('overriding link target "%s" with "%s"',
                             p, newpage)
-                    link.nvisits = 0
                     self.updateOutLinks(page, linkidx, newpage)
                 else:
                     self.logger.info('unexpected link target "%s" instead of "%s"',
                             newpage, p)
                     clonedpage = self.splitPage(page, linkidx, newpage)
+                    # update history (which was set by doAction())
                     self.history = clonedpage.histories[-1] + \
                             [(clonedpage, linkidx)]
                     newpage.histories[-1] = self.history[:]
+                    print "===", newpage, newpage.histories[-1][-1]
                 return newpage
             else:
+                self.validateHistory(newpage)
+                if newpage.aggregation == PageMapper.STATUS_SPLIT:
+                    assert link.target.exact == newpage.exact
+                if link.nvisits == 0:
+                    # XXX update backlinks
+                    pass
                 link.nvisits += 1
             page = newpage
         return page
 
+    def validateHistory(self, page):
+        if not page.aggregation in [PageMapper.STATUS_SPLIT, PageMapper.NOT_AGGREG]:
+                # XXX history not corrected for aggregated pages!
+                return
+        prevpage, prevlinkidx = page.histories[-1][-1]
+        prevlink =  prevpage.links[prevlinkidx]
+        print "*", prevlink.target, page, page.aggregation
+        assert prevlink.target == page
+        assert prevlink.target.aggregation != PageMapper.STATUS_SPLIT or \
+                prevlink.target.exact == page.exact, \
+                "%r{%r} %r{%r} --- %r" % (prevlink.target.exact, prevlink.target.links, page.exact, page.links, self)
+
     def splitPage(self, page, linkidx, newpage):
-        self.logger.info("splitting %r", page)
+        self.logger.info("diverging %r", page)
+
+        print "###", page, page.histories[-1][-1][0], page.histories[-1][-1][0].links[page.histories[-1][-1][1]].target
+
+        self.validateHistory(page)
+        # that old page might be newpage, so nthe history may have changed
+        # so do not add the following exception
+        # (actually also the check about might be at riks)
+        #self.validateHistory(page.histories[-1][-1][0])
+
         clonedpage = self.pagemap.findClone(page, linkidx, newpage)
         if not clonedpage:
             self.logger.info("splitting %r", page)
@@ -686,6 +743,8 @@ class Engine:
         prevlink =  prevpage.links[prevlinkidx]
         assert prevlink.nvisits > 0
         if prevlink.nvisits > 1:
+            assert prevlink.target.exact != clonedpage.exact, \
+                    "%r %r %r %x %x %x" % (clonedpage.exact, page.exact, prevlink.target.exact, id(clonedpage.exact.page), id(page.exact.page), id(prevlink. target.exact.page))
             clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
             clonedpage.histories.append(clonedprev.histories[-1] +
                     [(clonedprev, prevlinkidx)])
@@ -695,7 +754,7 @@ class Engine:
             clonedpage.histories.append(page.histories[-1])
         # remove last histories entry as it proved to be incorrect
         page.histories.pop()
-        # linkto() must be called affter setting history
+        # linkto() must be called after setting history
         if clonedpage.links[linkidx].nvisits:
             # pre-existing clone
             assert clonedpage.links[linkidx].target == newpage
@@ -703,6 +762,11 @@ class Engine:
         else:
             clonedpage.linkto(linkidx, newpage)
         self.pagemap.setLatest(clonedpage)
+        self.validateHistory(clonedpage)
+        # that old page might be newpage, so nthe history may have changed
+        # so do not add the following exception
+        # (actually also the check about might be at riks)
+        #self.validateHistory(clonedpage.histories[-1][-1][0])
         return clonedpage
 
 
@@ -744,6 +808,7 @@ class Engine:
 
     def doAction(self, page, action):
         if action[0] == Links.ANCHOR:
+            self.logger.info("clicking %s in %s", action[1], page)
             newpage = self.cr.clickAnchor(action[1])
         elif action[0] == Links.FORM:
             try:
@@ -759,8 +824,11 @@ class Engine:
         # use reference to the pre-existing page
         newpage = self.pagemap[newpage]
 
+        # update engine and new page history
         self.history.append((page, action))
         newpage.histories.append(self.history[:])
+
+        print "---", newpage, newpage.histories[-1][-1]
 
         return newpage
 
@@ -784,8 +852,16 @@ class Engine:
         nextAction = self.processPage(page)
         while nextAction != None:
             try:
+                print "PAGE", page, page.links[nextAction].target
+                try:
+                    self.validateHistory(page)
+                except IndexError:
+                    pass
+
                 newpage = self.doAction(page, nextAction)
                 self.updateOutLinks(page, nextAction, newpage)
+
+                self.validateHistory(newpage)
 
                 self.pagemap.checkAggregatable(page)
                 page = newpage
