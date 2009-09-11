@@ -427,7 +427,6 @@ class Page:
         link.target = targetpage
         link.history = self.histories[-1]
         targetpage.backlinks.add((self, idx))
-        print "***", self, idx, targetpage, targetpage.links
 
     def getUnvisitedLink(self):
         return self.links.getUnvisited()
@@ -678,7 +677,6 @@ class Engine:
             #self.validateHistory(page.histories[-1][-1][0])
 
             link = page.links[linkidx]
-            print "^^^", newpage.aggregation, p.aggregation
             if newpage != p or newpage.aggregation == PageMapper.STATUS_SPLIT \
                     and newpage.exact != p.exact:
                 if link.nvisits == 0:
@@ -695,7 +693,6 @@ class Engine:
                     self.history = clonedpage.histories[-1] + \
                             [(clonedpage, linkidx)]
                     newpage.histories[-1] = self.history[:]
-                    print "===", newpage, newpage.histories[-1][-1]
                 return newpage
             else:
                 self.validateHistory(newpage)
@@ -714,7 +711,6 @@ class Engine:
                 return
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
-        print "*", prevlink.target, page, page.aggregation
         assert prevlink.target == page
         assert prevlink.target.aggregation != PageMapper.STATUS_SPLIT or \
                 prevlink.target.exact == page.exact, \
@@ -722,8 +718,6 @@ class Engine:
 
     def splitPage(self, page, linkidx, newpage):
         self.logger.info("diverging %r", page)
-
-        print "###", page, page.histories[-1][-1][0], page.histories[-1][-1][0].links[page.histories[-1][-1][1]].target
 
         self.validateHistory(page)
         # that old page might be newpage, so nthe history may have changed
@@ -828,8 +822,6 @@ class Engine:
         self.history.append((page, action))
         newpage.histories.append(self.history[:])
 
-        print "---", newpage, newpage.histories[-1][-1]
-
         return newpage
 
 
@@ -852,7 +844,6 @@ class Engine:
         nextAction = self.processPage(page)
         while nextAction != None:
             try:
-                print "PAGE", page, page.links[nextAction].target
                 try:
                     self.validateHistory(page)
                 except IndexError:
@@ -894,13 +885,15 @@ class Engine:
         for n in nodes.itervalues():
             dot.add_node(n)
 
+        nulltargets = 0
+
         for n,dn in nodes.iteritems():
             n = n.page
             src = dn
             links = defaultdict(int)
             for dst in n.links:
                 if not dst.target:
-                    self.logger.warn("found null target")
+                    nulltargets += 1
                 elif dst.target.aggregation != PageMapper.AGGREG_PENDING:
                     if dst.__class__.__name__ == 'Form':
                         if dst.method == 'post':
@@ -924,6 +917,9 @@ class Engine:
                     dot.add_edge(edge)
                 except KeyError:
                     self.logger.error("unable to find target node")
+
+        if nulltargets:
+            self.logger.warn("found null %d targets", nulltargets)
 
         dot.write_ps('graph.ps')
         #dot.write_pdf('graph.pdf')
