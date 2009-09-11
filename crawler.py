@@ -362,8 +362,7 @@ class PageMapper:
 
     def findClone(self, page, link, target):
         pagetarget = page.links[link].target
-        assert pagetarget.aggregation != PageMapper.STATUS_SPLIT and \
-                pagetarget.basic != target.basic or pagetarget != target, \
+        assert not target.equiv(pagetarget), \
                 "%d %x(%x) %x(%x)" % (pagetarget.aggregation,
                         pagetarget.basic.__hash__(), pagetarget.__hash__(),
                         target.basic.__hash__(), target.__hash__())
@@ -373,14 +372,11 @@ class PageMapper:
             assert not ptarget or \
                     ptarget.aggregation == pagetarget.aggregation, \
                     "%r != %r" % (ptarget.aggregation, pagetarget.aggregation)
-            if not ptarget or \
-                    (pagetarget.aggregation != PageMapper.STATUS_SPLIT \
-                    and ptarget.basic == target.basic) or \
-                    ptarget == target:
+            if not ptarget or target.equiv(ptarget):
+                print ptarget.aggregation, target.aggregation, pagetarget.aggregation
                 assert p != page, "[%d], %r->%r, %r->%r, %r" \
                         % (ptarget.aggregation, p, ptarget, page,
-                                page.links[link].target,
-                                target)
+                                pagetarget, target)
                 return p
         return None
 
@@ -432,6 +428,10 @@ class Page:
         cloned.links = self.links.clone()
         cloned.hashval = id(cloned)
         return cloned
+
+    def equiv(self, rhs):
+        return self.aggregation != PageMapper.STATUS_SPLIT and \
+                self.basic == rhs.basic or self == rhs
 
 class BasicPage(Page):
 
@@ -667,8 +667,7 @@ class Engine:
             #self.validateHistory(page.histories[-1][-1][0])
 
             link = page.links[linkidx]
-            if newpage.basic != p.basic or newpage.aggregation == PageMapper.STATUS_SPLIT \
-                    and newpage != p:
+            if not newpage.equiv(p):
                 if link.nvisits == 0:
                     # the link was never really visited, but was a result of
                     # a page split
@@ -702,8 +701,7 @@ class Engine:
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
         assert prevlink.target.basic == page.basic
-        assert prevlink.target.aggregation != PageMapper.STATUS_SPLIT or \
-                prevlink.target == page, \
+        assert page.equiv(prevlink.target), \
                 "%r{%r} %r{%r} --- %r" % (prevlink.target, prevlink.target.links, page, page.links, self)
 
     def splitPage(self, page, linkidx, newpage):
