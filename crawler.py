@@ -191,7 +191,7 @@ class PageMapper:
 
     class Inner:
         def __init__(self, page):
-            self.pages = {page: page}
+            self.pages = {page.basic: page}
             self.merged = None
             # we ant to use the first reached page as reference for all the
             # similar pages
@@ -214,7 +214,7 @@ class PageMapper:
             return k in self.pages
 
         def __iter__(self):
-            return self.pages.__iter__()
+            return self.pages.itervalues()
 
         def iteritems(self):
             return self.pages.iteritems()
@@ -246,10 +246,10 @@ class PageMapper:
             inner = self.first[page.templetized]
             if inner.aggregation == PageMapper.STATUS_SPLIT:
                 self.logger.info("known status splitted page %s", page.url)
-                assert page == inner.latest, "Impossible to aggregate when status splitting"
+                assert page.basic == inner.latest.basic, "Impossible to aggregate when status splitting"
                 # remeber that __eq__ for Page has been redefined
                 page = inner.latest
-            elif page in inner:
+            elif page.basic in inner:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("known aggregated page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
@@ -258,25 +258,25 @@ class PageMapper:
                         [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
                     self.logger.info("known aggregatable page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
-                    page = inner[page]
+                    page = inner[page.basic]
                 else:
                     self.logger.info("known page %s", page.url)
-                    page = inner[page]
+                    page = inner[page.basic]
             else:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("new aggregated page %s", page.url)
-                    inner[page] = page
+                    inner[page.basic] = page
                     page.aggregation = PageMapper.AGGREGATED
                     # XXX: may get thr crawler status out-of-sync
                     page = inner.merged
                 elif inner.aggregation in \
                         [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
                     self.logger.info("new aggregatable page %s", page.url)
-                    inner[page] = page
+                    inner[page.basic] = page
                     page.aggregation = PageMapper.AGGREG_PENDING
                 else:
                     self.logger.info("new similar page %s", page.url)
-                    inner[page] = page
+                    inner[page.basic] = page
                     if len(inner) >= config.SIMILAR_JOIN_THRESHOLD:
                         self.logger.info("aggregatable pages %r",
                                 [p.url for p in inner])
@@ -318,13 +318,10 @@ class PageMapper:
         else:
             self.logger.info("impossible to aggregate %r", page)
             inner.aggregation = PageMapper.AGGREG_IMPOSS
-            for p,v in inner.iteritems():
-                assert p == v, "%r != %r" % (p, v)
+            for p in inner:
                 if p.aggregation != PageMapper.AGGREG_PENDING:
                     # XXX AGGREG_PENDING is used to explude nodes from plot
                     p.aggregation = PageMapper.AGGREG_IMPOSS
-
-
 
 
     def aggregatable(self, page):
@@ -336,7 +333,7 @@ class PageMapper:
                 if p.aggregation != PageMapper.AGGREG_PENDING)
             #print "TARGETSET", targetset
             if len(targetset) > 1 and \
-                    not all(p in inner for p in targetset):
+                    not all(p.basic in inner for p in targetset):
                 # different pages have different outgoing links
                 # and they do not point to pages in the aggregatable set
                 return False
@@ -348,15 +345,15 @@ class PageMapper:
                 PageMapper.STATUS_SPLIT], "Mixing aggregation and status splitting not supported yet [%d] %r" % (inner.aggregation, page)
         inner.latest = page
         if inner.aggregation == PageMapper.STATUS_SPLIT:
-            inner[page.exact] = page
+            inner[page] = page
             page.aggregation = PageMapper.STATUS_SPLIT
         else:
             assert len(inner) == 1, "page %r inner %r" % (page, inner.pages)
             oldpage = inner.itervalues().next()
-            assert oldpage.exact != page.exact
+            assert oldpage != page
             inner.clear()
-            inner[oldpage.exact] = oldpage
-            inner[page.exact] = page
+            inner[oldpage] = oldpage
+            inner[page] = page
             assert len(inner) == 2, len(inner)
             inner.aggregation = PageMapper.STATUS_SPLIT
             oldpage.aggregation = PageMapper.STATUS_SPLIT
@@ -366,21 +363,21 @@ class PageMapper:
     def findClone(self, page, link, target):
         pagetarget = page.links[link].target
         assert pagetarget.aggregation != PageMapper.STATUS_SPLIT and \
-                pagetarget != target or pagetarget.exact != target.exact, \
+                pagetarget.basic != target.basic or pagetarget != target, \
                 "%d %x(%x) %x(%x)" % (pagetarget.aggregation,
-                        pagetarget.__hash__(), pagetarget.exact.__hash__(),
-                        target.__hash__(), target.exact.__hash__())
+                        pagetarget.basic.__hash__(), pagetarget.__hash__(),
+                        target.basic.__hash__(), target.__hash__())
         inner = self.first[page.templetized]
-        for p in inner.itervalues():
+        for p in inner:
             ptarget = p.links[link].target
             assert not ptarget or \
                     ptarget.aggregation == pagetarget.aggregation, \
                     "%r != %r" % (ptarget.aggregation, pagetarget.aggregation)
             if not ptarget or \
                     (pagetarget.aggregation != PageMapper.STATUS_SPLIT \
-                    and ptarget == target) or \
-                    ptarget.exact == target.exact:
-                assert p.exact != page.exact, "[%d], %r->%r, %r->%r, %r" \
+                    and ptarget.basic == target.basic) or \
+                    ptarget == target:
+                assert p != page, "[%d], %r->%r, %r->%r, %r" \
                         % (ptarget.aggregation, p, ptarget, page,
                                 page.links[link].target,
                                 target)
@@ -399,14 +396,11 @@ class Page:
             self.links.hashData(),
             str(self.cookies)])
         self.histories = []
-        self.calchash()
+        self.hashval = id(self)
         self.backlinks = set()
         self.aggregation = PageMapper.NOT_AGGREG
         self.templetized = TempletizedPage(self)
-        self.exact = ExactPage(self)
-
-    def calchash(self):
-        self.hashval = self.str.__hash__()
+        self.basic = BasicPage(self)
 
     def __hash__(self):
         return self.hashval
@@ -436,11 +430,15 @@ class Page:
         cloned.histories = []
         cloned.backlinks = set()
         cloned.links = self.links.clone()
-        cloned.exact = ExactPage(cloned)
-        #assert False, "XXX define str"
+        cloned.hashval = id(cloned)
         return cloned
 
+class BasicPage(Page):
 
+    def __init__(self, page):
+        self.page = page
+        self.str = 'Basic' + self.page.str
+        self.hashval = self.str.__hash__()
 
 class TempletizedPage(Page):
 
@@ -449,15 +447,7 @@ class TempletizedPage(Page):
         self.str = 'TempletizedPage(%s)' % \
                 ','.join([page.links.strippedHashData(),
                     str(page.cookies)])
-        self.calchash()
-
-class ExactPage(Page):
-
-    def __init__(self, page):
-        self.page = page
-        self.str = "Exact" + page.str
-        self.hashval = id(self.page)
-
+        self.hashval = self.str.__hash__()
 
 class FormFiller:
     def __init__(self):
@@ -660,7 +650,7 @@ class Engine:
             self.logger.warn("unexplored forms not reachable!")
 
     def navigatePath(self, page, path):
-        assert page == self.cr.page
+        assert page.basic == self.cr.page.basic
         for p in path:
             linkidx = None
             for i,l in page.links.enumerate():
@@ -677,8 +667,8 @@ class Engine:
             #self.validateHistory(page.histories[-1][-1][0])
 
             link = page.links[linkidx]
-            if newpage != p or newpage.aggregation == PageMapper.STATUS_SPLIT \
-                    and newpage.exact != p.exact:
+            if newpage.basic != p.basic or newpage.aggregation == PageMapper.STATUS_SPLIT \
+                    and newpage != p:
                 if link.nvisits == 0:
                     # the link was never really visited, but was a result of
                     # a page split
@@ -697,7 +687,7 @@ class Engine:
             else:
                 self.validateHistory(newpage)
                 if newpage.aggregation == PageMapper.STATUS_SPLIT:
-                    assert link.target.exact == newpage.exact
+                    assert link.target == newpage
                 if link.nvisits == 0:
                     # XXX update backlinks
                     pass
@@ -711,10 +701,10 @@ class Engine:
                 return
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
-        assert prevlink.target == page
+        assert prevlink.target.basic == page.basic
         assert prevlink.target.aggregation != PageMapper.STATUS_SPLIT or \
-                prevlink.target.exact == page.exact, \
-                "%r{%r} %r{%r} --- %r" % (prevlink.target.exact, prevlink.target.links, page.exact, page.links, self)
+                prevlink.target == page, \
+                "%r{%r} %r{%r} --- %r" % (prevlink.target, prevlink.target.links, page, page.links, self)
 
     def splitPage(self, page, linkidx, newpage):
         self.logger.info("diverging %r", page)
@@ -730,15 +720,15 @@ class Engine:
             self.logger.info("splitting %r", page)
             clonedpage = page.clone()
             assert clonedpage.links.__iter__().next().nvisits == 0
-        assert clonedpage.exact != page.exact, "%x %x" % \
-                (id(clonedpage.exact), id(page.exact))
+        assert clonedpage != page, "%x %x" % \
+                (id(clonedpage), id(page))
         # proppagate the change of status backwards
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
         assert prevlink.nvisits > 0
         if prevlink.nvisits > 1:
-            assert prevlink.target.exact != clonedpage.exact, \
-                    "%r %r %r %x %x %x" % (clonedpage.exact, page.exact, prevlink.target.exact, id(clonedpage.exact.page), id(page.exact.page), id(prevlink. target.exact.page))
+            assert prevlink.target != clonedpage, \
+                    "%r %r %r %x %x %x" % (clonedpage, page, prevlink.target, id(clonedpage), id(page), id(prevlink.target))
             clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
             clonedpage.histories.append(clonedprev.histories[-1] +
                     [(clonedprev, prevlinkidx)])
@@ -751,7 +741,7 @@ class Engine:
         # linkto() must be called after setting history
         if clonedpage.links[linkidx].nvisits:
             # pre-existing clone
-            assert clonedpage.links[linkidx].target == newpage
+            assert clonedpage.links[linkidx].target.basic == newpage.basic
             clonedpage.links[linkidx].nvisits += 1
         else:
             clonedpage.linkto(linkidx, newpage)
@@ -878,7 +868,7 @@ class Engine:
                     node.set_color('green')
                 elif p.aggregation == PageMapper.AGGREG_IMPOSS:
                     node.set_color('red')
-                nodes[p.exact] = node
+                nodes[p] = node
 
         self.logger.debug("%d DOT nodes", len(nodes))
 
@@ -888,7 +878,6 @@ class Engine:
         nulltargets = 0
 
         for n,dn in nodes.iteritems():
-            n = n.page
             src = dn
             links = defaultdict(int)
             for dst in n.links:
@@ -910,7 +899,7 @@ class Engine:
             for k,num in links.iteritems():
                 try:
                     target, color, style = k
-                    edge = pydot.Edge(src, nodes[target.exact])
+                    edge = pydot.Edge(src, nodes[target])
                     edge.set_color(color)
                     edge.set_style(style)
                     edge.set_label("%d" % num)
