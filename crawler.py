@@ -199,10 +199,10 @@ class PageMapper:
             self.aggregation = PageMapper.NOT_AGGREG
 
         def __getitem__(self, page):
-            return self.pages[page]
+            return self.pages[page.basic]
 
         def __setitem__(self, page, samepage):
-            self.pages[page] = samepage
+            self.pages[page.basic] = samepage
 
         def clear(self):
             self.pages = {}
@@ -211,7 +211,10 @@ class PageMapper:
             return len(self.pages)
 
         def __contains__(self, k):
-            return k in self.pages
+            return k.basic in self.pages
+
+        def hasvalue(self, p):
+            return p in self.pages.itervalues()
 
         def __iter__(self):
             return self.pages.itervalues()
@@ -231,25 +234,81 @@ class PageMapper:
                 for i in self.pages.itervalues():
                     yield i
 
+        def __repr__(self):
+            return self.pages.__repr__()
+
+    class Splits:
+        def __init__(self, inner):
+            self.inners = [inner]
+            self.latest = inner
+
+        def __len__(self):
+            return len(self.inners)
+
+        def __iter__(self):
+            return self.inners.__iter__()
+
+        def append(self, inner):
+            self.inners.append(inner)
+
+        def __repr__(self):
+            return self.inners.__repr__()
+
+        def __getitem__(self, idx):
+            return self.inners[idx]
+
+    class Buckets:
+
+        def __init__(self):
+            self.buckets = {}
+
+        def __getitem__(self, page):
+            return self.buckets[page.templetized]
+
+        def __setitem__(self, page, splits):
+            self.buckets[page.templetized] = splits
+
+        def __contains__(self, page):
+            return self.buckets.__contains__(page.templetized)
+
+        def itervalues(self):
+            return self.buckets.itervalues()
+
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.unvisited = Unvisited()
         self.unsubmitted = set()
-        self.first = {}
+        self.buckets = PageMapper.Buckets()
 
     def __getitem__(self, page):
-        if page.templetized  not in self.first:
+        return self.get(page)
+
+    def get(self, page, preferred=None):
+        if page not in self.buckets:
             self.logger.info("new page %s", page.url)
-            self.first[page.templetized] = PageMapper.Inner(page)
+            self.buckets[page] = \
+                    PageMapper.Splits(PageMapper.Inner(page))
             self.unvisited.addPage(page)
         else:
-            inner = self.first[page.templetized]
-            if inner.aggregation == PageMapper.STATUS_SPLIT:
+            splits = self.buckets[page]
+            if len(splits) > 1:
                 self.logger.info("known status splitted page %s", page.url)
-                assert page.basic == inner.latest.basic, "Impossible to aggregate when status splitting"
-                # remeber that __eq__ for Page has been redefined
-                page = inner.latest
-            elif page.basic in inner:
+            inner = None
+            if preferred:
+                # return the preferred page if available
+                # look inside map values as, inner maps are hashed on .basic
+                for i in splits:
+                    if i.hasvalue(preferred):
+                        inner = i
+                        self.logger.debug("preferred page found: %r", preferred)
+                        break
+                if not inner:
+                    self.logger.debug("preferred page not available: %r", preferred)
+                    inner = splits.latest
+            else:
+                inner = splits.latest
+            assert len(splits) == 1 or page in inner
+            if page in inner:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("known aggregated page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
@@ -258,25 +317,25 @@ class PageMapper:
                         [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
                     self.logger.info("known aggregatable page %s", page.url)
                     # XXX: may get thr crawler status out-of-sync
-                    page = inner[page.basic]
+                    page = inner[page]
                 else:
                     self.logger.info("known page %s", page.url)
-                    page = inner[page.basic]
+                    page = inner[page]
             else:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("new aggregated page %s", page.url)
-                    inner[page.basic] = page
+                    inner[page] = page
                     page.aggregation = PageMapper.AGGREGATED
                     # XXX: may get thr crawler status out-of-sync
                     page = inner.merged
                 elif inner.aggregation in \
                         [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
                     self.logger.info("new aggregatable page %s", page.url)
-                    inner[page.basic] = page
+                    inner[page] = page
                     page.aggregation = PageMapper.AGGREG_PENDING
                 else:
                     self.logger.info("new similar page %s", page.url)
-                    inner[page.basic] = page
+                    inner[page] = page
                     if len(inner) >= config.SIMILAR_JOIN_THRESHOLD:
                         self.logger.info("aggregatable pages %r",
                                 [p.url for p in inner])
@@ -285,13 +344,15 @@ class PageMapper:
         return page
 
     def __iter__(self):
-        for i in self.first.itervalues():
-            for j in i.smartiter():
-                yield j
+        for i in self.buckets.itervalues():
+            for j in i:
+                for k in j.smartiter():
+                    yield k
 
     def checkAggregatable(self, page):
         # TODO: support for backformlinks
-        inner = self.first[page.templetized]
+        splits = self.buckets[page]
+        inner = splits.latest
         if inner.aggregation != PageMapper.AGGREG_PENDING:
             return
         # make sure we have visited all the links of the first
@@ -327,58 +388,65 @@ class PageMapper:
     def aggregatable(self, page):
         # aggregate only if all the links across aggregatable pages
         # point to the same page
-        inner = self.first[page.templetized]
+        # XXX if conditions is false it may be worth trying to split
+        splits = self.buckets[page]
+        inner = splits.latest
         for i,l in page.links.enumerate():
             targetset = set(p.links[i].target for p in inner
                 if p.aggregation != PageMapper.AGGREG_PENDING)
             #print "TARGETSET", targetset
             if len(targetset) > 1 and \
-                    not all(p.basic in inner for p in targetset):
+                    not all(p in inner for p in targetset):
                 # different pages have different outgoing links
                 # and they do not point to pages in the aggregatable set
                 return False
         return True
 
-    def setLatest(self, page):
-        inner = self.first[page.templetized]
-        assert inner.aggregation in [PageMapper.NOT_AGGREG,
-                PageMapper.STATUS_SPLIT], "Mixing aggregation and status splitting not supported yet [%d] %r" % (inner.aggregation, page)
-        inner.latest = page
-        if inner.aggregation == PageMapper.STATUS_SPLIT:
-            inner[page] = page
-            page.aggregation = PageMapper.STATUS_SPLIT
+    def setLatest(self, page, splitidx):
+        splits = self.buckets[page]
+        if splitidx < 0:
+            inner = PageMapper.Inner(page)
+            splits.append(inner)
+            splits.latest = inner
         else:
-            assert len(inner) == 1, "page %r inner %r" % (page, inner.pages)
-            oldpage = inner.itervalues().next()
-            assert oldpage != page
-            inner.clear()
-            inner[oldpage] = oldpage
-            inner[page] = page
-            assert len(inner) == 2, len(inner)
-            inner.aggregation = PageMapper.STATUS_SPLIT
-            oldpage.aggregation = PageMapper.STATUS_SPLIT
-            page.aggregation = PageMapper.STATUS_SPLIT
+            splits.latest = splits[splitidx]
 
+    def isClone(self, page, p, link, target):
+        pagetarget = page.links[link].target
+        ptarget = p.links[link].target
+        assert not ptarget or \
+                ptarget.aggregation == pagetarget.aggregation, \
+                "%r != %r" % (ptarget.aggregation, pagetarget.aggregation)
+        if not ptarget or target.equiv(ptarget):
+            assert p != page, "[%d], %r->%r, %r->%r, %r" \
+                    % (ptarget.aggregation, p, ptarget, page,
+                            pagetarget, target)
+            return p
+        return None
 
     def findClone(self, page, link, target):
         pagetarget = page.links[link].target
         assert not target.equiv(pagetarget), \
-                "%d %x(%x) %x(%x)" % (pagetarget.aggregation,
+                "%d %s %s %x(%x) %x(%x)" % (pagetarget.aggregation,
+                        target.split, pagetarget.split,
                         pagetarget.basic.__hash__(), pagetarget.__hash__(),
                         target.basic.__hash__(), target.__hash__())
-        inner = self.first[page.templetized]
-        for p in inner:
-            ptarget = p.links[link].target
-            assert not ptarget or \
-                    ptarget.aggregation == pagetarget.aggregation, \
-                    "%r != %r" % (ptarget.aggregation, pagetarget.aggregation)
-            if not ptarget or target.equiv(ptarget):
-                print ptarget.aggregation, target.aggregation, pagetarget.aggregation
-                assert p != page, "[%d], %r->%r, %r->%r, %r" \
-                        % (ptarget.aggregation, p, ptarget, page,
-                                pagetarget, target)
-                return p
-        return None
+        splits = self.buckets[page]
+        for splitidx,inner in enumerate(splits):
+            assert (inner.aggregation == PageMapper.AGGREGATED) \
+                    == (inner.merged != None)
+            if inner.merged:
+                ret = self.isClone(page, inner.merged, link, target)
+                if ret:
+                    return (ret, splitidx)
+            else:
+                for p in inner:
+                    #if page.equiv(p):
+                        assert page.basic == p.basic
+                        ret = self.isClone(page, p, link, target)
+                        if ret:
+                            return (ret, splitidx)
+        return (None, -1)
 
 class Page:
     HASHVALFMT = 'i'
@@ -397,6 +465,7 @@ class Page:
         self.aggregation = PageMapper.NOT_AGGREG
         self.templetized = TempletizedPage(self)
         self.basic = BasicPage(self)
+        self.split = False
 
     def __hash__(self):
         return self.hashval
@@ -427,11 +496,12 @@ class Page:
         cloned.backlinks = set()
         cloned.links = self.links.clone()
         cloned.hashval = id(cloned)
+        cloned.split = self.split
         return cloned
 
     def equiv(self, rhs):
-        return self.aggregation != PageMapper.STATUS_SPLIT and \
-                self.basic == rhs.basic or self == rhs
+        return not (self.split or rhs.split) and self.basic == rhs.basic \
+                or self == rhs
 
 class BasicPage(Page):
 
@@ -617,6 +687,7 @@ class Engine:
         newheads = {}
         while heads:
             for h,p in heads.iteritems():
+                if h.url == "http://localhost/~cavedon/root.html":
                 unvisited = h.links.getUnvisited(what)
                 if unvisited:
                     assert (h, unvisited) in self.pagemap.unvisited, "page %r  link %r not in %r" % (h, unvisited, self.pagemap.unvisited)
@@ -624,7 +695,9 @@ class Engine:
                     return [i for i in reversed([h]+p[:-1])]
                 newpath = [h]+p
                 newheads.update((newh, newpath) for newh in
-                    (set(l.target for l in self.pagemap[h].links.iter(how)
+                    # WHY was I doing that????
+                    #(set(l.target for l in self.pagemap[h].links.iter(how)
+                    (set(l.target for l in h.links.iter(how)
                         if l.target and not l.ignore) - seen))
                 seen |= set(newheads.keys())
             heads = newheads
@@ -657,8 +730,8 @@ class Engine:
                 if l.target == p:
                     linkidx = i
                     break
-            assert linkidx != None
-            newpage = self.doAction(page, linkidx)
+            assert linkidx != None, "%r<%r> != %r" % (page, page.links, p)
+            newpage = self.doAction(page, linkidx, preferred=p)
 
             self.validateHistory(page)
             # that old page might be newpage, so nthe history may have changed
@@ -667,7 +740,7 @@ class Engine:
             #self.validateHistory(page.histories[-1][-1][0])
 
             link = page.links[linkidx]
-            if not newpage.equiv(p):
+            if not newpage == p:
                 if link.nvisits == 0:
                     # the link was never really visited, but was a result of
                     # a page split
@@ -685,7 +758,7 @@ class Engine:
                 return newpage
             else:
                 self.validateHistory(newpage)
-                if newpage.aggregation == PageMapper.STATUS_SPLIT:
+                if newpage.split:
                     assert link.target == newpage
                 if link.nvisits == 0:
                     # XXX update backlinks
@@ -695,12 +768,12 @@ class Engine:
         return page
 
     def validateHistory(self, page):
-        if not page.aggregation in [PageMapper.STATUS_SPLIT, PageMapper.NOT_AGGREG]:
+        if not page.aggregation in [PageMapper.NOT_AGGREG]:
                 # XXX history not corrected for aggregated pages!
                 return
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
-        assert prevlink.target.basic == page.basic
+        assert prevlink.target == page, "%r %r %r %r" % (prevlink.target, page, prevlink.target.links, page.links)
         assert page.equiv(prevlink.target), \
                 "%r{%r} %r{%r} --- %r" % (prevlink.target, prevlink.target.links, page, page.links, self)
 
@@ -713,7 +786,9 @@ class Engine:
         # (actually also the check about might be at riks)
         #self.validateHistory(page.histories[-1][-1][0])
 
-        clonedpage = self.pagemap.findClone(page, linkidx, newpage)
+        page.split = True
+
+        clonedpage, splitidx = self.pagemap.findClone(page, linkidx, newpage)
         if not clonedpage:
             self.logger.info("splitting %r", page)
             clonedpage = page.clone()
@@ -723,10 +798,12 @@ class Engine:
         # proppagate the change of status backwards
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
+        assert prevlink.target == page, "%r %r %r" % (prevlink.target, page, \
+                prevpage)
         assert prevlink.nvisits > 0
+        assert prevlink.target != clonedpage, \
+                "%r %r %r %x %x %x" % (clonedpage, page, prevlink.target, id(clonedpage), id(page), id(prevlink.target))
         if prevlink.nvisits > 1:
-            assert prevlink.target != clonedpage, \
-                    "%r %r %r %x %x %x" % (clonedpage, page, prevlink.target, id(clonedpage), id(page), id(prevlink.target))
             clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
             clonedpage.histories.append(clonedprev.histories[-1] +
                     [(clonedprev, prevlinkidx)])
@@ -743,7 +820,7 @@ class Engine:
             clonedpage.links[linkidx].nvisits += 1
         else:
             clonedpage.linkto(linkidx, newpage)
-        self.pagemap.setLatest(clonedpage)
+        self.pagemap.setLatest(clonedpage, splitidx)
         self.validateHistory(clonedpage)
         # that old page might be newpage, so nthe history may have changed
         # so do not add the following exception
@@ -778,7 +855,8 @@ class Engine:
                     # we are done
                     return (None, page)
                 if path:
-                    self.logger.debug("found path: %r", path)
+                    self.logger.debug("found path: %r",
+                            ["%r<%r>" % (p, p.links) for p in path])
                     page = self.navigatePath(page, path)
                     nextAction = self.processPage(page)
                 else:
@@ -788,7 +866,7 @@ class Engine:
         self.logger.debug("next action %r", nextAction)
         return (nextAction, page)
 
-    def doAction(self, page, action):
+    def doAction(self, page, action, preferred=None):
         if action[0] == Links.ANCHOR:
             self.logger.info("clicking %s in %s", action[1], page)
             newpage = self.cr.clickAnchor(action[1])
@@ -804,7 +882,7 @@ class Engine:
             assert False, "Unknown action %r" % action
 
         # use reference to the pre-existing page
-        newpage = self.pagemap[newpage]
+        newpage = self.pagemap.get(newpage, preferred)
 
         # update engine and new page history
         self.history.append((page, action))
