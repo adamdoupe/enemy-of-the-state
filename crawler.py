@@ -113,7 +113,7 @@ class Links:
         elif what == Links.FORM:
             iterlist = [self.anchors, self.forms]
         else:
-            raise KeyError(idx)
+            raise KeyError()
 
         for i in iterlist:
             for j in i:
@@ -292,7 +292,7 @@ class PageMapper:
         else:
             splits = self.buckets[page]
             if len(splits) > 1:
-                self.logger.info("known status splitted page %s", page.url)
+                self.logger.info("potential status splitted page %s", page)
             inner = None
             if preferred:
                 # return the preferred page if available
@@ -307,7 +307,15 @@ class PageMapper:
                     inner = splits.latest
             else:
                 inner = splits.latest
-            assert len(splits) == 1 or page in inner
+            # if we have a page that is not in the latest split, look for it
+            # in the other splits
+            if len(splits) > 1 and not page in inner:
+                for i in splits:
+                    if page in i:
+                        inner = i
+                        break
+#            assert len(splits) == 1 or page in inner, \
+#                    "SPLITS %r\nINNER %r" % (splits, inner)
             if page in inner:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("known aggregated page %s", page.url)
@@ -319,7 +327,7 @@ class PageMapper:
                     # XXX: may get thr crawler status out-of-sync
                     page = inner[page]
                 else:
-                    self.logger.info("known page %s", page.url)
+                    self.logger.info("known page %s", page)
                     page = inner[page]
             else:
                 if inner.aggregation == PageMapper.AGGREGATED:
@@ -441,8 +449,10 @@ class PageMapper:
                     return (ret, splitidx)
             else:
                 for p in inner:
-                    #if page.equiv(p):
-                        assert page.basic == p.basic
+                    # we need the follwing check because page may be
+                    # aggragatable; equiv() would fail because it it checking
+                    # the split values
+                    if page.basic == p.basic:
                         ret = self.isClone(page, p, link, target)
                         if ret:
                             return (ret, splitidx)
@@ -515,7 +525,7 @@ class TempletizedPage(Page):
     def __init__(self, page):
         self.page = page
         self.str = 'TempletizedPage(%s)' % \
-                ','.join([page.links.strippedHashData(),
+                ','.join([self.page.url.split('?')[0], page.links.strippedHashData(),
                     str(page.cookies)])
         self.hashval = self.str.__hash__()
 
