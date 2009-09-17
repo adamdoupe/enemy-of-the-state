@@ -687,7 +687,6 @@ class Engine:
         newheads = {}
         while heads:
             for h,p in heads.iteritems():
-                if h.url == "http://localhost/~cavedon/root.html":
                 unvisited = h.links.getUnvisited(what)
                 if unvisited:
                     assert (h, unvisited) in self.pagemap.unvisited, "page %r  link %r not in %r" % (h, unvisited, self.pagemap.unvisited)
