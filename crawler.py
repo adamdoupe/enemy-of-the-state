@@ -197,6 +197,7 @@ class PageMapper:
             # similar pages
             self.original = page
             self.aggregation = PageMapper.NOT_AGGREG
+            self.templ_outlinks = defaultdict(lambda: (0, set()))
 
         def __getitem__(self, page):
             return self.pages[page.basic]
@@ -379,7 +380,7 @@ class PageMapper:
             for p in inner:
                 # update links from other pages to the merged ones
                 if p.aggregation != PageMapper.AGGREG_PENDING:
-                    # XXX AGGREG_PENDING is used to explude nodes from plot
+                    # XXX AGGREG_PENDING is used to exclude nodes from plot
                     p.aggregation = PageMapper.AGGREGATED
                 for pred, anchor in p.backlinks:
                     assert pred.links[anchor].target == p
@@ -389,7 +390,7 @@ class PageMapper:
             inner.aggregation = PageMapper.AGGREG_IMPOSS
             for p in inner:
                 if p.aggregation != PageMapper.AGGREG_PENDING:
-                    # XXX AGGREG_PENDING is used to explude nodes from plot
+                    # XXX AGGREG_PENDING is used to exclude nodes from plot
                     p.aggregation = PageMapper.AGGREG_IMPOSS
 
 
@@ -770,7 +771,7 @@ class Engine:
                 if newpage.split:
                     assert link.target == newpage
                 if link.nvisits == 0:
-                    # XXX update backlinks
+                    newpage.backlinks.add((page, linkidx))
                     pass
                 link.nvisits += 1
             page = newpage
@@ -778,7 +779,7 @@ class Engine:
 
     def validateHistory(self, page):
         if not page.aggregation in [PageMapper.NOT_AGGREG]:
-                # XXX history not corrected for aggregated pages!
+                # XXX history not correct for aggregated pages!
                 return
         prevpage, prevlinkidx = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx]
