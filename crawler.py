@@ -8,6 +8,7 @@ import logging
 import urlparse
 import copy
 import pydot
+import heapq
 
 import config
 
@@ -18,6 +19,7 @@ class Anchor:
         self.target = target
         self.ignore = False
         self.history = None
+        self.hasparams = url.find('?') != -1
 
     def __repr__(self):
         return 'Anchor(url=%r, nvisits=%d, target=%r)' \
@@ -41,6 +43,7 @@ class Form:
         self.nvisits = 0
         self.ignore = False
         self.history = None
+        self.isPOST = action.upper() == "POST"
 
     def __repr__(self):
         return ('Form(method=%r, action=%r, inputs=%r, textarea=%r,' +
@@ -73,7 +76,7 @@ class Links:
         elif what == Links.FORM:
             return self.nForms()
         else:
-            raise KeyError(idx)
+            raise KeyError()
 
     def __repr__(self):
         return '(%s, %s)' % (self.anchors, self.forms)
@@ -160,8 +163,8 @@ class Unvisited:
     def logInfo(self):
         self.logger.info("still unvisited: %d anchors, %d forms",
                 len(self.anchors), len(self.forms))
-        #self.logger.debug("still unvisited: %r anchors, %r forms",
-        #        self.anchors, self.forms)
+        self.logger.debug("still unvisited: %r anchors, %r forms",
+                self.anchors, self.forms)
 
     def len(self, what):
         if what == Links.ANCHOR:
@@ -692,45 +695,47 @@ class Engine:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.formfiller = formfiller
 
-    def findPathToUnvisited_(self, page, what, how):
-        seen = set([page])
-        heads = {page: []}
-        newheads = {}
-        while heads:
-            for h,p in heads.iteritems():
-                unvisited = h.links.getUnvisited(what)
-                if unvisited:
-                    assert (h, unvisited) in self.pagemap.unvisited, "page %r  link %r not in %r" % (h, unvisited, self.pagemap.unvisited)
-                    # exclude the starting page from the path
-                    return [i for i in reversed([h]+p[:-1])]
-                newpath = [h]+p
-                newheads.update((newh, newpath) for newh in
-                    # WHY was I doing that????
-                    #(set(l.target for l in self.pagemap[h].links.iter(how)
-                    (set(l.target for l in h.links.iter(how)
-                        if l.target and not l.ignore) - seen))
-                seen |= set(newheads.keys())
-            heads = newheads
-            newheads = {}
-
+    def getWeight(self, idx, link):
+        if idx[0] == Links.FORM:
+            return 0 if link.isPOST else 1
+        else: #if idx[0] == Links.ANCHOR:
+            return 2 if link.hasparams else 3
 
     def findPathToUnvisited(self, page):
-        if self.pagemap.unvisited.len(Links.ANCHOR):
-            path = self.findPathToUnvisited_(page, Links.ANCHOR, Links.ANCHOR)
-            if not path:
-                self.logger.info("unexplored anchors not reachable using anchors")
-                path = self.findPathToUnvisited_(page, Links.ANCHOR, Links.FORM)
-            if path:
-                return path
-                self.logger.warn("unexplored anchors not reachable!")
-        if self.pagemap.unvisited.len(Links.FORM):
-            path = self.findPathToUnvisited_(page, Links.FORM, Links.ANCHOR)
-            if not path:
-                self.logger.info("unexplored anchors not reachable using forms")
-                path = self.findPathToUnvisited_(page, Links.FORM, Links.FORM)
-            if path:
-                return path
-            self.logger.warn("unexplored forms not reachable!")
+        unvisited = [None] * 4
+        haveunvanchors = self.pagemap.unvisited.len(Links.ANCHOR) > 0
+        seen = set()
+        # distance is (post, get, link_with_?, link)
+        heads = [((0, 0, 0, 0), page, [])]
+        while heads:
+            d, h, p = heapq.heappop(heads)
+            print "H", d, h, p
+            if h in seen:
+                continue
+            seen.add(h)
+            unvlink = h.links.getUnvisited()
+            print 'U', unvlink
+            if unvlink:
+                assert (h, unvlink) in self.pagemap.unvisited, "page %r  link %r not in %r" % (h, unvlink, self.pagemap.unvisited)
+                # exclude the starting page from the path
+                path = [i for i in reversed([h]+p[:-1])]
+                weight = self.getWeight(unvlink, h.links[unvlink])
+                if weight == 3 or \
+                        not haveunvanchors and weight >= 1:
+                    # anchor with no '?' or GET form if no unvisited anchors
+                    return path
+                if not unvisited[weight]:
+                    unvisited[weight] = path
+            newpath = [h]+p
+            for idx,link in h.links.enumerate():
+                if link.ignore or not link.target or link.target in seen:
+                    continue
+                newdist = list(d)
+                newdist[self.getWeight(idx, link)] += 1
+                heapq.heappush(heads, (tuple(newdist), link.target, newpath))
+        for p in unvisited:
+            if p: return p
+        self.logger.warn("unexplored forms not reachable!")
 
     def navigatePath(self, page, path):
         assert page.basic == self.cr.page.basic
