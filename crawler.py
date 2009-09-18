@@ -12,18 +12,31 @@ import heapq
 
 import config
 
-class Anchor:
-    def __init__(self, url, nvisits=0, target=None):
-        self.url = url
-        self.nvisits = nvisits
+class Target:
+    def __init__(self, target, nvisits, transition):
         self.target = target
+        self.transition = transition
+        self.nvisits = nvisits
+
+class Anchor:
+    def __init__(self, url):
+        self.url = url
+        self.nvisits = 0
+        self.target = None
         self.ignore = False
         self.history = None
         self.hasparams = url.find('?') != -1
+        self.targets = {}
+
+    def __getitem__(self, state):
+        return self.targets[state]
+
+    def __setitem__(self, state, target):
+        self.targets[state] = target
 
     def __repr__(self):
         return 'Anchor(url=%r, nvisits=%d, target=%r)' \
-                % (self.url, self.nvisits, self.target)
+                % (self.url, self.nvisits, self.targets)
 
     def hashData(self):
         return self.url
@@ -480,6 +493,7 @@ class Page:
         self.templetized = TempletizedPage(self)
         self.basic = BasicPage(self)
         self.split = False
+        self.states = defaultdict(int)
 
     def __hash__(self):
         return self.hashval
@@ -493,11 +507,11 @@ class Page:
     def __repr__(self):
         return self.str
 
-    def linkto(self, idx, targetpage):
+    def linkto(self, idx, targetpage, state):
         link = self.links[idx]
         assert not link.nvisits
         link.nvisits += 1
-        link.target = targetpage
+        link.target = Target(targetpage, nvisits=1, state=state)
         link.history = self.histories[-1]
         targetpage.backlinks.add((self, idx))
 
@@ -715,6 +729,7 @@ class Engine:
     def __init__(self, formfiller=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.formfiller = formfiller
+        self.currstate = 1
 
     def getWeight(self, idx, link):
         if idx[0] == Links.FORM:
@@ -921,16 +936,20 @@ class Engine:
         # use reference to the pre-existing page
         newpage = self.pagemap.get(newpage, preferred)
 
+        # update new page state
+        newpage.states[self.currstate] += 1
+
         # update engine and new page history
-        self.history.append((page, action))
+        self.history.append((page, action, self.currstate))
         newpage.histories.append(self.history[:])
 
         return newpage
 
 
     def updateOutLinks(self, page, action, newpage):
-        page.linkto(action, newpage)
+        page.linkto(action, newpage, self.currstate)
         try:
+            # XXX should we keep also state in unvisited set?
             self.pagemap.unvisited.remove(page, action)
         except KeyError:
             # might have been alredy removed by a page merge
