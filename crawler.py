@@ -561,7 +561,10 @@ class Crawler:
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.INTERNET_EXPLORER_6)
         self.webclient = htmlunit.WebClient()
+        self.webclient.setThrowExceptionOnScriptError(False);
+        self.webclient.setUseInsecureSSL(True)
 
     def open(self, url):
         self.history = []
@@ -578,13 +581,24 @@ class Crawler:
                 action=f.getActionAttribute(),
                 inputs=inputs)
 
+    def validAnchor(self, a):
+        aHref = a.getHrefAttribute()
+        ret = not aHref.split(':', 1)[0].lower() in ['mailto'] \
+                and (not aHref.startswith('http') or aHref.startswith("https://support.myyardi.com/crmportal/"))
+        if not ret:
+            self.logger.info("skipping %r", aHref)
+        else:
+            self.logger.debug("valid anchor %r", aHref)
+        return ret
+
+
     def updateInternalData(self, htmlpage):
-        self.htmlpage = htmlpage
+        # XXX cast should not be needed
+        self.htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
         htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
         self.url = htmlpage.getWebResponse().getRequestUrl().toString()
         self.anchors = [a for a in htmlpagewrapped.getAnchors()
-                if not a.getHrefAttribute().split(':', 1)[0].lower()
-                in ['mailto']]
+                if self.validAnchor(a)]
         self.forms = [f for f in htmlpagewrapped.getForms()]
 #                if f.getMethodAttribute().lower() == 'get']
         self.page = Page(url=self.url,
@@ -593,22 +607,28 @@ class Crawler:
 
     def newPage(self, htmlpage):
         self.updateInternalData(htmlpage)
+        self.logger.info("got page %r %r %r", self.url, self.anchors, self.forms)
+#        self.logger.debug("got page content %s", self.htmlpage.getWebResponse().getContentAsString())
         return self.page
 
     def clickAnchor(self, idx):
         self.history.append(self.htmlpage)
         try:
+            self.logger.debug("clicking on %r", self.anchors[idx])
             htmlpage = self.anchors[idx].click()
         except htmlunit.JavaError, e:
             javaex = e.getJavaException()
-            if not htmlunit.FailingHttpStatusCodeException.instance_(javaex):
-                raise
-            javaex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
-            ecode = javaex.getStatusCode()
-            emsg = javaex.getStatusMessage()
-            self.logger.warn("%d %s, %s", ecode, emsg,
-                    self.anchors[idx].getHrefAttribute())
-            return self.errorPage(ecode)
+            if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
+                javaex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
+                ecode = javaex.getStatusCode()
+                emsg = javaex.getStatusMessage()
+                self.logger.warn("%d %s, %s", ecode, emsg,
+                        self.anchors[idx].getHrefAttribute())
+                return self.errorPage(ecode)
+            elif htmlunit.IllegalArgumentException.instance_(javaex):
+                import traceback
+                traceback.print_exc()
+                return self.errorPage(666)
         return self.newPage(htmlpage)
 
     def printChild(self, e, n=0):
@@ -643,6 +663,7 @@ class Crawler:
             # TODO: explore clickable regions in input type=image
             for submittable in [("input", "type", "submit"),
                     ("input", "type", "image"),
+                    ("input", "type", "button"),
                     ("button", "type", "submit")]:
                 try:
                     submitter = self.forms[idx].\
@@ -709,12 +730,12 @@ class Engine:
         heads = [((0, 0, 0, 0), page, [])]
         while heads:
             d, h, p = heapq.heappop(heads)
-            print "H", d, h, p
+            #print "H", d, h, p
             if h in seen:
                 continue
             seen.add(h)
             unvlink = h.links.getUnvisited()
-            print 'U', unvlink
+            #print 'U', unvlink
             if unvlink:
                 assert (h, unvlink) in self.pagemap.unvisited, "page %r  link %r not in %r" % (h, unvlink, self.pagemap.unvisited)
                 # exclude the starting page from the path
@@ -888,6 +909,7 @@ class Engine:
         elif action[0] == Links.FORM:
             try:
                 formkeys = page.links[action].getFormKeys()
+                self.logger.debug("form keys %r", formkeys)
                 params = self.formfiller[formkeys]
             except KeyError:
                 # we do not have parameters for the form
@@ -914,34 +936,35 @@ class Engine:
             # might have been alredy removed by a page merge
             pass
 
-    def main(self, url):
+    def main(self, urls):
         self.cr = Crawler()
         self.pagemap = PageMapper()
         self.history = []
-        page = self.cr.open(url)
-        page = self.pagemap[page]
-        assert len(page.histories) == 0
-        page.histories = [[]]
-        nextAction = self.processPage(page)
-        while nextAction != None:
-            try:
+        for url in urls:
+            page = self.cr.open(url)
+            page = self.pagemap[page]
+            if len(page.histories) == 0:
+                page.histories = [[]]
+            nextAction = self.processPage(page)
+            while nextAction != None:
                 try:
-                    self.validateHistory(page)
-                except IndexError:
-                    pass
+                    try:
+                        self.validateHistory(page)
+                    except IndexError:
+                        pass
 
-                newpage = self.doAction(page, nextAction)
-                self.updateOutLinks(page, nextAction, newpage)
+                    newpage = self.doAction(page, nextAction)
+                    self.updateOutLinks(page, nextAction, newpage)
 
-                self.validateHistory(newpage)
+                    self.validateHistory(newpage)
 
-                self.pagemap.checkAggregatable(page)
-                page = newpage
-            except CrawlerActionFailure:
-                page.links[nextAction].ignore = True
-                self.pagemap.unvisited.remove(page, nextAction)
+                    self.pagemap.checkAggregatable(page)
+                    page = newpage
+                except CrawlerActionFailure:
+                    page.links[nextAction].ignore = True
+                    self.pagemap.unvisited.remove(page, nextAction)
 
-            nextAction, page = self.findNextStep(page)
+                nextAction, page = self.findNextStep(page)
 
     def writeDot(self):
         self.logger.info("creating DOT graph")
@@ -1015,9 +1038,12 @@ if __name__ == "__main__":
     ff.add(login)
     login = {'user': 'ludo', 'pass': 'ludo'}
     ff.add(login)
+    login = {'userId': 'temp01', 'password': 'Temp@67A%', 'newURL': "", "datasource": "myyardi", 'form_submit': ""}
+    ff.add(login)
     e = Engine(ff)
     try:
-        e.main(sys.argv[1])
+        #htmlunit.System.setProperty("org.apache.commons.logging.simplelog.defaultlog", "trace")
+        e.main(sys.argv[1:])
     except:
         raise
     finally:
