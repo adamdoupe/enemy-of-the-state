@@ -767,7 +767,7 @@ class Engine:
                 newpath = [(h,idx,s)]+p
                 if link.ignore or not link.target:
                     continue
-                if s in link
+                if s in link:
                     t = link[s]
                     if not t.target or (t.target, t.transition) in seen:
                         continue
@@ -819,22 +819,20 @@ class Engine:
                     return (newpage, newst)
             else:
                 target = link[currst]
-                if (newpage,newst) != (nextpage,nextst):
-                    if link.nvisits == 0:
-                        # the link was never really visited, but was a result of
-                        # a page split
-                        self.logger.info('overriding link target "%s" (%d) ' +
-                            'with "%s" (%d)', nextpage, nextst, newpage, newst)
-                        self.updateOutLinks(currpage, linkidx, newpage, currst,
-                            newst)
-                    else:
-                        self.logger.info('unexpected link target "%s" instead of "%s"',
-                                newpage, nextpage)
-                        clonedpage = self.splitPage(currpage, linkidx, currst, newpage)
-                        # update history (which was set by doAction())
-                        self.history = clonedpage.histories[-1] + \
-                                [(clonedpage, linkidx, currst)]
-                        newpage.histories[-1] = self.history[:]
+                # next values are computing using a pre-existing path,
+                # so the state must be consistent
+                assert newpage == nextpage and newst != nextst
+                # if an outging link exists it must have been already visited
+                assert link.nvisits > 0
+                if newpage != nextpage:
+                    self.logger.info('unexpected link target "%s" instead of' +
+                            '"%s"', newpage, nextpage)
+                    clonedpage = self.splitPage(currpage, linkidx, currst,
+                            newpage, newst)
+                    # update history (which was set by doAction())
+                    self.history = clonedpage.histories[-1] + \
+                            [(clonedpage, linkidx, currst)]
+                    newpage.histories[-1] = self.history[:]
                     return (newpage, newst)
                 else:
                     self.validateHistory(newpage)
@@ -850,13 +848,13 @@ class Engine:
         if not page.aggregation in [PageMapper.NOT_AGGREG]:
                 # XXX history not correct for aggregated pages!
                 return
-        prevpage, prevlinkidx,prevst = page.histories[-1][-1]
+        prevpage, prevlinkidx, prevst = page.histories[-1][-1]
         prevlink =  prevpage.links[prevlinkidx][prevst]
         assert prevlink.target == page, "%r %r %r %r" % (prevlink.target, page, prevlink.target.links, page.links)
         assert page.equiv(prevlink.target), \
                 "%r{%r} %r{%r} --- %r" % (prevlink.target, prevlink.target.links, page, page.links, self)
 
-    def splitPage(self, page, linkidx, currst, newpage):
+    def splitPage(self, page, linkidx, currst, newpage, newst):
         self.logger.info("diverging %r", page)
 
         self.validateHistory(page)
@@ -865,46 +863,64 @@ class Engine:
         # (actually also the check about might be at riks)
         #self.validateHistory(page.histories[-1][-1][0])
 
-        page.split = True
+        assert currst in page.links[linkidx]
 
-        clonedpage, splitidx = self.pagemap.findClone(page, linkidx, newpage)
-        if not clonedpage:
-            self.logger.info("splitting %r", page)
-            clonedpage = page.clone()
-            assert clonedpage.links.__iter__().next().nvisits == 0
-        assert clonedpage != page, "%x %x" % \
-                (id(clonedpage), id(page))
-        # proppagate the change of status backwards
-        prevpage, prevlinkidx, prevst = page.histories[-1][-1]
-        prevlink =  prevpage.links[prevlinkidx][prevst]
-        assert prevlink.target == page, "%r %r %r" % (prevlink.target, page, \
+        link = page.links[linkidx]
+        validtargets = {}
+        for s,t in link.iteritems():
+            # XXX for now force destination state to match
+            # in the future we could try to adjust the destination state
+            if s != curr and t.target == newpage and t.transition == newst:
+                assert s not in validtargets
+                validtargets[s] = t.transition
+        newstate = None
+        if validtargets:
+            # pick the most recent seen state with the correct target
+            for prevpage, prevlinkidx, prevst in page.histories:
+                if prevst in validtargets:
+                    newstate = prevst
+                    tostate = validtargets[s]
+                    break
+            self.logger.debug("changing from state %d to %d", currst, newstate)
+            assert newstate and newstate != currst
+            link[newstate].nvisits += 1
+        else: # no validstates
+            # page has not been already seen, create a new state
+            self.maxstate += 1
+            newstate = self.maxstate
+            # keep state for the target page
+            tostate = newst
+            self.logger.debug("changing from state %d to new %d", currst,
+                    newstate)
+            link[newstate] = Target(newpage, state=tostate)
+
+        # XXX for now force destination state to match
+        assert tostate == newst
+
+        lasthistory = page.histories.pop()
+
+        # remove last histories entry as it proved to be incorrect
+        prevpage, prevlinkidx, prevst = lasthistory[-1]
+        prevlink =  prevpage.links[prevlinkidx]
+        prevtgt =  prevlink[prevst]
+
+        assert prevtgt.target == page, "%r %r %r" % (prevtgt.target, page, \
                 prevpage)
         assert prevlink.nvisits > 0
-        assert prevlink.target != clonedpage, \
-                "%r %r %r %x %x %x" % (clonedpage, page, prevlink.target, id(clonedpage), id(page), id(prevlink.target))
-        if prevlink.nvisits > 1:
-            clonedprev = self.splitPage(prevpage, prevlinkidx, clonedpage)
-            clonedpage.histories.append(clonedprev.histories[-1] +
-                    [(clonedprev, prevlinkidx)])
-            prevlink.nvisits -= 1
+        if prevtgt.nvisits == 1:
+            prevtgt.transition = newstate
         else:
-            prevlink.target = clonedpage
-            clonedpage.histories.append(page.histories[-1])
-        # remove last histories entry as it proved to be incorrect
-        page.histories.pop()
-        # linkto() must be called after setting history
-        if clonedpage.links[linkidx].nvisits:
-            # pre-existing clone
-            assert clonedpage.links[linkidx].target.basic == newpage.basic
-            clonedpage.links[linkidx].nvisits += 1
-        else:
-            clonedpage.linkto(linkidx, newpage)
-        self.pagemap.setLatest(clonedpage, splitidx)
-        self.validateHistory(clonedpage)
-        # that old page might be newpage, so nthe history may have changed
-        # so do not add the following exception
-        # (actually also the check about might be at riks)
-        #self.validateHistory(clonedpage.histories[-1][-1][0])
+            # we have already gone through that link with a different account, 
+            # we need to go back and split again
+            clonedprev, newprevst = self.splitPage(prevpage, prevlinkidx,
+                    prevst, page, newstate)
+            prevtgt.nvisits -= 1
+            # update history
+
+        # append correct new history
+        page.histories.append(clonedprev.histories[-1] +
+                    [(clonedprev, prevlinkidx, newprevst)])
+
         return clonedpage
 
 
@@ -942,7 +958,7 @@ class Engine:
                     self.logger.info("no path found, stepping back")
                     prevpage = self.cr.back()
                     prevpage = self.pagemap[prevpage]
-                    assert prevpage = page.histories[-1][0]
+                    assert prevpage == page.histories[-1][0]
                     prevst = page.histories[-1][2]
                     page = prevst
                     status = prevst
@@ -967,12 +983,13 @@ class Engine:
 
         # use reference to the pre-existing page
         newpage = self.pagemap.get(newpage, preferred)
-
-        link = page.links[action][state]
-        newstate = state if state == link.transition else link.transition
-
-        # update new page state
-        newpage.states[newstate] += 1
+        if newpage.histories:
+            # get latest newpage state
+            prevpage, prevlinkidx, prevst = page.histories[-1][-1]
+            newstate = prevpage[prevlinkidx][prevst].transition
+        else:
+            # if new page, propagate state
+            newstate = state
 
         # update engine and new page history
         self.history.append((page, action, state))
@@ -1009,7 +1026,7 @@ class Engine:
                     except IndexError:
                         pass
 
-                    newpage,newstate = self.doAction(page, nextAction, state)
+                    newpage, newstate = self.doAction(page, nextAction, state)
                     self.updateOutLinks(page, nextAction, newpage, state,
                             newstate)
 
