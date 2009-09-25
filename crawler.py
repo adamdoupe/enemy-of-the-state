@@ -22,7 +22,6 @@ class Anchor:
     def __init__(self, url):
         self.url = url
         self.nvisits = 0
-        self.target = None
         self.ignore = False
         self.history = None
         self.hasparams = url.find('?') != -1
@@ -33,6 +32,15 @@ class Anchor:
 
     def __setitem__(self, state, target):
         self.targets[state] = target
+
+    def __contains__(self, state):
+        return state in self.targets
+
+    def iterkeys(self):
+        return self.targets.iterkeys()
+
+    def iteritems(self):
+        return self.targets.iteritems()
 
     def __repr__(self):
         return 'Anchor(url=%r, nvisits=%d, target=%r)' \
@@ -52,11 +60,11 @@ class Form:
         self.inputs = inputs
         self.textarea = textarea
         self.selects = selects
-        self.target = None
         self.nvisits = 0
         self.ignore = False
         self.history = None
         self.isPOST = action.upper() == "POST"
+        self.targets = {}
 
     def __repr__(self):
         return ('Form(method=%r, action=%r, inputs=%r, textarea=%r,' +
@@ -69,6 +77,21 @@ class Form:
 
     def getFormKeys(self):
         return self.inputs + self.textarea + self.selects
+
+    def __contains__(self, state):
+        return state in self.targets
+
+    def __getitem__(self, state):
+        return self.targets[state]
+
+    def __setitem__(self, state, target):
+        self.targets[state] = target
+
+    def iterkeys(self):
+        return self.targets.iterkeys()
+
+    def iteritems(self):
+        return self.targets.iteritems()
 
 class Links:
     ANCHOR = 0
@@ -114,13 +137,13 @@ class Links:
     def __iter__(self):
         return self.iter(Links.FORM)
 
-    def getUnvisited(self, status, what=FORM):
+    def getUnvisited(self, state, what=FORM):
         for i,l in enumerate(self.anchors):
-            if not l.ignore and status not in l:
+            if not l.ignore and not state in l:
                 return (Links.ANCHOR, i)
         if what >= Links.FORM:
             for i,l in enumerate(self.forms):
-                if not l.ignore and status not in l:
+                if not l.ignore and not state in l:
                     return (Links.FORM, i)
 
     def iter(self, what=FORM):
@@ -309,7 +332,7 @@ class PageMapper:
         else:
             splits = self.buckets[page]
             if len(splits) > 1:
-                self.logger.info("potential status splitted page %s", page)
+                self.logger.info("potential state splitted page %s", page)
             inner = None
             if preferred:
                 # return the preferred page if available
@@ -336,12 +359,12 @@ class PageMapper:
             if page in inner:
                 if inner.aggregation == PageMapper.AGGREGATED:
                     self.logger.info("known aggregated page %s", page.url)
-                    # XXX: may get thr crawler status out-of-sync
+                    # XXX: may get thr crawler state out-of-sync
                     page = inner.merged
                 elif inner.aggregation in \
                         [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
                     self.logger.info("known aggregatable page %s", page.url)
-                    # XXX: may get thr crawler status out-of-sync
+                    # XXX: may get thr crawler state out-of-sync
                     page = inner[page]
                 else:
                     self.logger.info("known page %s", page)
@@ -351,7 +374,7 @@ class PageMapper:
                     self.logger.info("new aggregated page %s", page.url)
                     inner[page] = page
                     page.aggregation = PageMapper.AGGREGATED
-                    # XXX: may get thr crawler status out-of-sync
+                    # XXX: may get thr crawler state out-of-sync
                     page = inner.merged
                 elif inner.aggregation in \
                         [PageMapper.AGGREG_PENDING, PageMapper.AGGREG_IMPOSS]:
@@ -511,13 +534,14 @@ class Page:
         link = self.links[idx]
         assert not link.nvisits
         link.nvisits += 1
-        link[state].target = Target(targetpage, nvisits=1, state=transition)
+        link[state] = Target(targetpage, nvisits=1,
+                transition=transition)
 #        link.history = self.histories[-1]
         # TODO fix backlinks with state
         targetpage.backlinks.add((self, idx))
 
-    def getUnvisitedLink(self, status):
-        return self.links.getUnvisited(status)
+    def getUnvisitedLink(self, state):
+        return self.links.getUnvisited(state)
 
     def clone(self):
         cloned = copy.copy(self)
@@ -743,7 +767,7 @@ class Engine:
         haveunvanchors = self.pagemap.unvisited.len(Links.ANCHOR) > 0
         seen = set()
         # distance is (unknown_state, post, get, link_with_?, link)
-        heads = [((0, 0, 0, 0, 0), page, self.state, [])]
+        heads = [((0, 0, 0, 0, 0), page, state, [])]
         while heads:
             d, h, s, p = heapq.heappop(heads)
             #print "H", d, h, p
@@ -892,7 +916,7 @@ class Engine:
             tostate = newst
             self.logger.debug("changing from state %d to new %d", currst,
                     newstate)
-            link[newstate] = Target(newpage, state=tostate)
+            link[newstate] = Target(newpage, transition=tostate)
 
         # XXX for now force destination state to match
         assert tostate == newst
@@ -924,27 +948,27 @@ class Engine:
         return clonedpage
 
 
-    def processPage(self, page, status):
+    def processPage(self, page, state):
         if page.aggregation == PageMapper.AGGREG_PENDING:
             # XXX in this way we forse the crawler to use the "back" function
             # instead of using a potential back-link; what happen if the latest 
-            # page we are not exploring changes the in-server status?
+            # page we are not exploring changes the in-server state?
             self.logger.info("not exploring additional aggregatable pages")
             prevpage, prevlink = page.histories[-1][-1]
             prevpage.links[prevlink].ignore = True
             return None
-        return page.getUnvisitedLink(status)
+        return page.getUnvisitedLink(state)
 
-    def findNextStep(self, page, status):
+    def findNextStep(self, page, state):
         nextAction = None
         while nextAction == None:
-            nextAction = self.processPage(page, status)
+            nextAction = self.processPage(page, state)
             if nextAction == None:
                 path = None
                 if self.pagemap.unvisited:
                     self.pagemap.unvisited.logInfo()
                     if page.aggregation != PageMapper.AGGREG_PENDING:
-                        path = self.findPathToUnvisited(page)
+                        path = self.findPathToUnvisited(page, state)
                 else:
                     self.logger.info("we are done")
                     # we are done
@@ -952,18 +976,19 @@ class Engine:
                 if path:
                     self.logger.debug("found path: %r",
                             ["%r<%r>" % (p, p.links) for p in path])
-                    page,status = self.navigatePath(page, path)
-                    nextAction = self.processPage(page, status)
+                    page,state = self.navigatePath(page, path)
+                    nextAction = self.processPage(page, state)
                 else:
                     self.logger.info("no path found, stepping back")
                     prevpage = self.cr.back()
                     prevpage = self.pagemap[prevpage]
-                    assert prevpage == page.histories[-1][0]
+                    print "H", page.histories[-1][0]
+                    assert prevpage == page.histories[-1][0][0]
                     prevst = page.histories[-1][2]
                     page = prevst
-                    status = prevst
+                    state = prevst
         self.logger.debug("next action %r", nextAction)
-        return (nextAction, page, status)
+        return (nextAction, page, state)
 
     def doAction(self, page, action, state, preferred=None):
         if action[0] == Links.ANCHOR:
@@ -986,7 +1011,7 @@ class Engine:
         if newpage.histories:
             # get latest newpage state
             prevpage, prevlinkidx, prevst = page.histories[-1][-1]
-            newstate = prevpage[prevlinkidx][prevst].transition
+            newstate = prevpage.links[prevlinkidx][prevst].transition
         else:
             # if new page, propagate state
             newstate = state
@@ -1018,7 +1043,7 @@ class Engine:
             page = self.pagemap[page]
             if len(page.histories) == 0:
                 page.histories = [[]]
-            nextAction = self.processPage(page)
+            nextAction = self.processPage(page, state)
             while nextAction != None:
                 try:
                     try:
@@ -1050,7 +1075,11 @@ class Engine:
                 name = url.path
                 if url.query:
                     name += '?' + url.query
-                name += '@%x' % id(p)
+                name += '\\n%x ' % id(p)
+                allstates = []
+                for l in p.links:
+                    allstates.extend(l.iterkeys())
+                name += str(list(set(allstates)))
                 node = pydot.Node(name)
                 if p.aggregation == PageMapper.AGGREGATED:
                     node.set_color('green')
@@ -1067,30 +1096,32 @@ class Engine:
 
         for n,dn in nodes.iteritems():
             src = dn
-            links = defaultdict(int)
+            links = defaultdict(lambda: [])
             for dst in n.links:
-                if not dst.target:
+                if not dst.targets:
                     nulltargets += 1
-                elif dst.target.aggregation != PageMapper.AGGREG_PENDING:
-                    if dst.__class__.__name__ == 'Form':
-                        if dst.method == 'post':
-                            color = 'purple'
-                        else:
-                            color = 'blue'
-                    else:
-                        color = 'black'
-                    if not dst.nvisits:
-                        style = 'dotted'
-                    else:
-                        style = 'solid'
-                    links[(dst.target, color, style)] += 1
-            for k,num in links.iteritems():
+                else:
+                    for s,t in dst.iteritems():
+                        if t.target.aggregation != PageMapper.AGGREG_PENDING:
+                            if dst.__class__.__name__ == 'Form':
+                                if dst.method == 'post':
+                                    color = 'purple'
+                                else:
+                                    color = 'blue'
+                            else:
+                                color = 'black'
+                            if not dst.nvisits:
+                                style = 'dotted'
+                            else:
+                                style = 'solid'
+                            links[(t.target, color, style)].append(s)
+            for k,states in links.iteritems():
                 try:
                     target, color, style = k
                     edge = pydot.Edge(src, nodes[target])
                     edge.set_color(color)
                     edge.set_style(style)
-                    edge.set_label("%d" % num)
+                    edge.set_label("%s" % list(set(states)))
                     dot.add_edge(edge)
                 except KeyError:
                     self.logger.error("unable to find target node")
