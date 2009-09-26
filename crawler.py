@@ -13,7 +13,7 @@ import heapq
 import config
 
 class Target:
-    def __init__(self, target, nvisits, transition):
+    def __init__(self, target, transition, nvisits=1):
         self.target = target
         self.transition = transition
         self.nvisits = nvisits
@@ -21,7 +21,6 @@ class Target:
 class Anchor:
     def __init__(self, url):
         self.url = url
-        self.nvisits = 0
         self.ignore = False
         self.history = None
         self.hasparams = url.find('?') != -1
@@ -43,8 +42,8 @@ class Anchor:
         return self.targets.iteritems()
 
     def __repr__(self):
-        return 'Anchor(url=%r, nvisits=%d, target=%r)' \
-                % (self.url, self.nvisits, self.targets)
+        return 'Anchor(url=%r, target=%r)' \
+                % (self.url, self.targets)
 
     def hashData(self):
         return self.url
@@ -60,7 +59,6 @@ class Form:
         self.inputs = inputs
         self.textarea = textarea
         self.selects = selects
-        self.nvisits = 0
         self.ignore = False
         self.history = None
         self.isPOST = action.upper() == "POST"
@@ -171,9 +169,11 @@ class Links:
         cloned = copy.copy(self)
         cloned.anchors = [copy.copy(i) for i in self.anchors]
         cloned.forms = [copy.copy(i) for i in self.forms]
-        for l in cloned.anchors + cloned.forms:
-            l.nvisits = 0
         return cloned
+
+def notVisited(page, link, state):
+    l = page.links[link]
+    return not l.ignore and not state in l
 
 class Unvisited:
     def __init__(self):
@@ -181,15 +181,19 @@ class Unvisited:
         self.anchors = set()
         self.forms = set()
 
-    def addPage(self, page):
-        self.anchors.update((page, i) for i in range(page.links.nAnchors()))
-        self.forms.update((page, i) for i in range(page.links.nForms()))
+    def updateFromPage(self, page, state):
+        self.anchors.update((page, i, state) for i in
+                range(page.links.nAnchors())
+                if notVisited(page, (Links.ANCHOR, i), state))
+        self.forms.update((page, i, state) for i in
+                range(page.links.nForms())
+                if notVisited(page, (Links.FORM, i), state))
 
-    def remove(self, page, link):
+    def remove(self, page, link, state):
         if link[0] == Links.ANCHOR:
-            self.anchors.remove((page, link[1]))
+            self.anchors.remove((page, link[1], state))
         if link[0] == Links.FORM:
-            self.forms.remove((page, link[1]))
+            self.forms.remove((page, link[1], state))
         else:
             raise KeyError(link)
 
@@ -212,9 +216,9 @@ class Unvisited:
 
     def __contains__(self, link):
         if link[1][0] == Links.ANCHOR:
-            return (link[0], link[1][1]) in self.anchors
+            return (link[0], link[1][1], link[2]) in self.anchors
         if link[1][0] == Links.FORM:
-            return (link[0], link[1][1]) in self.forms
+            return (link[0], link[1][1], link[2]) in self.forms
         return False
 
     def __repr__(self):
@@ -328,7 +332,6 @@ class PageMapper:
             self.logger.info("new page %s", page.url)
             self.buckets[page] = \
                     PageMapper.Splits(PageMapper.Inner(page))
-            self.unvisited.addPage(page)
         else:
             splits = self.buckets[page]
             if len(splits) > 1:
@@ -388,7 +391,6 @@ class PageMapper:
                         self.logger.info("aggregatable pages %r",
                                 [p.url for p in inner])
                         inner.aggregation = PageMapper.AGGREG_PENDING
-                    self.unvisited.addPage(page)
         return page
 
     def __iter__(self):
@@ -532,8 +534,7 @@ class Page:
 
     def linkto(self, idx, targetpage, state, transition):
         link = self.links[idx]
-        assert not link.nvisits
-        link.nvisits += 1
+        assert state not in link
         link[state] = Target(targetpage, nvisits=1,
                 transition=transition)
 #        link.history = self.histories[-1]
@@ -777,7 +778,7 @@ class Engine:
             unvlink = h.links.getUnvisited(s)
             #print 'U', unvlink
             if unvlink:
-                assert (h, s, unvlink) in self.pagemap.unvisited, "page %r(%d)  link %r not in %r" % (h, s, unvlink, self.pagemap.unvisited)
+                assert (h, unvlink, s) in self.pagemap.unvisited, "page %r(%d)  link %r not in %r" % (h, s, unvlink, self.pagemap.unvisited)
                 # exclude the starting page from the path
                 path = [i for i in reversed([(h,None,s)]+p)]
                 weight = self.getWeight(unvlink, h.links[unvlink])
@@ -789,26 +790,30 @@ class Engine:
                     unvisited[weight] = path
             for idx,link in h.links.enumerate():
                 newpath = [(h,idx,s)]+p
-                if link.ignore or not link.target:
+                if link.ignore:
                     continue
                 if s in link:
+                    # links we already know as outgoing from this state
                     t = link[s]
                     if not t.target or (t.target, t.transition) in seen:
                         continue
                     newdist = list(d)
                     newdist[self.getWeight(idx, link)] += 1
-                    heapq.heappush(heads, (tuple(newdist), link.target, newpath))
+                    heapq.heappush(heads, (tuple(newdist), t.target, s,
+                        newpath))
                 for tos,t in link.iteritems():
+                    # other outgoing links we already observed form other states
                     if tos == s:
                         continue
-                    if t.transition == s:
-                        # assume the link is state preserving
-                        tos = s
+#                    if t.transition == s:
+#                        # assume the link is state preserving
+#                        tos = s
                     newdist = list(d)
                     newdist[self.getWeight(idx, link)] += 1
                     newdist[0] += 1 # as we actually really not sure this
                                     # transition will work from this state
-                    heapq.heappush(heads, (tuple(newdist), link.target, s,newpath))
+                    heapq.heappush(heads, (tuple(newdist), t.target, s,
+                        newpath))
 
 
         for p in unvisited:
@@ -844,18 +849,18 @@ class Engine:
             else:
                 target = link[currst]
                 # next values are computing using a pre-existing path,
-                # so the state must be consistent
-                assert newpage == nextpage and newst != nextst
-                # if an outging link exists it must have been already visited
-                assert link.nvisits > 0
+                # so the state must be consistent, if the newpage is the
+                # expected one
+                assert not newpage == nextpage or newst == nextst,\
+                        "%r(%d), %r(%d)" % (newpage, newst, nextpage, nextst)
                 if newpage != nextpage:
                     self.logger.info('unexpected link target "%s" instead of' +
-                            '"%s"', newpage, nextpage)
-                    clonedpage = self.splitPage(currpage, linkidx, currst,
+                            ' "%s"', newpage, nextpage)
+                    clonedpage, clonedst = self.splitPage(currpage, linkidx, currst,
                             newpage, newst)
                     # update history (which was set by doAction())
                     self.history = clonedpage.histories[-1] + \
-                            [(clonedpage, linkidx, currst)]
+                            [(clonedpage, linkidx, clonedst)]
                     newpage.histories[-1] = self.history[:]
                     return (newpage, newst)
                 else:
@@ -894,13 +899,13 @@ class Engine:
         for s,t in link.iteritems():
             # XXX for now force destination state to match
             # in the future we could try to adjust the destination state
-            if s != curr and t.target == newpage and t.transition == newst:
+            if s != currst and t.target == newpage and t.transition == newst:
                 assert s not in validtargets
                 validtargets[s] = t.transition
         newstate = None
         if validtargets:
             # pick the most recent seen state with the correct target
-            for prevpage, prevlinkidx, prevst in page.histories:
+            for prevpage, prevlinkidx, prevst in page.histories[-1]:
                 if prevst in validtargets:
                     newstate = prevst
                     tostate = validtargets[s]
@@ -930,7 +935,7 @@ class Engine:
 
         assert prevtgt.target == page, "%r %r %r" % (prevtgt.target, page, \
                 prevpage)
-        assert prevlink.nvisits > 0
+        assert prevtgt.nvisits > 0
         if prevtgt.nvisits == 1:
             prevtgt.transition = newstate
         else:
@@ -939,13 +944,14 @@ class Engine:
             clonedprev, newprevst = self.splitPage(prevpage, prevlinkidx,
                     prevst, page, newstate)
             prevtgt.nvisits -= 1
-            # update history
+            prevpage = clonedprev
+            prevst = newprevst
 
         # append correct new history
-        page.histories.append(clonedprev.histories[-1] +
-                    [(clonedprev, prevlinkidx, newprevst)])
+        page.histories.append(prevpage.histories[-1] +
+                    [(prevpage, prevlinkidx, prevst)])
 
-        return clonedpage
+        return page, newstate
 
 
     def processPage(self, page, state):
@@ -974,20 +980,21 @@ class Engine:
                     # we are done
                     return (None, page)
                 if path:
-                    self.logger.debug("found path: %r",
-                            ["%r<%r>" % (p, p.links) for p in path])
+                    self.logger.debug("found path: %r", path)
                     page,state = self.navigatePath(page, path)
                     nextAction = self.processPage(page, state)
                 else:
                     self.logger.info("no path found, stepping back")
                     prevpage = self.cr.back()
                     prevpage = self.pagemap[prevpage]
-                    print "H", page.histories[-1][0]
-                    assert prevpage == page.histories[-1][0][0]
-                    prevst = page.histories[-1][2]
-                    page = prevst
+                    assert prevpage == page.histories[-1][-1][0], \
+                            "%s != %s / %s" % (prevpage,
+                                    page.histories[-1][-1][0], page)
+                    prevst = page.histories[-1][-1][2]
+                    assert type(prevst) == int
+                    page = prevpage
                     state = prevst
-        self.logger.debug("next action %r", nextAction)
+        self.logger.debug("next action %r %r(%d)", nextAction, page, state)
         return (nextAction, page, state)
 
     def doAction(self, page, action, state, preferred=None):
@@ -1020,6 +1027,9 @@ class Engine:
         self.history.append((page, action, state))
         newpage.histories.append(self.history[:])
 
+        # update set of unvisited links
+        self.pagemap.unvisited.updateFromPage(newpage, newstate)
+
         return newpage, newstate
 
 
@@ -1028,7 +1038,7 @@ class Engine:
         page.linkto(action, newpage, state, transition)
         try:
             # XXX should we keep also state in unvisited set?
-            self.pagemap.unvisited.remove(page, action)
+            self.pagemap.unvisited.remove(page, action, state)
         except KeyError:
             # might have been alredy removed by a page merge
             pass
@@ -1045,10 +1055,13 @@ class Engine:
                 page.histories = [[]]
             nextAction = self.processPage(page, state)
             while nextAction != None:
+                assert type(state) == int
                 try:
                     try:
                         self.validateHistory(page)
                     except IndexError:
+                        # will happen on first itration when there is not
+                        # history
                         pass
 
                     newpage, newstate = self.doAction(page, nextAction, state)
@@ -1061,7 +1074,7 @@ class Engine:
                     page,state = newpage,newstate
                 except CrawlerActionFailure:
                     page.links[nextAction].ignore = True
-                    self.pagemap.unvisited.remove(page, nextAction)
+                    self.pagemap.unvisited.remove(page, nextAction, state)
 
                 nextAction, page, state = self.findNextStep(page, state)
 
@@ -1110,18 +1123,19 @@ class Engine:
                                     color = 'blue'
                             else:
                                 color = 'black'
-                            if not dst.nvisits:
+                            if not t.nvisits:
                                 style = 'dotted'
                             else:
                                 style = 'solid'
-                            links[(t.target, color, style)].append(s)
+                            links[(t.target, color, style)].append(
+                                    (s, t.transition))
             for k,states in links.iteritems():
                 try:
                     target, color, style = k
                     edge = pydot.Edge(src, nodes[target])
                     edge.set_color(color)
                     edge.set_style(style)
-                    edge.set_label("%s" % list(set(states)))
+                    edge.set_label(''.join('%d->%d' % i for i in set(states)))
                     dot.add_edge(edge)
                 except KeyError:
                     self.logger.error("unable to find target node")
