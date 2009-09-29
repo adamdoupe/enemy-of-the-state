@@ -18,12 +18,10 @@ class Target:
         self.transition = transition
         self.nvisits = nvisits
 
-class Anchor:
-    def __init__(self, url):
-        self.url = url
+class LinkBase:
+    def __init__(self):
         self.ignore = False
         self.history = None
-        self.hasparams = url.find('?') != -1
         self.targets = {}
 
     def __getitem__(self, state):
@@ -35,11 +33,20 @@ class Anchor:
     def __contains__(self, state):
         return state in self.targets
 
+    def __len__(self):
+        return len(self.targets)
+
     def iterkeys(self):
         return self.targets.iterkeys()
 
     def iteritems(self):
         return self.targets.iteritems()
+
+class Anchor(LinkBase):
+    def __init__(self, url):
+        LinkBase.__init__(self)
+        self.url = url
+        self.hasparams = url.find('?') != -1
 
     def __repr__(self):
         return 'Anchor(url=%r, target=%r)' \
@@ -51,18 +58,16 @@ class Anchor:
     def strippedHashData(self):
         return self.url.split('?')[0]
 
-class Form:
+class Form(LinkBase):
     def __init__(self, method, action, inputs=[], textarea=[],
             selects=[]):
+        LinkBase.__init__(self)
         self.method = method.lower()
         self.action = action
         self.inputs = inputs
         self.textarea = textarea
         self.selects = selects
-        self.ignore = False
-        self.history = None
         self.isPOST = action.upper() == "POST"
-        self.targets = {}
 
     def __repr__(self):
         return ('Form(method=%r, action=%r, inputs=%r, textarea=%r,' +
@@ -76,20 +81,6 @@ class Form:
     def getFormKeys(self):
         return self.inputs + self.textarea + self.selects
 
-    def __contains__(self, state):
-        return state in self.targets
-
-    def __getitem__(self, state):
-        return self.targets[state]
-
-    def __setitem__(self, state, target):
-        self.targets[state] = target
-
-    def iterkeys(self):
-        return self.targets.iterkeys()
-
-    def iteritems(self):
-        return self.targets.iteritems()
 
 class Links:
     ANCHOR = 0
@@ -399,7 +390,7 @@ class PageMapper:
                 for k in j.smartiter():
                     yield k
 
-    def checkAggregatable(self, page):
+    def checkAggregatable(self, page, state):
         # TODO: support for backformlinks
         splits = self.buckets[page]
         inner = splits.latest
@@ -409,11 +400,10 @@ class PageMapper:
         # config.SIMILAR_JOIN_THRESHOLD pages
         for p in inner:
             if p.aggregation != PageMapper.AGGREG_PENDING:
-                unvisited = p.links.getUnvisited()
-                if unvisited:
+                if p.links.getUnvisited(state):
                     return
 
-        if self.aggregatable(page):
+        if self.aggregatable(page, state):
             self.logger.info("aggregating %r", page)
             inner.merged = inner.original
             inner.aggregation = PageMapper.AGGREGATED
@@ -435,14 +425,17 @@ class PageMapper:
                     p.aggregation = PageMapper.AGGREG_IMPOSS
 
 
-    def aggregatable(self, page):
+    def aggregatable(self, page, state):
         # aggregate only if all the links across aggregatable pages
         # point to the same page
         # XXX if conditions is false it may be worth trying to split
         splits = self.buckets[page]
         inner = splits.latest
+        state = -1
         for i,l in page.links.enumerate():
-            targetset = set(p.links[i].target for p in inner
+            if len(l) != 1 or not state in l:
+                return False
+            targetset = set(p.links[i][state].target for p in inner
                 if p.aggregation != PageMapper.AGGREG_PENDING)
             #print "TARGETSET", targetset
             if len(targetset) > 1 and \
@@ -771,7 +764,7 @@ class Engine:
         heads = [((0, 0, 0, 0, 0), page, state, [])]
         while heads:
             d, h, s, p = heapq.heappop(heads)
-            #print "H", d, h, p
+            #print "HH", d, h, p
             if (h,s) in seen:
                 continue
             seen.add((h, s))
@@ -960,7 +953,7 @@ class Engine:
             # instead of using a potential back-link; what happen if the latest 
             # page we are not exploring changes the in-server state?
             self.logger.info("not exploring additional aggregatable pages")
-            prevpage, prevlink = page.histories[-1][-1]
+            prevpage, prevlink, prevst = page.histories[-1][-1]
             prevpage.links[prevlink].ignore = True
             return None
         return page.getUnvisitedLink(state)
@@ -978,7 +971,7 @@ class Engine:
                 else:
                     self.logger.info("we are done")
                     # we are done
-                    return (None, page)
+                    return (None, page, state)
                 if path:
                     self.logger.debug("found path: %r", path)
                     page,state = self.navigatePath(page, path)
@@ -1018,9 +1011,9 @@ class Engine:
         newpage = self.pagemap.get(newpage, preferred)
         if preferred and newpage == preferred and preferredstate:
             newstate = preferredstate
-        elif newpage.histories:
+        elif newpage.histories and newpage.histories[0]:
             # get latest newpage state
-            print "H", page.histories[-1][-1]
+            #print "H", page.histories[-1][-1]
             prevpage, prevlinkidx, prevst = page.histories[-1][-1]
             newstate = prevpage.links[prevlinkidx][prevst].transition
         else:
@@ -1032,9 +1025,12 @@ class Engine:
         newpage.histories.append(self.history[:])
 
         # update set of unvisited links
-        self.pagemap.unvisited.updateFromPage(newpage, newstate)
+        if newpage.aggregation != PageMapper.AGGREG_PENDING:
+            # if some pages are aggregatable, do not keep visiting new
+            # aggregatable pages
+            self.pagemap.unvisited.updateFromPage(newpage, newstate)
 
-        print "P", newpage, state
+        #print "P", newpage, state
         return newpage, newstate
 
     def updateOutLinks(self, page, action, newpage, state,
@@ -1074,7 +1070,7 @@ class Engine:
 
                     self.validateHistory(newpage)
 
-                    self.pagemap.checkAggregatable(page)
+                    self.pagemap.checkAggregatable(page, state)
                     page,state = newpage,newstate
                 except CrawlerActionFailure:
                     page.links[nextAction].ignore = True
@@ -1139,7 +1135,7 @@ class Engine:
                     edge = pydot.Edge(src, nodes[target])
                     edge.set_color(color)
                     edge.set_style(style)
-                    edge.set_label(''.join('%d->%d' % i for i in set(states)))
+                    edge.set_label(''.join('%d>%d' % i for i in set(states)))
                     dot.add_edge(edge)
                 except KeyError:
                     self.logger.error("unable to find target node")
