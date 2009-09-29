@@ -828,7 +828,7 @@ class Engine:
                         for curr,next in zip(path[:-1], path[1:])]:
 
             newpage,newst = self.doAction(currpage, linkidx, currst,
-                    preferred=nextpage)
+                    preferred=nextpage, preferredstate=nextst)
 
             self.validateHistory(currpage)
             # that old page might be newpage, so nthe history may have changed
@@ -997,7 +997,8 @@ class Engine:
         self.logger.debug("next action %r %r(%d)", nextAction, page, state)
         return (nextAction, page, state)
 
-    def doAction(self, page, action, state, preferred=None):
+    def doAction(self, page, action, state, preferred=None,
+            preferredstate=None):
         if action[0] == Links.ANCHOR:
             self.logger.info("clicking %s in %s", action[1], page)
             newpage = self.cr.clickAnchor(action[1])
@@ -1015,8 +1016,11 @@ class Engine:
 
         # use reference to the pre-existing page
         newpage = self.pagemap.get(newpage, preferred)
-        if newpage.histories:
+        if preferred and newpage == preferred and preferredstate:
+            newstate = preferredstate
+        elif newpage.histories:
             # get latest newpage state
+            print "H", page.histories[-1][-1]
             prevpage, prevlinkidx, prevst = page.histories[-1][-1]
             newstate = prevpage.links[prevlinkidx][prevst].transition
         else:
@@ -1030,8 +1034,8 @@ class Engine:
         # update set of unvisited links
         self.pagemap.unvisited.updateFromPage(newpage, newstate)
 
+        print "P", newpage, state
         return newpage, newstate
-
 
     def updateOutLinks(self, page, action, newpage, state,
             transition=None):
