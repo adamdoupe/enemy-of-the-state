@@ -978,13 +978,14 @@ class Engine:
                     nextAction = self.processPage(page, state)
                 else:
                     self.logger.info("no path found, stepping back")
-                    prevpage = self.cr.back()
-                    prevpage = self.pagemap[prevpage]
+                    prevcrpage = self.cr.back()
+                    prevcrpage = self.pagemap[prevcrpage]
+                    prevpage, prevlink, prevst = self.history.pop()
+                    assert prevcrpage == prevpage
                     assert prevpage == page.histories[-1][-1][0], \
                             "%s != %s / %s" % (prevpage,
                                     page.histories[-1][-1][0], page)
-                    prevst = page.histories[-1][-1][2]
-                    assert type(prevst) == int
+                    page.histories.pop()
                     page = prevpage
                     state = prevst
         self.logger.debug("next action %r %r(%d)", nextAction, page, state)
