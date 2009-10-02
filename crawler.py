@@ -891,6 +891,10 @@ class Engine:
             #self.validateHistory(page.histories[-1][-1][0])
 
             link = currpage.links[linkidx]
+            target = link[currst]
+            assert target.target == nextpage
+            # XXX is this if ever true? btw, it it happen to be false you
+            # will now get an exception two lines above here!
             if not currst in link:
                 self.logger.info('new link target "%s" (%d->%d)"',
                             newpage, currst, newst)
@@ -962,6 +966,7 @@ class Engine:
             for prevpage, prevlinkidx, prevst in page.histories[-1]:
                 if prevst in validtargets:
                     newstate = prevst
+                    assert s in validtargets, "%r %r" % (s, validtargets)
                     tostate = validtargets[s]
                     break
             self.logger.debug("changing from state %d to %d", currst, newstate)
