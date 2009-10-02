@@ -581,6 +581,17 @@ import htmlunit
 
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
+
+# running htmlunit via JCC will override the signal halders,
+# and we cannot catch ctrl-C, so let's use SIGUSR1
+
+import signal
+
+def signalhandler(signum, frame):
+    raise KeyboardInterrupt
+
+signal.signal(signal.SIGUSR1, signalhandler)
+
 class CrawlerEmptyHistory(Exception):
     pass
 
@@ -876,7 +887,7 @@ class Engine:
         assert page.equiv(prevlink.target), \
                 "%r{%r} %r{%r} --- %r" % (prevlink.target, prevlink.target.links, page, page.links, self)
 
-    def splitPage(self, page, linkidx, currst, newpage, newst):
+    def splitPage(self, page, linkidx, currst, newpage, newst, splitstate=-1):
         self.logger.info("diverging %r", page)
 
         self.validateHistory(page)
@@ -907,9 +918,14 @@ class Engine:
             assert newstate and newstate != currst
             link[newstate].nvisits += 1
         else: # no validstates
-            # page has not been already seen, create a new state
-            self.maxstate += 1
-            newstate = self.maxstate
+            # page has not been already seen
+            if splitstate < 0:
+                # create new state
+                self.maxstate += 1
+                newstate = self.maxstate
+            else:
+                # reuse the state that has just been used by splitState()
+                newstate = splitstate
             # keep state for the target page
             tostate = newst
             self.logger.debug("changing from state %d to new %d", currst,
@@ -935,7 +951,7 @@ class Engine:
             # we have already gone through that link with a different account, 
             # we need to go back and split again
             clonedprev, newprevst = self.splitPage(prevpage, prevlinkidx,
-                    prevst, page, newstate)
+                    prevst, page, newstate, newstate)
             prevtgt.nvisits -= 1
             prevpage = clonedprev
             prevst = newprevst
