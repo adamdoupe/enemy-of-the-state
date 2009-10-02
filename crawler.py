@@ -20,7 +20,10 @@ class Target:
 
 class LinkBase:
     def __init__(self):
+        # do not explore and do not plot link
         self.ignore = False
+        # stop clicking on this link
+        self.stopcrawling = False
         self.history = None
         self.targets = {}
 
@@ -78,6 +81,10 @@ class Form(LinkBase):
         return '(%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
                 self.selects)
 
+    def strippedUniqueHashData(self):
+        return '(%s,%s,%s,%s)' % (self.action, sorted(set(self.inputs)),
+                sorted(set(self.textarea)), sorted(set(self.selects)))
+
     def getFormKeys(self):
         return self.inputs + self.textarea + self.selects
 
@@ -115,6 +122,11 @@ class Links:
                     for i in self.anchors),
                 ','.join(i.hashData() for i in self.forms))
 
+    def strippedUniqueHashData(self):
+        return '([%s], [%s])' % (','.join(set(i.strippedHashData()
+                    for i in self.anchors)),
+                ','.join(i.strippedUniqueHashData() for i in self.forms))
+
     def __getitem__(self, idx):
         if idx[0] == Links.ANCHOR:
             return self.anchors[idx[1]]
@@ -128,11 +140,11 @@ class Links:
 
     def getUnvisited(self, state, what=FORM):
         for i,l in enumerate(self.anchors):
-            if not l.ignore and not state in l:
+            if not l.ignore and not l.stopcrawling and not state in l:
                 return (Links.ANCHOR, i)
         if what >= Links.FORM:
             for i,l in enumerate(self.forms):
-                if not l.ignore and not state in l:
+                if not l.ignore and not l.stopcrawling and not state in l:
                     return (Links.FORM, i)
 
     def iter(self, what=FORM):
@@ -145,15 +157,15 @@ class Links:
 
         for i in iterlist:
             for j in i:
-                if not j.ignore:
+                if not j.ignore and not j.stopcrawling:
                     yield j
 
     def enumerate(self):
         for i,k in enumerate(self.anchors):
-            if not k.ignore:
+            if not k.ignore and not k.stopcrawling:
                 yield ((Links.ANCHOR, i), k)
         for i,k in enumerate(self.forms):
-            if not k.ignore:
+            if not k.ignore and not k.stopcrawling:
                 yield ((Links.FORM, i), k)
 
     def clone(self):
@@ -164,7 +176,7 @@ class Links:
 
 def notVisited(page, link, state):
     l = page.links[link]
-    return not l.ignore and not state in l
+    return not l.ignore and not l.stopcrawling and not state in l
 
 class Unvisited:
     def __init__(self):
@@ -309,11 +321,30 @@ class PageMapper:
         def itervalues(self):
             return self.buckets.itervalues()
 
+    class RepeatingLinksBuckets:
+        def __init__(self):
+            self.buckets = defaultdict(lambda: set())
+
+        def add(self, page):
+            buck = self.buckets[page.rep_templ]
+            buck.add(page)
+            return buck
+
+        def get(self, page):
+            self.buckets[page.rep_templ]
+
+        def __contains__(self, page):
+            return self.buckets.__contains__(page.rep_templ)
+
+        def itervalues(self):
+            return self.buckets.itervalues()
+
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.unvisited = Unvisited()
         self.unsubmitted = set()
         self.buckets = PageMapper.Buckets()
+        self.replinks_buckets = PageMapper.RepeatingLinksBuckets()
 
     def __getitem__(self, page):
         return self.get(page)
@@ -382,6 +413,13 @@ class PageMapper:
                         self.logger.info("aggregatable pages %r",
                                 [p.url for p in inner])
                         inner.aggregation = PageMapper.AGGREG_PENDING
+
+        # if we are getting too many pages with a different number of similar
+        # links (e.g. cart) stop going to that pages
+        if len(self.replinks_buckets.add(page)) \
+                >= config.SIMILAR_JOIN_THRESHOLD:
+            page.stopcrawling = True
+
         return page
 
     def __iter__(self):
@@ -511,7 +549,8 @@ class Page:
         self.templetized = TempletizedPage(self)
         self.basic = BasicPage(self)
         self.split = False
-        self.states = defaultdict(int)
+        self.rep_templ = RepeatingLinksTempletizedPage(self)
+        self.stopcrawling = False
 
     def __hash__(self):
         return self.hashval
@@ -533,6 +572,7 @@ class Page:
 #        link.history = self.histories[-1]
         # TODO fix backlinks with state
         targetpage.backlinks.add((self, idx))
+        link.stopcrawling = targetpage.stopcrawling
 
     def getUnvisitedLink(self, state):
         return self.links.getUnvisited(state)
@@ -563,6 +603,16 @@ class TempletizedPage(Page):
         self.page = page
         self.str = 'TempletizedPage(%s)' % \
                 ','.join([self.page.url.split('?')[0], page.links.strippedHashData(),
+                    str(page.cookies)])
+        self.hashval = self.str.__hash__()
+
+class RepeatingLinksTempletizedPage(Page):
+
+    def __init__(self, page):
+        self.page = page
+        self.str = 'RepatingLinksTempletizedPagePage(%s)' % \
+                ','.join([self.page.url.split('?')[0],
+                    page.links.strippedUniqueHashData(),
                     str(page.cookies)])
         self.hashval = self.str.__hash__()
 
@@ -794,7 +844,7 @@ class Engine:
                     unvisited[weight] = path
             for idx,link in h.links.enumerate():
                 newpath = [(h,idx,s)]+p
-                if link.ignore:
+                if link.ignore or link.stopcrawling:
                     continue
                 if s in link:
                     # links we already know as outgoing from this state
@@ -931,6 +981,7 @@ class Engine:
             self.logger.debug("changing from state %d to new %d", currst,
                     newstate)
             link[newstate] = Target(newpage, transition=tostate)
+            link.stopcrawling = newpage.stopcrawling
 
         # XXX for now force destination state to match
         assert tostate == newst
