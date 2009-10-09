@@ -18,6 +18,10 @@ class Target:
         self.transition = transition
         self.nvisits = nvisits
 
+    def __repr__(self):
+        return "Target(%r, transition=%d, nvisits=%d)" % \
+                (self.target, self.transition, self.nvisits)
+
 class LinkBase:
     def __init__(self):
         # do not explore and do not plot link
@@ -63,27 +67,30 @@ class Anchor(LinkBase):
 
 class Form(LinkBase):
     def __init__(self, method, action, inputs=[], textarea=[],
-            selects=[]):
+            selects=[], hiddens=[]):
         LinkBase.__init__(self)
         self.method = method.lower()
         self.action = action
         self.inputs = inputs
         self.textarea = textarea
         self.selects = selects
+        self.hiddens = hiddens
         self.isPOST = action.upper() == "POST"
 
     def __repr__(self):
         return ('Form(method=%r, action=%r, inputs=%r, textarea=%r,' +
-                    'selects=%r)') % (self.method, self.action, self.inputs,
-                            self.textarea, self.selects)
+                'selects=%r, hiddens=%r)') % \
+                (self.method, self.action, self.inputs,
+                self.textarea, self.selects, self.hiddens)
 
     def hashData(self):
-        return '(%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
-                self.selects)
+        return '(%s,%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
+                self.selects, self.hiddens)
 
     def strippedUniqueHashData(self):
-        return '(%s,%s,%s,%s)' % (self.action, sorted(set(self.inputs)),
-                sorted(set(self.textarea)), sorted(set(self.selects)))
+        return '(%s,%s,%s,%s,%s)' % (self.action, sorted(set(self.inputs)),
+                sorted(set(self.textarea)), sorted(set(self.selects)),
+                sorted(set(self.hiddens)))
 
     def getFormKeys(self):
         return self.inputs + self.textarea + self.selects
@@ -669,11 +676,16 @@ class Crawler:
         return Anchor(a.getHrefAttribute())
 
     def createForm(self, f):
-        inputs = [n.getAttribute('name') for n in
-            htmlunit.HtmlElementWrapper(f).getHtmlElementsByTagName('input')]
+        element = htmlunit.HtmlElementWrapper(f)
+        inputs = [n.getAttribute('name')
+                for n in element.getHtmlElementsByTagName('input')
+                if n.getAttribute('type') != "hidden"]
+        hiddens = ["%s=%s" % (n.getAttribute('name'), n.getAttribute('value'))
+                for n in element.getHtmlElementsByTagName('hidden')
+                if n.getAttribute('type') == "hidden"]
         return Form(method=f.getMethodAttribute(),
                 action=f.getActionAttribute(),
-                inputs=inputs)
+                inputs=inputs, hiddens=hiddens)
 
     def validAnchor(self, a):
         aHref = a.getHrefAttribute()
@@ -955,6 +967,8 @@ class Engine:
         link = page.links[linkidx]
         validtargets = {}
         for s,t in link.iteritems():
+            if currst == 1 and s == 6:
+                print "TTT", t
             # XXX for now force destination state to match
             # in the future we could try to adjust the destination state
             if s != currst and t.target == newpage and t.transition == newst:
