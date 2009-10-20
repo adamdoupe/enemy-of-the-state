@@ -213,8 +213,9 @@ class Unvisited:
     def logInfo(self):
         self.logger.info("still unvisited: %d anchors, %d forms",
                 len(self.anchors), len(self.forms))
-        self.logger.debug("still unvisited: %r anchors, %r forms",
-                self.anchors, self.forms)
+        self.logger.debug("still unvisited: set(%r) anchors, set(%r) forms",
+                [i for i in sorted(self.anchors)],
+                [i for i in sorted(self.forms)])
 
     def len(self, what):
         if what == Links.ANCHOR:
@@ -550,6 +551,7 @@ class Page:
             self.links.hashData(),
             str(self.cookies)])
         self.histories = []
+        self.strhash = self.str.__hash__()
         self.hashval = id(self)
         self.backlinks = set()
         self.aggregation = PageMapper.NOT_AGGREG
@@ -567,6 +569,9 @@ class Page:
 
     def __ne__(self, rhs):
         return self.hashval != rhs.hashval
+
+    def __cmp__(self, rhs):
+        return self.strhash.__cmp__(rhs.strhash)
 
     def __repr__(self):
         return self.str
@@ -837,12 +842,12 @@ class Engine:
         heads = [((0, 0, 0, 0, 0), page, state, [])]
         while heads:
             d, h, s, p = heapq.heappop(heads)
-            #print "HH", d, h, p
+#            print "HH", d, h, p
             if (h,s) in seen:
                 continue
             seen.add((h, s))
             unvlink = h.links.getUnvisited(s)
-            #print 'U', unvlink
+#            print 'U', unvlink
             if unvlink:
                 assert (h, unvlink, s) in self.pagemap.unvisited, "page %r(%d)  link %r not in %r" % (h, s, unvlink, self.pagemap.unvisited)
                 # exclude the starting page from the path
@@ -865,6 +870,7 @@ class Engine:
                         continue
                     newdist = list(d)
                     newdist[self.getWeight(idx, link)] += 1
+#                    print "P1", heads, (tuple(newdist), t.target, s, newpath)
                     heapq.heappush(heads, (tuple(newdist), t.target, s,
                         newpath))
                 for tos,t in link.iteritems():
@@ -878,6 +884,7 @@ class Engine:
                     newdist[self.getWeight(idx, link)] += 1
                     newdist[0] += 1 # as we actually really not sure this
                                     # transition will work from this state
+#                    print "P2", heads, (tuple(newdist), t.target, s, newpath)
                     heapq.heappush(heads, (tuple(newdist), t.target, s,
                         newpath))
 
@@ -904,7 +911,8 @@ class Engine:
 
             link = currpage.links[linkidx]
             target = link[currst]
-            assert target.target == nextpage
+            assert target.target == nextpage, "target %r\nnext %r" % \
+                    (target.target, nextpage)
             # XXX is this if ever true? btw, it it happen to be false you
             # will now get an exception two lines above here!
             if not currst in link:
@@ -1059,7 +1067,8 @@ class Engine:
                     # we are done
                     return (None, page, state)
                 if path:
-                    self.logger.debug("found path: %r", path)
+                    self.logger.debug("found path: \n%s", '\n'.join(
+                        [str(i) for i in path]))
                     page,state = self.navigatePath(page, path)
                     nextAction = self.processPage(page, state)
                 else:
@@ -1191,6 +1200,12 @@ class Engine:
 
         for n in nodes.itervalues():
             dot.add_node(n)
+
+        with open("nodelist.txt", 'w') as f:
+            for i in sorted(j.get_name() for j in nodes.itervalues()):
+                f.write(i)
+                f.write('\n')
+
 
         nulltargets = 0
 
