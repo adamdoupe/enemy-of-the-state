@@ -87,6 +87,10 @@ class Form(LinkBase):
         return '(%s,%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
                 self.selects, self.hiddens)
 
+    def strippedHashData(self):
+        return '(%s,%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
+                self.selects, [i.split('=')[0] for i in self.hiddens])
+
     def strippedUniqueHashData(self):
         return '(%s,%s,%s,%s,%s)' % (self.action, sorted(set(self.inputs)),
                 sorted(set(self.textarea)), sorted(set(self.selects)),
@@ -127,7 +131,7 @@ class Links:
     def strippedHashData(self):
         return '([%s], [%s])' % (','.join(i.strippedHashData()
                     for i in self.anchors),
-                ','.join(i.hashData() for i in self.forms))
+                ','.join(i.strippedHashData() for i in self.forms))
 
     def strippedUniqueHashData(self):
         return '([%s], [%s])' % (','.join(set(i.strippedHashData()
@@ -233,7 +237,9 @@ class Unvisited:
         return False
 
     def __repr__(self):
-        return "Unvisited(%r, %r)" % (self.anchors, self.forms)
+        return "Unvisited(\n  %s\n,\n  %s)" % (
+                '\n  '.join(sorted(str(i) for i in self.anchors)),
+                '\n  '.join(sorted(str(i) for i in self.forms)))
 
 
 class PageMapper:
@@ -849,7 +855,10 @@ class Engine:
             unvlink = h.links.getUnvisited(s)
 #            print 'U', unvlink
             if unvlink:
-                assert (h, unvlink, s) in self.pagemap.unvisited, "page %r(%d)  link %r not in %r" % (h, s, unvlink, self.pagemap.unvisited)
+                # the following assert might now fail because we no longer put
+                # links of pages when forking state in unvisited set
+                #assert (h, unvlink, s) in self.pagemap.unvisited, "page %r(%d)  link %r not in %r" % (h, s, unvlink, self.pagemap.unvisited)
+                self.logger.debug("additional unvisited page %r", (h, unvlink, s))
                 # exclude the starting page from the path
                 path = [i for i in reversed([(h,None,s)]+p)]
                 weight = self.getWeight(unvlink, h.links[unvlink])
@@ -875,6 +884,10 @@ class Engine:
                         newpath))
                 for tos,t in link.iteritems():
                     # other outgoing links we already observed form other states
+                    # note that in this way we may get multiple targets from
+                    # the same state: not too bad: if we try to follow it we
+                    # will discover the right one and never do the same mistake
+                    # again
                     if tos == s:
                         continue
 #                    if t.transition == s:
@@ -902,6 +915,7 @@ class Engine:
 
             newpage,newst = self.doAction(currpage, linkidx, currst,
                     preferred=nextpage, preferredstate=nextst)
+            print "###", currst, currpage, newst, newpage, linkidx
 
             self.validateHistory(currpage)
             # that old page might be newpage, so nthe history may have changed
@@ -910,7 +924,18 @@ class Engine:
             #self.validateHistory(page.histories[-1][-1][0])
 
             link = currpage.links[linkidx]
-            target = link[currst]
+            print "@@@", link
+            try:
+                target = link[currst]
+            except KeyError:
+                # this target for currst is an hypothesis made when looking
+                # at outgoing links to the same target from other states
+                # let's assume we are correct; if it will prove wrong, it will
+                # be adjusted without creating a new state because the visit
+                # counter is 0
+                target = Target(target=nextpage, transition=nextst, nvisits=0)
+                link[currst] = target
+
             assert target.target == nextpage, "target %r\nnext %r" % \
                     (target.target, nextpage)
             # XXX is this if ever true? btw, it it happen to be false you
@@ -975,8 +1000,6 @@ class Engine:
         link = page.links[linkidx]
         validtargets = {}
         for s,t in link.iteritems():
-            if currst == 1 and s == 6:
-                print "TTT", t
             # XXX for now force destination state to match
             # in the future we could try to adjust the destination state
             if s != currst and t.target == newpage and t.transition == newst:
@@ -1022,8 +1045,9 @@ class Engine:
 
         assert prevtgt.target == page, "%r %r %r" % (prevtgt.target, page, \
                 prevpage)
-        assert prevtgt.nvisits > 0
-        if prevtgt.nvisits == 1:
+        assert prevtgt.nvisits >= 0
+        # nvisits == 0: hyptheses made by findPathToUnvisited, never verified
+        if prevtgt.nvisits <= 1:
             prevtgt.transition = newstate
         else:
             # we have already gone through that link with a different account, 
@@ -1067,7 +1091,7 @@ class Engine:
                     # we are done
                     return (None, page, state)
                 if path:
-                    self.logger.debug("found path: \n%s", '  \n'.join(
+                    self.logger.debug("found path:\n  %s", '\n  '.join(
                         [str(i) for i in path]))
                     page,state = self.navigatePath(page, path)
                     nextAction = self.processPage(page, state)
