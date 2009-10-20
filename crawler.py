@@ -686,7 +686,7 @@ class Crawler:
                 for n in element.getHtmlElementsByTagName('input')
                 if n.getAttribute('type') != "hidden"]
         hiddens = ["%s=%s" % (n.getAttribute('name'), n.getAttribute('value'))
-                for n in element.getHtmlElementsByTagName('hidden')
+                for n in element.getHtmlElementsByTagName('input')
                 if n.getAttribute('type') == "hidden"]
         return Form(method=f.getMethodAttribute(),
                 action=f.getActionAttribute(),
@@ -1067,7 +1067,7 @@ class Engine:
                     # we are done
                     return (None, page, state)
                 if path:
-                    self.logger.debug("found path: \n%s", '\n'.join(
+                    self.logger.debug("found path: \n%s", '  \n'.join(
                         [str(i) for i in path]))
                     page,state = self.navigatePath(page, path)
                     nextAction = self.processPage(page, state)
