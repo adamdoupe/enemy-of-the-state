@@ -674,6 +674,13 @@ class Crawler:
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.INTERNET_EXPLORER_6)
+        #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.FIREFOX_3)
+        #bw = htmlunit.BrowserVersion(
+        #    htmlunit.BrowserVersion.NETSCAPE, "5.0 (Windows; en-US)",
+        #            "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.0.1) Gecko/2008070208 Firefox/3.0.1 Safari", 3.0)
+            #        "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.0.1) Gecko/2008070208 Firefox/3.0.1 Safari", "1.2", 3.0, "FF3", None)
+
+        #self.webclient = htmlunit.WebClient(bw)
         self.webclient = htmlunit.WebClient()
         self.webclient.setThrowExceptionOnScriptError(False);
         self.webclient.setUseInsecureSSL(True)
@@ -848,12 +855,12 @@ class Engine:
         heads = [((0, 0, 0, 0, 0), page, state, [])]
         while heads:
             d, h, s, p = heapq.heappop(heads)
-#            print "HH", d, h, p
+            print "HH", d, h, p
             if (h,s) in seen:
                 continue
             seen.add((h, s))
             unvlink = h.links.getUnvisited(s)
-#            print 'U', unvlink
+            print 'U', unvlink
             if unvlink:
                 # the following assert might now fail because we no longer put
                 # links of pages when forking state in unvisited set
@@ -879,9 +886,10 @@ class Engine:
                         continue
                     newdist = list(d)
                     newdist[self.getWeight(idx, link)] += 1
-#                    print "P1", heads, (tuple(newdist), t.target, s, newpath)
+                    print "P1", heads, (tuple(newdist), t.target, s, newpath)
                     heapq.heappush(heads, (tuple(newdist), t.target, s,
                         newpath))
+                    continue
                 for tos,t in link.iteritems():
                     # other outgoing links we already observed form other states
                     # note that in this way we may get multiple targets from
@@ -897,7 +905,7 @@ class Engine:
                     newdist[self.getWeight(idx, link)] += 1
                     newdist[0] += 1 # as we actually really not sure this
                                     # transition will work from this state
-#                    print "P2", heads, (tuple(newdist), t.target, s, newpath)
+                    print "P2", heads, (tuple(newdist), t.target, s, newpath)
                     heapq.heappush(heads, (tuple(newdist), t.target, s,
                         newpath))
 
@@ -913,9 +921,9 @@ class Engine:
                 [(curr[0],curr[1],curr[2],next[0],next[2])
                         for curr,next in zip(path[:-1], path[1:])]:
 
-            newpage,newst = self.doAction(currpage, linkidx, currst,
-                    preferred=nextpage, preferredstate=nextst)
-            print "###", currst, currpage, newst, newpage, linkidx
+            print "###", currst, currpage
+            print "   ", nextst, nextpage
+            print "   ", linkidx
 
             self.validateHistory(currpage)
             # that old page might be newpage, so nthe history may have changed
@@ -933,11 +941,18 @@ class Engine:
                 # let's assume we are correct; if it will prove wrong, it will
                 # be adjusted without creating a new state because the visit
                 # counter is 0
+                print "+++"
                 target = Target(target=nextpage, transition=nextst, nvisits=0)
                 link[currst] = target
 
             assert target.target == nextpage, "target %r\nnext %r" % \
                     (target.target, nextpage)
+
+            newpage,newst = self.doAction(currpage, linkidx, currst,
+                    preferred=nextpage, preferredstate=nextst)
+
+            print "===", newst, newpage
+
             # XXX is this if ever true? btw, it it happen to be false you
             # will now get an exception two lines above here!
             if not currst in link:
@@ -1008,16 +1023,19 @@ class Engine:
         newstate = None
         if validtargets:
             # pick the most recent seen state with the correct target
-            for prevpage, prevlinkidx, prevst in page.histories[-1]:
+            for prevpage, prevlinkidx, prevst in reversed(page.histories[-1]):
                 if prevst in validtargets:
                     newstate = prevst
                     assert s in validtargets, "%r %r" % (s, validtargets)
                     tostate = validtargets[s]
                     break
-            self.logger.debug("changing from state %d to %d", currst, newstate)
-            assert newstate and newstate != currst
+        if newstate:
+            self.logger.debug("changing from state %s to %s", currst, newstate)
+            assert newstate and newstate != currst, "validtargets %r\nlenhist %d\n%r" % (validtargets, len(page.histories[-1]), page.histories[-1])
             link[newstate].nvisits += 1
-        else: # no validstates
+        else: # no validstates or no newstate
+            if validtargets:
+                self.logger.debug("no state in validtargets %r found in history", validtargets)
             # page has not been already seen
             if splitstate < 0:
                 # create new state
@@ -1097,6 +1115,8 @@ class Engine:
                     nextAction = self.processPage(page, state)
                 else:
                     self.logger.info("no path found, stepping back")
+                    if not page.url in ["http://localhost:8888/admin/index.php?page=login", "404"]:
+                        raise Exception("stop here")
                     prevcrpage = self.cr.back()
                     prevcrpage = self.pagemap[prevcrpage]
                     prevpage, prevlink, prevst = self.history.pop()
