@@ -9,8 +9,20 @@ import urlparse
 import copy
 import pydot
 import heapq
+import re
 
 import config
+
+urltok_re = re.compile(r'[/&\?=]')
+
+def tokenize(s):
+    return urltok_re.split(s)
+
+def flatten(l):
+    r = []
+    for i in l:
+        r += i
+    return r
 
 class Target:
     def __init__(self, target, transition, nvisits=1):
@@ -53,6 +65,7 @@ class Anchor(LinkBase):
     def __init__(self, url):
         LinkBase.__init__(self)
         self.url = url
+        self.tokurl = tokenize(url)
         self.hasparams = url.find('?') != -1
 
     def __repr__(self):
@@ -65,16 +78,21 @@ class Anchor(LinkBase):
     def strippedHashData(self):
         return self.url.split('?')[0]
 
+    def tokenized(self):
+        return self.tokurl
+
 class Form(LinkBase):
     def __init__(self, method, action, inputs=[], textarea=[],
             selects=[], hiddens=[]):
         LinkBase.__init__(self)
         self.method = method.lower()
         self.action = action
+        self.tokaction = tokenize(action)
         self.inputs = inputs
         self.textarea = textarea
         self.selects = selects
         self.hiddens = hiddens
+        self.tokhiddens = [tokenize(i) for i in hiddens]
         self.isPOST = action.upper() == "POST"
 
     def __repr__(self):
@@ -88,8 +106,9 @@ class Form(LinkBase):
                 self.selects, self.hiddens)
 
     def strippedHashData(self):
-        return '(%s,%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
-                self.selects, [i.split('=')[0] for i in self.hiddens])
+        #return '(%s,%s,%s,%s,%s)' % (self.action, self.inputs, self.textarea,
+        #        self.selects, [i.split('=')[0] for i in self.hiddens])
+        return self.action
 
     def strippedUniqueHashData(self):
         return '(%s,%s,%s,%s,%s)' % (self.action, sorted(set(self.inputs)),
@@ -98,6 +117,9 @@ class Form(LinkBase):
 
     def getFormKeys(self):
         return self.inputs + self.textarea + self.selects
+
+    def tokenized(self):
+        return self.tokaction + self.getFormKeys() + flatten(self.tokhiddens)
 
 
 class Links:
@@ -370,6 +392,8 @@ class PageMapper:
                     PageMapper.Splits(PageMapper.Inner(page))
         else:
             splits = self.buckets[page]
+            # splits are no longer used
+            assert len(splits) <= 1
             if len(splits) > 1:
                 self.logger.info("potential state splitted page %s", page)
             inner = None
@@ -497,53 +521,17 @@ class PageMapper:
                 return False
         return True
 
-    def setLatest(self, page, splitidx):
-        splits = self.buckets[page]
-        if splitidx < 0:
-            inner = PageMapper.Inner(page)
-            splits.append(inner)
-            splits.latest = inner
-        else:
-            splits.latest = splits[splitidx]
+    def haveSameTemplate(self, p, q):
+        return p.templetized == q.templetized
 
-    def isClone(self, page, p, link, target):
-        pagetarget = page.links[link].target
-        ptarget = p.links[link].target
-        assert not ptarget or \
-                ptarget.aggregation == pagetarget.aggregation, \
-                "%r != %r" % (ptarget.aggregation, pagetarget.aggregation)
-        if not ptarget or target.equiv(ptarget):
-            assert p != page, "[%d], %r->%r, %r->%r, %r" \
-                    % (ptarget.aggregation, p, ptarget, page,
-                            pagetarget, target)
-            return p
-        return None
+    def markUrlDiff(self, p, q):
+        ptok = tokenize(p)
+        qtok = tokenize(q)
+        assert len(ptok) == len(qtok)
+        return [i==j and i or None for i, j in zip(ptok, qtok)]
 
-    def findClone(self, page, link, target):
-        pagetarget = page.links[link].target
-        assert not target.equiv(pagetarget), \
-                "%d %s %s %x(%x) %x(%x)" % (pagetarget.aggregation,
-                        target.split, pagetarget.split,
-                        pagetarget.basic.__hash__(), pagetarget.__hash__(),
-                        target.basic.__hash__(), target.__hash__())
-        splits = self.buckets[page]
-        for splitidx,inner in enumerate(splits):
-            assert (inner.aggregation == PageMapper.AGGREGATED) \
-                    == (inner.merged != None)
-            if inner.merged:
-                ret = self.isClone(page, inner.merged, link, target)
-                if ret:
-                    return (ret, splitidx)
-            else:
-                for p in inner:
-                    # we need the follwing check because page may be
-                    # aggragatable; equiv() would fail because it it checking
-                    # the split values
-                    if page.basic == p.basic:
-                        ret = self.isClone(page, p, link, target)
-                        if ret:
-                            return (ret, splitidx)
-        return (None, -1)
+    def aggregate(self, p, q):
+        pass
 
 class Page:
     HASHVALFMT = 'i'
@@ -551,6 +539,7 @@ class Page:
 
     def __init__(self, url, anchors=[], forms=[], cookies=[]):
         self.url = url
+        self.tokurl = tokenize(url)
         self.links = Links(anchors, forms)
         self.cookies = cookies
         self.str = 'Page(%s)' % ','.join([str(self.url),
@@ -855,12 +844,12 @@ class Engine:
         heads = [((0, 0, 0, 0, 0), page, state, [])]
         while heads:
             d, h, s, p = heapq.heappop(heads)
-            print "HH", d, h, p
+            #print "HH", d, h, p
             if (h,s) in seen:
                 continue
             seen.add((h, s))
             unvlink = h.links.getUnvisited(s)
-            print 'U', unvlink
+            #print 'U', unvlink
             if unvlink:
                 # the following assert might now fail because we no longer put
                 # links of pages when forking state in unvisited set
@@ -886,7 +875,7 @@ class Engine:
                         continue
                     newdist = list(d)
                     newdist[self.getWeight(idx, link)] += 1
-                    print "P1", heads, (tuple(newdist), t.target, s, newpath)
+                    #print "P1", heads, (tuple(newdist), t.target, s, newpath)
                     heapq.heappush(heads, (tuple(newdist), t.target, s,
                         newpath))
                     continue
@@ -905,7 +894,7 @@ class Engine:
                     newdist[self.getWeight(idx, link)] += 1
                     newdist[0] += 1 # as we actually really not sure this
                                     # transition will work from this state
-                    print "P2", heads, (tuple(newdist), t.target, s, newpath)
+                    #print "P2", heads, (tuple(newdist), t.target, s, newpath)
                     heapq.heappush(heads, (tuple(newdist), t.target, s,
                         newpath))
 
@@ -974,13 +963,34 @@ class Engine:
                 if newpage != nextpage:
                     self.logger.info('unexpected link target "%s" instead of' +
                             ' "%s"', newpage, nextpage)
-                    clonedpage, clonedst = self.splitPage(currpage, linkidx, currst,
-                            newpage, newst)
-                    # update history (which was set by doAction())
-                    self.history = clonedpage.histories[-1] + \
-                            [(clonedpage, linkidx, clonedst)]
-                    newpage.histories[-1] = self.history[:]
-                    return (newpage, newst)
+                    # we want to check if this link is actually changing the
+                    # state or is time/random dependant: resubmit the request
+                    prevpage, prevlink, prevst = self.back(page)
+                    assert prevpage == currpage and prevst == currst
+                    repnewpage,repnewst = self.doAction(currpage, linkidx,
+                            currst, preferred=nextpage, preferredstate=nextst)
+                    if repnewpage == newpage or not \
+                            self.pagemap.haveSameTemplate(repnewpage, newpage):
+                        # 1. resubmitting the request leads to the same page
+                        # 2. " " leads to a page with a different structure.
+                        # In both cases, create a new state as we have a new
+                        # unexpected page not aggregatable with the previous one
+                        assert target.transition != -1 # XXX not handled yet
+                        clonedpage, clonedst = self.splitPage(currpage,
+                                linkidx, currst, newpage, newst)
+                        # update history (which was set by doAction())
+                        self.history = clonedpage.histories[-1] + \
+                                [(clonedpage, linkidx, clonedst)]
+                        newpage.histories[-1] = self.history[:]
+                        return (newpage, newst)
+                    else:
+                        # link is time/random dependent or creating a new state
+                        aggrnewpage = self.pagemap.aggregate(newpage,
+                                repnewpage)
+                        target.transition = -1
+                        return (aggrnewpage, repnewst)
+
+
                 else:
                     self.validateHistory(newpage)
                     if newpage.split:
@@ -1094,6 +1104,17 @@ class Engine:
             return None
         return page.getUnvisitedLink(state)
 
+    def back(self, page):
+        prevcrpage = self.cr.back()
+        prevcrpage = self.pagemap[prevcrpage]
+        prevpage, prevlink, prevst = self.history.pop()
+        assert prevcrpage == prevpage
+        assert prevpage == page.histories[-1][-1][0], \
+                "%s != %s / %s" % (prevpage,
+                        page.histories[-1][-1][0], page)
+        page.histories.pop()
+        return (prevpage, prevlink, prevst)
+
     def findNextStep(self, page, state):
         nextAction = None
         while nextAction == None:
@@ -1115,18 +1136,9 @@ class Engine:
                     nextAction = self.processPage(page, state)
                 else:
                     self.logger.info("no path found, stepping back")
-                    if not page.url in ["http://localhost:8888/admin/index.php?page=login", "404"]:
-                        raise Exception("stop here")
-                    prevcrpage = self.cr.back()
-                    prevcrpage = self.pagemap[prevcrpage]
-                    prevpage, prevlink, prevst = self.history.pop()
-                    assert prevcrpage == prevpage
-                    assert prevpage == page.histories[-1][-1][0], \
-                            "%s != %s / %s" % (prevpage,
-                                    page.histories[-1][-1][0], page)
-                    page.histories.pop()
-                    page = prevpage
-                    state = prevst
+#                    if not page.url in ["http://localhost:8888/admin/index.php?page=login", "404"]:
+#                        raise Exception("stop here")
+                    page, link, state = self.back(page)
         self.logger.debug("next action %r %r(%d)", nextAction, page, state)
         return (nextAction, page, state)
 
