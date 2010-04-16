@@ -965,7 +965,8 @@ class Engine:
                             ' "%s"', newpage, nextpage)
                     # we want to check if this link is actually changing the
                     # state or is time/random dependant: resubmit the request
-                    prevpage, prevlink, prevst = self.back(page)
+                    prevpage, prevlink, prevst = self.back(newpage)
+
                     assert prevpage == currpage and prevst == currst
                     repnewpage,repnewst = self.doAction(currpage, linkidx,
                             currst, preferred=nextpage, preferredstate=nextst)
