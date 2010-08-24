@@ -575,8 +575,8 @@ class Crawler:
         return Anchor(a.getHrefAttribute())
 
     def createForm(self, f):
-        inputs = [n.getAttribute('name') for n in
-            htmlunit.HtmlElementWrapper(f).getHtmlElementsByTagName('input')]
+        inputs = [htmlunit.HtmlElement.cast_(n).getAttribute('name')
+                for n in f.getHtmlElementsByTagName('input')]
         return Form(method=f.getMethodAttribute(),
                 action=f.getActionAttribute(),
                 inputs=inputs)
@@ -594,12 +594,12 @@ class Crawler:
 
     def updateInternalData(self, htmlpage):
         # XXX cast should not be needed
-        self.htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
-        htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
+        htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
+        self.htmlpage = htmlpage
         self.url = htmlpage.getWebResponse().getRequestUrl().toString()
-        self.anchors = [a for a in htmlpagewrapped.getAnchors()
+        self.anchors = [a for a in htmlpage.getAnchors()
                 if self.validAnchor(a)]
-        self.forms = [f for f in htmlpagewrapped.getForms()]
+        self.forms = [f for f in htmlpage.getForms()]
 #                if f.getMethodAttribute().lower() == 'get']
         self.page = Page(url=self.url,
                 anchors=[self.createAnchor(a) for a in self.anchors],
@@ -1053,10 +1053,4 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
 
-
-
-
-
-
-
-
+# vi:tabstop=8:expandtab:shiftwidth=4:
