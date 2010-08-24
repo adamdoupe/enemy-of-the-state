@@ -683,13 +683,11 @@ class Crawler:
         return Anchor(a.getHrefAttribute())
 
     def createForm(self, f):
-        element = htmlunit.HtmlElementWrapper(f)
+        allinputs = [htmlunit.HtmlElement.cast_(n) for n in f.getHtmlElementsByTagName('input')]
         inputs = [n.getAttribute('name')
-                for n in element.getHtmlElementsByTagName('input')
-                if n.getAttribute('type') != "hidden"]
+                for n in allinputs if n.getAttribute('type') != "hidden"]
         hiddens = ["%s=%s" % (n.getAttribute('name'), n.getAttribute('value'))
-                for n in element.getHtmlElementsByTagName('input')
-                if n.getAttribute('type') == "hidden"]
+                for n in allinputs if n.getAttribute('type') == "hidden"]
         return Form(method=f.getMethodAttribute(),
                 action=f.getActionAttribute(),
                 inputs=inputs, hiddens=hiddens)
@@ -707,12 +705,12 @@ class Crawler:
 
     def updateInternalData(self, htmlpage):
         # XXX cast should not be needed
-        self.htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
-        htmlpagewrapped = htmlunit.HtmlPageWrapper(htmlpage)
+        htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
+        self.htmlpage = htmlpage
         self.url = htmlpage.getWebResponse().getRequestUrl().toString()
-        self.anchors = [a for a in htmlpagewrapped.getAnchors()
+        self.anchors = [a for a in htmlpage.getAnchors()
                 if self.validAnchor(a)]
-        self.forms = [f for f in htmlpagewrapped.getForms()]
+        self.forms = [f for f in htmlpage.getForms()]
 #                if f.getMethodAttribute().lower() == 'get']
         self.page = Page(url=self.url,
                 anchors=[self.createAnchor(a) for a in self.anchors],
@@ -1331,10 +1329,4 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
 
-
-
-
-
-
-
-
+# vi:tabstop=8:expandtab:shiftwidth=4:
