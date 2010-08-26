@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 import logging
+import re
+import random
 
 import htmlunit
 
@@ -18,28 +20,42 @@ def signalhandler(signum, frame):
 signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
 
+class lazyproperty(object):
+    """ from http://blog.pythonisito.com/2008/08/lazy-descriptors.html """
+
+    def __init__(self, func):
+        self._func = func
+        self.__name__ = func.__name__
+        self.__doc__ = func.__doc__
+
+    def __get__(self, obj, klass=None):
+        if obj is None: return None
+        result = obj.__dict__[self.__name__] = self._func(obj)
+        return result
+
+
 class Request(object):
 
     def __init__(self, webrequest):
         self.webrequest = webrequest
 
-    @property
+    @lazyproperty
     def method(self):
         return self.webrequest.getHttpMethod()
 
-    @property
+    @lazyproperty
     def path(self):
         return self.webrequest.getUrl()
 
-    @property
+    @lazyproperty
     def params(self):
         raise NotImplemented
 
-    @property
+    @lazyproperty
     def cookies(self):
         raise NotImplemented
 
-    @property
+    @lazyproperty
     def headers(self):
         raise NotImplemented
 
@@ -51,27 +67,23 @@ class Response(object):
 
     def __init__(self, webresponse, page):
         self.webresponse = webresponse
-        self._page = page
+        self.page = page
 
-    @property
+    @lazyproperty
     def code(self):
         return self.webresponse.getStatusCode()
 
-    @property
+    @lazyproperty
     def message(self):
         return self.webresponse.getStatusMessage()
 
-    @property
+    @lazyproperty
     def content(self):
         raise NotImplemented
 
-    @property
+    @lazyproperty
     def cookies(self):
         raise NotImplemented
-
-    @property
-    def page(self):
-        return _page
 
     def __str__(self):
         return "Response(%d %s)" % (self.code, self.message)
@@ -90,19 +102,113 @@ class RequestResponse(object):
         return "%s -> %s" % (self.request, self.response)
 
 
+class Link(object):
+
+    xpathsimplifier = re.compile(r"\[[^\]*]")
+
+    def __init__(self, internal, reqresp):
+        self.internal = internal
+        self.reqresp = reqresp
+        self.to = []
+
+    @lazyproperty
+    def dompath(self):
+        return Link.xpathsimplifier.sub("", self.internal.getCanonicalXPath())
+
+
+class Anchor(Link):
+
+    @lazyproperty
+    def href(self):
+        return self.internal.getHrefAttribute()
+
+    def click(self):
+        return self.internal.click()
+
+    def __str__(self):
+        return "Anchor(%s, %s)" % (self.href, self.dompath)
+
+
+class Form(Link):
+    pass
+
+
 class Page(object):
 
-    def __init__(self, page, reqresp):
-        self.page = page
+    def __init__(self, internal, reqresp):
+        self.internal = internal
         self.reqresp = reqresp
 
-    @property
+    @lazyproperty
     def anchors(self):
-        raise NotImplemented
+        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors()]
 
-    @property
+    @lazyproperty
     def forms(self):
-        raise NotImplemented
+        return [Form(i, self.reqresp) for i in self.internal.getForms()]
+
+
+class AbstractLink(object):
+
+    def __init__(self, abspage):
+        elf.abspage = abspage
+
+
+class AbstractAnchor(AbstractLink):
+    pass
+
+class AbstractForm(AbstractLink):
+    pass
+
+class AbstractPage(object):
+
+    def __init__(self, reqresps):
+        self.reqresps = reqresps
+        # TODO: number of links might not be the same in some more complex clustering
+        self.absanchors = [AbsstractAnchor(i) for i in zip(rr.page.anchors for rr in reqresps)]
+        self.absforms = [AbsstractForm(i) for i in zip(rr.page.forms for rr in reqresps)]
+
+
+class Buckets(dict):
+
+    def __missing__(self, k):
+        v = []
+        self[k] = v
+        return v
+
+    def add(self, obj, h):
+        v = self[h]
+        v.append(o)
+        return v
+
+
+class PageClusteres(object):
+
+    def simplehash(self, reqresp):
+        page = reqresp.resp.page
+        hashedval = reqresp.request.url() + '|' + repr(page.anchors) + "|" + repr(page.forms)
+        return hash(hashedval)
+
+    def __init__(self, reqresps):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.trace("clustering %d pages", len(reqresps))
+        buckets = Buckets()
+        for i in reqresps:
+            buckets.add(i, self.simplehash(i))
+        selkf.buckets = buckets
+
+    def getAbstractPages(self):
+        self.logger.trace("generating abstract pages")
+        abspages = [AbstractPage(i) for i in self.buckets]
+        return abspages
+
+
+class AppGraphGenerator(object):
+
+    def __init__(self, abspages):
+        self.abspages = abspages
+
+
 
 class DeferringRefreshHandler(htmlunit.RefreshHandler):
 
@@ -152,18 +258,47 @@ class Crawler(object):
     def updateInternalData(self, htmlpage):
         self.reqresp = RequestResponse(htmlpage, self.reqresp)
 
+    def click(self, anchor):
+        assert anchor.internal.getPage() == self.reqresp.response.page.internal, \
+                "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.reqresp.response.page.internal)
+        htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
+        # TODO: handle HTTP redirects, they will throw an exception
+        return self.newPage(htmlpage)
 
-def main(urls):
-    cr = Crawler()
 
-    for url in urls:
-        page = cr.open(url)
+class Engine(object):
+
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    def getUnvisitedLink(self, reqresp):
+        anchors = reqresp.response.page.anchors
+        if len(anchors) > 0:
+            anchor = random.choice(anchors)
+        else:
+            anchor = None
+        return anchor
+
+    def getNextAction(self, reqresp):
+        return self.getUnvisitedLink(reqresp)
+
+    def main(self, urls):
+        cr = Crawler()
+
+        for cnt, url in enumerate(urls):
+            self.logger.info("starting with URL %d/%d %s", cnt+1, len(urls), url)
+            reqresp = cr.open(url)
+            nextAction = self.getNextAction(reqresp)
+            while nextAction:
+                self.logger.debug("clicking on %s", nextAction)
+                reqresp = cr.click(nextAction)
+                nextAction = self.getNextAction(reqresp)
 
 
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.DEBUG)
-    main(sys.argv[1:])
+    Engine().main(sys.argv[1:])
 
 
 # vim:sw=4:et:
