@@ -45,7 +45,12 @@ class Request(object):
 
     @lazyproperty
     def path(self):
-        return self.webrequest.getUrl()
+        url = self.webrequest.getUrl()
+        query = url.getQuery()
+        path = self.webrequest.getUrl().getPath()
+        if query:
+            path += "?" + query
+        return path
 
     @lazyproperty
     def params(self):
@@ -104,7 +109,7 @@ class RequestResponse(object):
 
 class Link(object):
 
-    xpathsimplifier = re.compile(r"\[[^\]*]")
+    #xpathsimplifier = re.compile(r"\[[^\]*]")
 
     def __init__(self, internal, reqresp):
         self.internal = internal
@@ -113,7 +118,8 @@ class Link(object):
 
     @lazyproperty
     def dompath(self):
-        return Link.xpathsimplifier.sub("", self.internal.getCanonicalXPath())
+        #return Link.xpathsimplifier.sub("", self.internal.getCanonicalXPath())
+        return self.internal.getCanonicalXPath()
 
 
 class Anchor(Link):
@@ -263,7 +269,11 @@ class Crawler(object):
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.reqresp.response.page.internal)
         htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
         # TODO: handle HTTP redirects, they will throw an exception
-        return self.newPage(htmlpage)
+        reqresp = self.newPage(htmlpage)
+        anchor.to.append(reqresp)
+        assert reqresp.request.path[-len(anchor.href):] == anchor.href, \
+                "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.path)
+        return reqresp
 
 
 class Engine(object):
