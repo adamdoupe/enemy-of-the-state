@@ -229,6 +229,8 @@ class DeferringRefreshHandler(htmlunit.RefreshHandler):
 
 class Crawler(object):
 
+    class EmptyHistory(Exception):
+        pass
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -247,7 +249,10 @@ class Crawler(object):
         self.refresh_urls = []
         # XXX the refresh handler does not tget called, why?
         self.webclient.setRefreshHandler(DeferringRefreshHandler(self.refresh_urls))
-        self.reqresp = None
+        # last generated RequestResponse object
+        self.lastreqresp = None
+        # current RequestResponse object (will differ from lastreqresp when back() is invoked)
+        self.currreqresp = None
 
     def open(self, url):
         del self.refresh_urls[:]
@@ -258,15 +263,17 @@ class Crawler(object):
 
     def newPage(self, htmlpage):
         self.updateInternalData(htmlpage)
-        self.logger.info("%s", self.reqresp)
-        return self.reqresp
+        self.logger.info("%s", self.currreqresp)
+        return self.currreqresp
 
     def updateInternalData(self, htmlpage):
-        self.reqresp = RequestResponse(htmlpage, self.reqresp)
+        self.lastreqresp = RequestResponse(htmlpage, self.lastreqresp)
+        self.currreqresp = self.lastreqresp
 
     def click(self, anchor):
-        assert anchor.internal.getPage() == self.reqresp.response.page.internal, \
-                "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.reqresp.response.page.internal)
+        self.logger.debug("clicking on %s", anchor)
+        assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
+                "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
         # TODO: handle HTTP redirects, they will throw an exception
         reqresp = self.newPage(htmlpage)
@@ -275,8 +282,18 @@ class Crawler(object):
                 "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.path)
         return reqresp
 
+    def back(self):
+        self.logger.debug("stepping back")
+        # htmlunit has not "back" functrion
+        if self.lastreqresp.prev is None:
+            raise Crawler.EmptyHistory()
+        self.currreqresp = self.lastreqresp.prev
+        return self.currreqresp
+
 
 class Engine(object):
+
+    BACK, ANCHOR = range(2)
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -290,7 +307,10 @@ class Engine(object):
         return anchor
 
     def getNextAction(self, reqresp):
-        return self.getUnvisitedLink(reqresp)
+        unvisited = self.getUnvisitedLink(reqresp)
+        if unvisited is not None:
+            return (Engine.ANCHOR, unvisited)
+        return (Engine.BACK, )
 
     def main(self, urls):
         cr = Crawler()
@@ -300,8 +320,10 @@ class Engine(object):
             reqresp = cr.open(url)
             nextAction = self.getNextAction(reqresp)
             while nextAction:
-                self.logger.debug("clicking on %s", nextAction)
-                reqresp = cr.click(nextAction)
+                if nextAction[0] == Engine.ANCHOR:
+                    reqresp = cr.click(nextAction[1])
+                if nextAction[0] == Engine.BACK:
+                    reqresp = cr.back()
                 nextAction = self.getNextAction(reqresp)
 
 
