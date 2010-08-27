@@ -9,15 +9,14 @@ import htmlunit
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
 
-# running htmlunit via JCC will override the signal halders,
-# and we cannot catch ctrl-C, so let's use SIGUSR1
+# running htmlunit via JCC will override the signal halders
 
 import signal
 
 def signalhandler(signum, frame):
     raise KeyboardInterrupt
 
-signal.signal(signal.SIGUSR1, signalhandler)
+#signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
 
 class lazyproperty(object):
@@ -64,8 +63,15 @@ class Request(object):
     def headers(self):
         raise NotImplemented
 
-    def __str__(self):
+    @lazyproperty
+    def _str(self):
         return "Request(%s %s)" % (self.method, self.path)
+
+    def __str__(self):
+        return self._str
+
+    def __repr__(self):
+        return str(self)
 
 
 class Response(object):
@@ -144,6 +150,7 @@ class Page(object):
     def __init__(self, internal, reqresp):
         self.internal = internal
         self.reqresp = reqresp
+        self.abspage = None
 
     @lazyproperty
     def anchors(self):
@@ -158,6 +165,8 @@ class AbstractLink(object):
 
     def __init__(self, abspage):
         elf.abspage = abspage
+        # map from state to AbstractRequest
+        self.targets = {}
 
 
 class AbstractAnchor(AbstractLink):
@@ -175,20 +184,59 @@ class AbstractPage(object):
         self.absforms = [AbsstractForm(i) for i in zip(rr.page.forms for rr in reqresps)]
 
 
+class AbstractRequest(object):
+
+    def __init__(self, abspage):
+        # map from state to AbstractPage
+        self.targets = {}
+
+
+class Target(object):
+    def __init__(self, target, transition, nvisits=1):
+        self.target = target
+        self.transition = transition
+        self.nvisits = nvisits
+
+    def __str__(self):
+        return "Target(%r, transition=%d, nvisits=%d)" % \
+                (self.target, self.transition, self.nvisits)
+
+
 class Buckets(dict):
+
+    def __init__(self, h=hash):
+        self.h = h
 
     def __missing__(self, k):
         v = []
         self[k] = v
         return v
 
-    def add(self, obj, h):
-        v = self[h]
+    def add(self, obj, h=None):
+        if h is None:
+            h = self.h
+        v = self[h(obj)]
         v.append(o)
         return v
 
 
-class PageClusteres(object):
+class AbstractMap(dict):
+
+    def __init__(self, absobj, h=hash):
+        self.h = h
+        self.absobj = absobj
+
+    def __missing__(self, k):
+        v = self.absobj(l)
+        self[self.h(k)] = v
+        return v
+
+    def getAbstract(obj):
+        return self[self.h(obk)]
+
+
+
+class PageClusterer(object):
 
     def simplehash(self, reqresp):
         page = reqresp.resp.page
@@ -197,22 +245,65 @@ class PageClusteres(object):
 
     def __init__(self, reqresps):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.trace("clustering %d pages", len(reqresps))
-        buckets = Buckets()
+        self.logger.debug("clustering %d pages", len(reqresps))
+        buckets = Buckets(self.simplehash)
         for i in reqresps:
-            buckets.add(i, self.simplehash(i))
-        selkf.buckets = buckets
+            buckets.add(i)
+        self.logger.debug("generating abstract pages")
+        abspages = [AbstractPage(i) for i in buckets]
+        for ap in abspages:
+            for rr in ap.reqresps:
+                rr.response.page.abspage = ap
+        self.abspages = abspages
+
 
     def getAbstractPages(self):
-        self.logger.trace("generating abstract pages")
-        abspages = [AbstractPage(i) for i in self.buckets]
         return abspages
-
 
 class AppGraphGenerator(object):
 
-    def __init__(self, abspages):
+    def __init__(self, abspages, reqrespshead):
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.abspages = abspages
+        self.reqrespshead = reqrespshead
+
+    def generateAppGraph(self):
+        self.logger.debug("generating application graph")
+
+        # make sure we are at the beginning
+        assert reqrespshead.prev is None
+        curr = reqrespshead
+        laststate = 0
+
+        # map requests with same "signature" to the same AbstractRequest object
+        reqmap = AbstractMap(lambda x: repr(x), AbstractRequest)
+        currabsreq = reqmap.getAbstract(curr.request)
+
+        # go through the while navigation path and link together AbstractRequests and AbstractPages
+        # for now, every request will generate a new state, post processing will happen later
+        while curr:
+            currpage = curr.response.page
+            currabspage = currpage.abspage
+            assert not laststate in currabsreq.anchors
+            currabsreq.targets[laststate] = Target(currabspage, laststate+1)
+            laststate += 1
+
+            if curr.next:
+                # find which link goes to the next request in the history
+                chosenlink = ((i, l) for i, l in enumerate(currpage.links) if curr.next in l.to).next()
+                nextabsreq = reqmap.getAbstract(curr.next.request)
+                assert not laststate in currabspage.absanchors.targets
+                currabspage.absanchors.targets[laststate] = Target(nextabsreq, laststate)
+
+
+            curr = curr.next
+            currabsreq = nextabsreq
+
+
+
+
+
+
 
 
 
@@ -285,9 +376,9 @@ class Crawler(object):
     def back(self):
         self.logger.debug("stepping back")
         # htmlunit has not "back" functrion
-        if self.lastreqresp.prev is None:
+        if self.currreqresp.prev is None:
             raise Crawler.EmptyHistory()
-        self.currreqresp = self.lastreqresp.prev
+        self.currreqresp = self.currreqresp.prev
         return self.currreqresp
 
 
@@ -299,7 +390,7 @@ class Engine(object):
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def getUnvisitedLink(self, reqresp):
-        anchors = reqresp.response.page.anchors
+        anchors = [i for i in reqresp.response.page.anchors if not i.to]
         if len(anchors) > 0:
             anchor = random.choice(anchors)
         else:
