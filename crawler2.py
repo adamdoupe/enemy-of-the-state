@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import logging
-import re
 import random
 
 import htmlunit
@@ -109,6 +108,12 @@ class RequestResponse(object):
         self.prev = prev
         self.next = next
 
+    def __iter__(self):
+        curr = self
+        while curr:
+            yield curr
+            curr = curr.next
+
     def __str__(self):
         return "%s -> %s" % (self.request, self.response)
 
@@ -127,6 +132,16 @@ class Link(object):
         #return Link.xpathsimplifier.sub("", self.internal.getCanonicalXPath())
         return self.internal.getCanonicalXPath()
 
+    @lazyproperty
+    def _str(self):
+        raise NotImplementedError
+
+    def __str__(self):
+        return self._str
+
+    def __repr__(self):
+        return str(self)
+
 
 class Anchor(Link):
 
@@ -137,12 +152,16 @@ class Anchor(Link):
     def click(self):
         return self.internal.click()
 
-    def __str__(self):
+    @lazyproperty
+    def _str(self):
         return "Anchor(%s, %s)" % (self.href, self.dompath)
 
 
 class Form(Link):
-    pass
+
+    @lazyproperty
+    def _str(self):
+        return "Form"
 
 
 class Page(object):
@@ -164,7 +183,7 @@ class Page(object):
 class AbstractLink(object):
 
     def __init__(self, abspage):
-        elf.abspage = abspage
+        self.abspage = abspage
         # map from state to AbstractRequest
         self.targets = {}
 
@@ -180,8 +199,8 @@ class AbstractPage(object):
     def __init__(self, reqresps):
         self.reqresps = reqresps
         # TODO: number of links might not be the same in some more complex clustering
-        self.absanchors = [AbsstractAnchor(i) for i in zip(rr.page.anchors for rr in reqresps)]
-        self.absforms = [AbsstractForm(i) for i in zip(rr.page.forms for rr in reqresps)]
+        self.absanchors = [AbstractAnchor(i) for i in zip(rr.response.page.anchors for rr in reqresps)]
+        self.absforms = [AbstractForm(i) for i in zip(rr.response.page.forms for rr in reqresps)]
 
 
 class AbstractRequest(object):
@@ -216,7 +235,7 @@ class Buckets(dict):
         if h is None:
             h = self.h
         v = self[h(obj)]
-        v.append(o)
+        v.append(obj)
         return v
 
 
@@ -227,52 +246,51 @@ class AbstractMap(dict):
         self.absobj = absobj
 
     def __missing__(self, k):
-        v = self.absobj(l)
+        v = self.absobj(k)
         self[self.h(k)] = v
         return v
 
-    def getAbstract(obj):
-        return self[self.h(obk)]
+    def getAbstract(self, obj):
+        return self[self.h(obj)]
 
 
 
 class PageClusterer(object):
 
     def simplehash(self, reqresp):
-        page = reqresp.resp.page
-        hashedval = reqresp.request.url() + '|' + repr(page.anchors) + "|" + repr(page.forms)
-        return hash(hashedval)
+        page = reqresp.response.page
+        hashedval = reqresp.request.path + ', ' + repr(page.anchors) + ", " + repr(page.forms)
+        return hashedval
 
     def __init__(self, reqresps):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.debug("clustering %d pages", len(reqresps))
+        self.logger.debug("clustering pages")
+
         buckets = Buckets(self.simplehash)
+        cnt = 0
         for i in reqresps:
             buckets.add(i)
-        self.logger.debug("generating abstract pages")
-        abspages = [AbstractPage(i) for i in buckets]
+            cnt += 1
+        self.logger.debug("clustered %d pages into %d clusters", cnt, len(buckets))
+        abspages = [AbstractPage(i) for i in buckets.itervalues()]
         for ap in abspages:
             for rr in ap.reqresps:
                 rr.response.page.abspage = ap
-        self.abspages = abspages
+        self.logger.debug("%d abstract pages generated", len(abspages))
 
-
-    def getAbstractPages(self):
-        return abspages
 
 class AppGraphGenerator(object):
 
-    def __init__(self, abspages, reqrespshead):
+    def __init__(self, reqrespshead):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.abspages = abspages
         self.reqrespshead = reqrespshead
 
     def generateAppGraph(self):
         self.logger.debug("generating application graph")
 
         # make sure we are at the beginning
-        assert reqrespshead.prev is None
-        curr = reqrespshead
+        assert self.reqrespshead.prev is None
+        curr = self.reqrespshead
         laststate = 0
 
         # map requests with same "signature" to the same AbstractRequest object
@@ -280,7 +298,8 @@ class AppGraphGenerator(object):
         currabsreq = reqmap.getAbstract(curr.request)
 
         # go through the while navigation path and link together AbstractRequests and AbstractPages
-        # for now, every request will generate a new state, post processing will happen later
+        # for now, every request will generate a new state, post processing will happen late
+        cnt = 0
         while curr:
             currpage = curr.response.page
             currabspage = currpage.abspage
@@ -295,10 +314,11 @@ class AppGraphGenerator(object):
                 assert not laststate in currabspage.absanchors.targets
                 currabspage.absanchors.targets[laststate] = Target(nextabsreq, laststate)
 
-
             curr = curr.next
             currabsreq = nextabsreq
+            cnt += 1
 
+        self.logger.debug("application graph generated in %d steps". cnt)
 
 
 
@@ -344,6 +364,8 @@ class Crawler(object):
         self.lastreqresp = None
         # current RequestResponse object (will differ from lastreqresp when back() is invoked)
         self.currreqresp = None
+        # first RequestResponse object
+        self.headreqresp = None
 
     def open(self, url):
         del self.refresh_urls[:]
@@ -358,8 +380,13 @@ class Crawler(object):
         return self.currreqresp
 
     def updateInternalData(self, htmlpage):
-        self.lastreqresp = RequestResponse(htmlpage, self.lastreqresp)
-        self.currreqresp = self.lastreqresp
+        newreqresp = RequestResponse(htmlpage, self.lastreqresp)
+        if self.lastreqresp is not None:
+            self.lastreqresp.next = newreqresp
+        self.lastreqresp = newreqresp
+        self.currreqresp = newreqresp
+        if self.headreqresp is None:
+            self.headreqresp = newreqresp
 
     def click(self, anchor):
         self.logger.debug("clicking on %s", anchor)
@@ -415,6 +442,8 @@ class Engine(object):
                     reqresp = cr.click(nextAction[1])
                 if nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
+                pc = PageClusterer(cr.headreqresp)
+                ag = AppGraphGenerator(cr.headreqresp)
                 nextAction = self.getNextAction(reqresp)
 
 
