@@ -252,6 +252,9 @@ class Target(object):
         return "Target(%r, transition=%d, nvisits=%d)" % \
                 (self.target, self.transition, self.nvisits)
 
+    def __repr__(self):
+        return str(self)
+
 
 class Buckets(dict):
 
@@ -427,6 +430,8 @@ class AppGraphGenerator(object):
 
         self.logger.debug("final states %d, collapsing graph", nstates)
 
+        # merge states that were reduced to the same one
+        # and update visit counter
         for ap in self.abspages:
             for aa in ap.absanchors:
                 statereduce = [(st, statemap[st]) for st in aa.targets]
@@ -451,6 +456,8 @@ class AppGraphGenerator(object):
                     assert ar.targets[goodst].nvisits == 0
                 ar.targets[goodst].nvisits += 1
 
+        # return last current state
+        return statemap[-1]
 
 
 
@@ -543,14 +550,24 @@ class Engine(object):
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.state = -1
 
     def getUnvisitedLink(self, reqresp):
-        anchors = [i for i in reqresp.response.page.anchors if not i.to]
-        if len(anchors) > 0:
-            anchor = random.choice(anchors)
-        else:
-            anchor = None
-        return anchor
+        page = reqresp.response.page
+        abspage = page.abspage
+        if abspage is None:
+            if len(page.anchors) > 0:
+                self.logger.debug("abstract page not availabe, picking first anchor")
+                return page.anchors[0]
+            else:
+                self.logger.debug("abstract page not availabe, and no anchors")
+                return None
+
+        print self.state, abspage.absanchors, reqresp
+        for i, aa in enumerate(abspage.absanchors):
+            if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
+                return reqresp.response.page.anchors[i]
+        return None
 
     def getNextAction(self, reqresp):
         unvisited = self.getUnvisitedLink(reqresp)
@@ -573,7 +590,7 @@ class Engine(object):
                 pc = PageClusterer(cr.headreqresp)
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
                 ag.generateAppGraph()
-                ag.reduceStates()
+                self.state = ag.reduceStates()
                 nextAction = self.getNextAction(reqresp)
 
 
