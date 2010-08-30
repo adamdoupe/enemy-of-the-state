@@ -187,9 +187,22 @@ class AbstractLink(object):
         # map from state to AbstractRequest
         self.targets = {}
 
+    @lazyproperty
+    def _str(self):
+        raise NotImplementedError
+
+    def __str__(self):
+        return self._str
+
+    def __repr__(self):
+        return str(self)
 
 class AbstractAnchor(AbstractLink):
-    pass
+    
+    @lazyproperty
+    def _str(self):
+        return "AbstractAnchor(targets=%s)" % self.targets
+
 
 class AbstractForm(AbstractLink):
     pass
@@ -199,8 +212,9 @@ class AbstractPage(object):
     def __init__(self, reqresps):
         self.reqresps = reqresps
         # TODO: number of links might not be the same in some more complex clustering
-        self.absanchors = [AbstractAnchor(i) for i in zip(rr.response.page.anchors for rr in reqresps)]
-        self.absforms = [AbstractForm(i) for i in zip(rr.response.page.forms for rr in reqresps)]
+        self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in reqresps))]
+        self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in reqresps))]
+        self.statelinkmap = {}
 
 
 class AbstractRequest(object):
@@ -294,8 +308,9 @@ class AppGraphGenerator(object):
         laststate = 0
 
         # map requests with same "signature" to the same AbstractRequest object
-        reqmap = AbstractMap(lambda x: repr(x), AbstractRequest)
+        reqmap = AbstractMap(AbstractRequest, lambda x: repr(x))
         currabsreq = reqmap.getAbstract(curr.request)
+        self.headabsreq = currabsreq
 
         # go through the while navigation path and link together AbstractRequests and AbstractPages
         # for now, every request will generate a new state, post processing will happen late
@@ -303,22 +318,77 @@ class AppGraphGenerator(object):
         while curr:
             currpage = curr.response.page
             currabspage = currpage.abspage
-            assert not laststate in currabsreq.anchors
+            assert not laststate in currabsreq.targets
             currabsreq.targets[laststate] = Target(currabspage, laststate+1)
             laststate += 1
 
             if curr.next:
                 # find which link goes to the next request in the history
-                chosenlink = ((i, l) for i, l in enumerate(currpage.links) if curr.next in l.to).next()
+                # TODO do not limit to anchors
+                chosenlink = (i for i, l in enumerate(currpage.anchors) if curr.next in l.to).next()
                 nextabsreq = reqmap.getAbstract(curr.next.request)
-                assert not laststate in currabspage.absanchors.targets
-                currabspage.absanchors.targets[laststate] = Target(nextabsreq, laststate)
+                # XXX we cannot just use the index for more complex clustering
+                assert not laststate in currabspage.absanchors[chosenlink].targets
+                currabspage.absanchors[chosenlink].targets[laststate] = Target(nextabsreq, laststate)
+                assert not laststate in currabspage.statelinkmap
+                currabspage.statelinkmap[laststate] = currabspage.absanchors[chosenlink]
+
 
             curr = curr.next
             currabsreq = nextabsreq
             cnt += 1
 
-        self.logger.debug("application graph generated in %d steps". cnt)
+        self.maxstate = laststate
+        self.logger.debug("application graph generated in %d steps", cnt)
+
+    def getMinMappedState(self, state, statemap):
+        prev = state
+        mapped = statemap[state]
+        while mapped != prev:
+            prev = mapped
+            mapped = statemap[mapped]
+        return mapped
+
+
+    def reduceStates(self):
+        self.logger.debug("reducing state number from %d", self.maxstate)
+
+        # map each state to its equivalent one
+        statemap = range(self.maxstate+1)
+
+        currreq = self.headabsreq
+        currstate = 0
+        
+        while True:
+            respage = currreq.targets[currstate].target
+            currstate += 1
+            statemap[currstate] = currstate-1
+            if currstate not in respage.statelinkmap:
+                assert currstate == self.maxstate
+                break
+            chosenlink = respage.statelinkmap[currstate]
+            chosentarget = chosenlink.targets[currstate].target
+            assert currstate in chosenlink.targets
+            # find if there are other states that we have already processed that lead to a different target
+            smallerstates = sorted([i for i, t in chosenlink.targets.iteritems() if i < currstate and t != chosentarget], reverse=True)
+            if smallerstates:
+                currmapsto = self.getMinMappedState(currstate, statemap)
+                for ss in smallerstates:
+                    ssmapsto = self.getMinMappedState(ss, statemap)
+                    if ssmapsto != currmapsto:
+                        # TODO need to split current state!
+                        raise NotImplementedError
+            
+            currreq = chosentarget
+
+        for i in range(len(statemap)):
+            statemap[i] = self.getMinMappedState(i, statemap)
+
+        nstates = len(set(statemap))
+
+        self.logger.debug("final states %d", nstates)
+
+
 
 
 
@@ -444,6 +514,8 @@ class Engine(object):
                     reqresp = cr.back()
                 pc = PageClusterer(cr.headreqresp)
                 ag = AppGraphGenerator(cr.headreqresp)
+                ag.generateAppGraph()
+                ag.reduceStates()
                 nextAction = self.getNextAction(reqresp)
 
 
