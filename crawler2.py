@@ -101,12 +101,14 @@ class Response(object):
 
 class RequestResponse(object):
 
-    def __init__(self, page, prev=None, next=None):
+    def __init__(self, page, prev=None, next=None, backto=None):
         webresponse = page.getWebResponse()
         self.response = Response(webresponse, Page(page, self))
         self.request = Request(webresponse.getWebRequest())
         self.prev = prev
         self.next = next
+        # how many pages we went back before performing this new request
+        self.backto = backto
 
     def __iter__(self):
         curr = self
@@ -216,16 +218,32 @@ class AbstractPage(object):
         self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in reqresps))]
         self.statelinkmap = {}
 
+    @lazyproperty
+    def _str(self):
+        return "AbstractPage(%s)" % set(str(i.request.path) for i in self.reqresps)
+
+    def __str__(self):
+        return self._str
+
+    def __repr__(self):
+        return str(self)
+
 
 class AbstractRequest(object):
 
-    def __init__(self, abspage):
+    def __init__(self, request):
         # map from state to AbstractPage
+        self.request = request
         self.targets = {}
 
+    def __str__(self):
+        return "AbstractRequest(%s)" % self.request
+
+    def __repr__(self):
+        return str(self)
 
 class Target(object):
-    def __init__(self, target, transition, nvisits=1):
+    def __init__(self, target, transition, nvisits=0):
         self.target = target
         self.transition = transition
         self.nvisits = nvisits
@@ -261,11 +279,14 @@ class AbstractMap(dict):
 
     def __missing__(self, k):
         v = self.absobj(k)
-        self[self.h(k)] = v
+        self[k] = v
         return v
 
     def getAbstract(self, obj):
         return self[self.h(obj)]
+
+    def __iter__(self):
+        return self.itervalues()
 
 
 
@@ -291,13 +312,18 @@ class PageClusterer(object):
             for rr in ap.reqresps:
                 rr.response.page.abspage = ap
         self.logger.debug("%d abstract pages generated", len(abspages))
+        self.abspages = abspages
+
+    def getAbstractPages(self):
+        return self.abspages
 
 
 class AppGraphGenerator(object):
 
-    def __init__(self, reqrespshead):
+    def __init__(self, reqrespshead, abspages):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.reqrespshead = reqrespshead
+        self.abspages = abspages
 
     def generateAppGraph(self):
         self.logger.debug("generating application graph")
@@ -309,6 +335,7 @@ class AppGraphGenerator(object):
 
         # map requests with same "signature" to the same AbstractRequest object
         reqmap = AbstractMap(AbstractRequest, lambda x: repr(x))
+        self.reqmap = reqmap
         currabsreq = reqmap.getAbstract(curr.request)
         self.headabsreq = currabsreq
 
@@ -323,6 +350,9 @@ class AppGraphGenerator(object):
             laststate += 1
 
             if curr.next:
+                if curr.next.backto is not None:
+                    currpage = curr.next.backto.response.page
+                    currabspage = currpage.abspage
                 # find which link goes to the next request in the history
                 # TODO do not limit to anchors
                 chosenlink = (i for i, l in enumerate(currpage.anchors) if curr.next in l.to).next()
@@ -357,15 +387,24 @@ class AppGraphGenerator(object):
         statemap = range(self.maxstate+1)
 
         currreq = self.headabsreq
+
+        # need history to handle navigatin back; pair of (absrequest,absresponse)
+        history = []
         currstate = 0
         
         while True:
             respage = currreq.targets[currstate].target
+            history.append((currreq, respage))
             currstate += 1
             statemap[currstate] = currstate-1
             if currstate not in respage.statelinkmap:
-                assert currstate == self.maxstate
-                break
+                if currstate == self.maxstate:
+                    # end reached
+                    break
+                while currstate not in respage.statelinkmap:
+                    history.pop()
+                    respage = history[-1][1]
+
             chosenlink = respage.statelinkmap[currstate]
             chosentarget = chosenlink.targets[currstate].target
             assert currstate in chosenlink.targets
@@ -386,13 +425,31 @@ class AppGraphGenerator(object):
 
         nstates = len(set(statemap))
 
-        self.logger.debug("final states %d", nstates)
+        self.logger.debug("final states %d, collapsing graph", nstates)
 
+        for ap in self.abspages:
+            for aa in ap.absanchors:
+                statereduce = [(st, statemap[st]) for st in aa.targets]
+                for st, goodst in statereduce:
+                    if goodst in aa.targets:
+                        assert aa.targets[st].target == aa.targets[goodst].target, \
+                            "%s %s" % (aa.targets[st], aa.targets[goodst])
+                    else:
+                        aa.targets[goodst] = aa.targets[st]
+                        del aa.targets[st]
+                        assert aa.targets[goodst].nvisits == 0
+                    aa.targets[goodst].nvisits += 1
 
-
-
-
-
+        for ar in self.reqmap:
+            statereduce = [(st, statemap[st]) for st in ar.targets]
+            for st, goodst in statereduce:
+                if goodst in ar.targets:
+                    assert ar.targets[st].target == ar.targets[goodst].target
+                else:
+                    ar.targets[goodst] = ar.targets[st]
+                    del ar.targets[st]
+                    assert ar.targets[goodst].nvisits == 0
+                ar.targets[goodst].nvisits += 1
 
 
 
@@ -450,7 +507,8 @@ class Crawler(object):
         return self.currreqresp
 
     def updateInternalData(self, htmlpage):
-        newreqresp = RequestResponse(htmlpage, self.lastreqresp)
+        backto = self.currreqresp if self.lastreqresp != self.currreqresp else None
+        newreqresp = RequestResponse(htmlpage, self.lastreqresp, backto=backto)
         if self.lastreqresp is not None:
             self.lastreqresp.next = newreqresp
         self.lastreqresp = newreqresp
@@ -513,7 +571,7 @@ class Engine(object):
                 if nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
                 pc = PageClusterer(cr.headreqresp)
-                ag = AppGraphGenerator(cr.headreqresp)
+                ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
                 ag.generateAppGraph()
                 ag.reduceStates()
                 nextAction = self.getNextAction(reqresp)
