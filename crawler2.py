@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 
 import logging
-import random
+import urlparse
+import re
+
+import output
 
 import htmlunit
 
-htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
+from collections import defaultdict, deque
 
+htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
 # running htmlunit via JCC will override the signal halders
 
@@ -31,6 +35,64 @@ class lazyproperty(object):
         result = obj.__dict__[self.__name__] = self._func(obj)
         return result
 
+class RecursiveDict(defaultdict): 
+    def __init__(self, nleavesfunc=lambda x: 1): 
+        self.default_factory = type(self)
+        # when counting leaves, apply this function to non RecuriveDict objects
+        self.nleavesfunc = nleavesfunc
+
+    @lazyproperty
+    def nleaves(self):
+        """ number of objects in the tis subtree of the nested dictionay
+        NOTE: this is a lazy property, will get stale if tree is updated!
+        """
+        return sum(i.nleaves if isinstance(i, self.default_factory) else self.nleavesfunc(i)
+                for i in self.itervalues())
+
+    def getpath(self, path):
+        i = self
+        for p in path:
+            i = i[p]
+        return i
+
+    def setpath(self, path, value):
+        i = self
+        for p in path[:-1]:
+            i = i[p]
+        i[path[-1]] = value
+
+    def applypath(self, path, func):
+        i = self
+        for p in path[:-1]:
+            i = i[p]
+        i[path[-1]] = func(i[path[-1]])
+
+    def setapplypath(self, path, value, func):
+        i = self
+        for p in path[:-1]:
+            i = i[p]
+        if path[-1] in i:
+            i[path[-1]] = func(i[path[-1]])
+        else:
+            i[path[-1]] = value
+
+    def iterlevels(self):
+        queue = deque([(self,)])
+        while queue:
+            l = queue.pop()
+            levelkeys = []
+            children = []
+            for c in l:
+                if isinstance(c, self.default_factory):
+                    levelkeys.extend(c.iterkeys())
+                    children.extend(c.itervalues())
+                    queue.append(children)
+                else:
+                    levelkeys.append(c)
+            yield levelkeys
+
+
+
 
 class Request(object):
 
@@ -43,12 +105,18 @@ class Request(object):
 
     @lazyproperty
     def path(self):
-        url = self.webrequest.getUrl()
-        query = url.getQuery()
-        path = self.webrequest.getUrl().getPath()
-        if query:
-            path += "?" + query
-        return path
+        return self.webrequest.getUrl().getPath()
+
+    @lazyproperty
+    def query(self):
+        return self.webrequest.getUrl().getQuery()
+
+    @lazyproperty
+    def fullpath(self):
+        fullpath = self.path
+        if self.query:
+            fullpath += "?" + self.query
+        return fullpath
 
     @lazyproperty
     def params(self):
@@ -64,7 +132,7 @@ class Request(object):
 
     @lazyproperty
     def _str(self):
-        return "Request(%s %s)" % (self.method, self.path)
+        return "Request(%s %s)" % (self.method, self.fullpath)
 
     def __str__(self):
         return self._str
@@ -122,7 +190,7 @@ class RequestResponse(object):
 
 class Link(object):
 
-    #xpathsimplifier = re.compile(r"\[[^\]*]")
+    xpathsimplifier = re.compile(r"\[[^\]*]")
 
     def __init__(self, internal, reqresp):
         self.internal = internal
@@ -131,7 +199,7 @@ class Link(object):
 
     @lazyproperty
     def dompath(self):
-        #return Link.xpathsimplifier.sub("", self.internal.getCanonicalXPath())
+        return Link.xpathsimplifier.sub("", self.internal.getCanonicalXPath())
         return self.internal.getCanonicalXPath()
 
     @lazyproperty
@@ -150,6 +218,10 @@ class Anchor(Link):
     @lazyproperty
     def href(self):
         return self.internal.getHrefAttribute()
+
+    @lazyproperty
+    def hrefurl(self):
+        return urlparse.urlparse(self.href)
 
     def click(self):
         return self.internal.click()
@@ -220,7 +292,7 @@ class AbstractPage(object):
 
     @lazyproperty
     def _str(self):
-        return "AbstractPage(%s)" % set(str(i.request.path) for i in self.reqresps)
+        return "AbstractPage(%s)" % set(str(i.request.fullpath) for i in self.reqresps)
 
     def __str__(self):
         return self._str
@@ -290,6 +362,58 @@ class AbstractMap(dict):
 
     def __iter__(self):
         return self.itervalues()
+
+def urlvector(request):
+    """ /path/to/path.html?p1=v1&p2=v2
+        ->
+        ['path', 'to', 'page.html', ('p1', 'p2'), ('v1', 'v2')]
+    """
+    urltoks = request.path.split('/')
+    query = request.query
+    if query:
+        querytoks = request.query.split('&')
+        keys, values = zip(*(i.split('=') for i in querytoks))
+        urltoks.append(tuple(keys))
+        urltoks.append(tuple(values))
+    return urltoks
+
+def linkstree(page):
+    # leaves in linkstree are counter of how many times that url occurred
+    # therefore use that counter when compuing number of urls with "nleaves"
+    linkstree = RecursiveDict(lambda x: x)
+    for a in page.anchors:
+        urlv = [a.dompath] + urlvector(a.hrefurl)
+        # set leaf to 1 or increment
+        linkstree.setapplypath(urlv, 1, lambda x: x+1)
+    return linkstree
+
+def likstreedist(a, b):
+    raise NotImplementedError
+
+def linksvector(page):
+    linksvector = [i for i in linkstree(page).iterlevels()]
+    return linksvector
+
+class RequestClassfier(object):
+
+    def __init__(self):
+        self.rdict = RecursiveDict()
+
+    def add(self, reqresp):
+        request = reqresp.request
+        urltoks = self.urlvector(request)
+        curr = self.rdict
+        for i in urltoks[:-1]:
+            curr = curr[i]
+        curr[urltoks[-1]] = reqresp
+
+class LinksClassfier(object):
+
+    def __init__(self):
+        self.rdict = RecursiveDict()
+
+    def add(self, reqresp):
+        page = reqresp.response.page
 
 
 
@@ -531,8 +655,8 @@ class Crawler(object):
         # TODO: handle HTTP redirects, they will throw an exception
         reqresp = self.newPage(htmlpage)
         anchor.to.append(reqresp)
-        assert reqresp.request.path[-len(anchor.href):] == anchor.href, \
-                "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.path)
+        assert reqresp.request.fullpath[-len(anchor.href):] == anchor.href, \
+                "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpath)
         return reqresp
 
     def back(self):
@@ -555,6 +679,9 @@ class Engine(object):
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
         abspage = page.abspage
+
+        # if we do not have an abstract graph, pick first anchor
+        # this should happen only at the first iteration
         if abspage is None:
             if len(page.anchors) > 0:
                 self.logger.debug("abstract page not availabe, picking first anchor")
@@ -563,7 +690,7 @@ class Engine(object):
                 self.logger.debug("abstract page not availabe, and no anchors")
                 return None
 
-        print self.state, abspage.absanchors, reqresp
+        # find unvisited link
         for i, aa in enumerate(abspage.absanchors):
             if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
                 return reqresp.response.page.anchors[i]
@@ -581,12 +708,14 @@ class Engine(object):
         for cnt, url in enumerate(urls):
             self.logger.info("starting with URL %d/%d %s", cnt+1, len(urls), url)
             reqresp = cr.open(url)
+            print output.red("TREEEVECTOR %s" % linksvector(reqresp.response.page))
             nextAction = self.getNextAction(reqresp)
             while nextAction:
                 if nextAction[0] == Engine.ANCHOR:
                     reqresp = cr.click(nextAction[1])
                 if nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
+                print output.red("TREEEVECTOR %s" % linksvector(reqresp.response.page))
                 pc = PageClusterer(cr.headreqresp)
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
                 ag.generateAppGraph()
