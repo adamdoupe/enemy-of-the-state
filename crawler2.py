@@ -100,13 +100,21 @@ class RecursiveDict(defaultdict):
                         levelkeys.append(c)
                 yield levelkeys
 
-
+    def iterleaves(self):
+        if self:
+            for c in self.itervalues():
+                if isinstance(c, self.default_factory):
+                    for i in c.iterleaves():
+                        yield i
+                else:
+                    yield c
 
 
 class Request(object):
 
-    def __init__(self, webrequest):
+    def __init__(self, webrequest, reqresp):
         self.webrequest = webrequest
+        self.reqresp = reqresp
 
     @lazyproperty
     def method(self):
@@ -185,7 +193,7 @@ class RequestResponse(object):
     def __init__(self, page, prev=None, next=None, backto=None):
         webresponse = page.getWebResponse()
         self.response = Response(webresponse, Page(page, self))
-        self.request = Request(webresponse.getWebRequest())
+        self.request = Request(webresponse.getWebRequest(), self)
         self.prev = prev
         self.next = next
         # how many pages we went back before performing this new request
@@ -317,7 +325,8 @@ class AbstractPage(object):
 
     @lazyproperty
     def _str(self):
-        return "AbstractPage(%s)" % set(str(i.request.fullpath) for i in self.reqresps)
+        return "AbstractPage(#%d, %s)" % (len(self.reqresps),
+                set(str(i.request.fullpath) for i in self.reqresps))
 
     def __str__(self):
         return self._str
@@ -454,7 +463,7 @@ class PageClusterer(object):
         self.logger.debug("clustering pages")
 
         self.levelclustering(reqresps)
-        self.simpleclustering(reqresps)
+        #self.simpleclustering(reqresps)
 
     def simpleclustering(self, reqresps):
         buckets = Buckets(self.simplehash)
@@ -463,28 +472,32 @@ class PageClusterer(object):
             buckets.add(i)
             cnt += 1
         self.logger.debug("clustered %d pages into %d clusters", cnt, len(buckets))
-        abspages = [AbstractPage(i) for i in buckets.itervalues()]
-        for ap in abspages:
+        self.abspages = [AbstractPage(i) for i in buckets.itervalues()]
+        self.linktorealpages()
+
+    def linktorealpages(self):
+        for ap in self.abspages:
             for rr in ap.reqresps:
                 rr.response.page.abspage = ap
-        self.logger.debug("%d abstract pages generated", len(abspages))
-        self.abspages = abspages
+        self.logger.debug("%d abstract pages generated", len(self.abspages))
 
-    def scanlevestat(self, level, n=0):
+    def scanlevels(self, level, n=0):
         med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
         #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
             nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
             #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
             if hasattr(v, "nleaves"):
-                if nleaves > 1 and nleaves >= med:
+                # requrire more than 5 pages in a cluster
+                # require some diversity in the dom path in order to create a link
+                if nleaves > 5 and nleaves >= med and (n > 0 or len(k) > 5):
                     v.clusterable = True
                     level.clusterable = False
                 else:
                     v.clusterable = False
-                self.scanlevestat(v, n+1)
+                self.scanlevels(v, n+1)
 
-    def printlevestat(self, level, n=0):
+    def printlevelstat(self, level, n=0):
         med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
         self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
@@ -494,13 +507,29 @@ class PageClusterer(object):
             else:
                 self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
             if hasattr(v, "nleaves"):
-                self.printlevestat(v, n+1)
+                self.printlevelstat(v, n+1)
+
+    def makeabspages(self, classif):
+        self.abspages = []
+        self.makeabspagesrecursive(classif)
+        self.linktorealpages()
+
+    def makeabspagesrecursive(self, level):
+        for k, v in level.iteritems():
+            if hasattr(v, "nleaves"):
+                if v.clusterable:
+                    self.abspages.append(AbstractPage(reduce(lambda a, b: a + b, level.iterleaves())))
+                else:
+                    self.makeabspagesrecursive(v)
+            else:
+                self.abspages.append(AbstractPage(v))
 
     def levelclustering(self, reqresps):
         classif = Classfier(lambda rr: rr.response.page.linksvector)
         classif.addall(reqresps)
-        self.scanlevestat(classif)
-        self.printlevestat(classif)
+        self.scanlevels(classif)
+        self.printlevelstat(classif)
+        self.makeabspages(classif)
 
 
 
@@ -523,8 +552,11 @@ class AppGraphGenerator(object):
         curr = self.reqrespshead
         laststate = 0
 
-        # map requests with same "signature" to the same AbstractRequest object
-        reqmap = AbstractMap(AbstractRequest, lambda x: repr(x))
+        ## map requests with same "signature" to the same AbstractRequest object
+        # disable separate request clustering, but cluster on the basis of the clustered AbstractPages
+        #reqmap = AbstractMap(AbstractRequest, lambda x: repr(x))
+        reqmap = AbstractMap(AbstractRequest, lambda x: x.reqresp.response.page.abspage)
+
         self.reqmap = reqmap
         currabsreq = reqmap.getAbstract(curr.request)
         self.headabsreq = currabsreq
@@ -557,6 +589,7 @@ class AppGraphGenerator(object):
             curr = curr.next
             currabsreq = nextabsreq
             cnt += 1
+
 
         self.maxstate = laststate
         self.logger.debug("application graph generated in %d steps", cnt)
@@ -781,6 +814,7 @@ class Engine(object):
                     reqresp = cr.back()
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 pc = PageClusterer(cr.headreqresp)
+                print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
                 ag.generateAppGraph()
                 self.state = ag.reduceStates()
