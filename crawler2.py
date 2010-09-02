@@ -134,6 +134,10 @@ class Request(object):
     def _str(self):
         return "Request(%s %s)" % (self.method, self.fullpath)
 
+    @lazyproperty
+    def urlvector(self):
+        return urlvector(self)
+
     def __str__(self):
         return self._str
 
@@ -213,6 +217,7 @@ class Link(object):
         return str(self)
 
 
+
 class Anchor(Link):
 
     @lazyproperty
@@ -229,6 +234,10 @@ class Anchor(Link):
     @lazyproperty
     def _str(self):
         return "Anchor(%s, %s)" % (self.href, self.dompath)
+
+    @lazyproperty
+    def linkvector(self):
+        return urlvector(self.hrefurl)
 
 
 class Form(Link):
@@ -252,6 +261,10 @@ class Page(object):
     @lazyproperty
     def forms(self):
         return [Form(i, self.reqresp) for i in self.internal.getForms()]
+
+    @lazyproperty
+    def linkstree(self):
+        return linkstree(self)
 
 
 class AbstractLink(object):
@@ -382,39 +395,29 @@ def linkstree(page):
     # therefore use that counter when compuing number of urls with "nleaves"
     linkstree = RecursiveDict(lambda x: x)
     for a in page.anchors:
-        urlv = [a.dompath] + urlvector(a.hrefurl)
+        urlv = [a.dompath] + a.linkvector
         # set leaf to 1 or increment
         linkstree.setapplypath(urlv, 1, lambda x: x+1)
     return linkstree
+
 
 def likstreedist(a, b):
     raise NotImplementedError
 
 def linksvector(page):
-    linksvector = [i for i in linkstree(page).iterlevels()]
+    linksvector = [i for i in page.linkstree.iterlevels()]
     return linksvector
 
-class RequestClassfier(object):
 
-    def __init__(self):
+class Classfier(object):
+
+    def __init__(self, featuresextractor):
         self.rdict = RecursiveDict()
+        self.featuresextractor = featuresextractor
 
-    def add(self, reqresp):
-        request = reqresp.request
-        urltoks = self.urlvector(request)
-        curr = self.rdict
-        for i in urltoks[:-1]:
-            curr = curr[i]
-        curr[urltoks[-1]] = reqresp
-
-class LinksClassfier(object):
-
-    def __init__(self):
-        self.rdict = RecursiveDict()
-
-    def add(self, reqresp):
-        page = reqresp.response.page
-
+    def add(self, obj):
+        featvect = self.featuresextractor(obj)
+        self.rdict.setpath(featvect, obj)
 
 
 class PageClusterer(object):
