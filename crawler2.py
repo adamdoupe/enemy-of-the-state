@@ -22,6 +22,14 @@ def signalhandler(signum, frame):
 #signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
 
+def median(l):
+    s = sorted(l)
+    ln = len(s)
+    if ln % 2 == 0:
+        return float(s[ln/2]+s[ln/2-1])/2
+    else:
+        return float(s[ln/2])
+
 class lazyproperty(object):
     """ from http://blog.pythonisito.com/2008/08/lazy-descriptors.html """
 
@@ -37,8 +45,8 @@ class lazyproperty(object):
 
 class RecursiveDict(defaultdict): 
     def __init__(self, nleavesfunc=lambda x: 1): 
-        self.default_factory = type(self)
-        # when counting leaves, apply this function to non RecuriveDict objects
+        self.default_factory = RecursiveDict
+        # when counting leaves, apply this function to non RecursiveDict objects
         self.nleavesfunc = nleavesfunc
 
     @lazyproperty
@@ -77,19 +85,20 @@ class RecursiveDict(defaultdict):
             i[path[-1]] = value
 
     def iterlevels(self):
-        queue = deque([(self,)])
-        while queue:
-            l = queue.pop()
-            levelkeys = []
-            children = []
-            for c in l:
-                if isinstance(c, self.default_factory):
-                    levelkeys.extend(c.iterkeys())
-                    children.extend(c.itervalues())
-                    queue.append(children)
-                else:
-                    levelkeys.append(c)
-            yield levelkeys
+        if self:
+            queue = deque([(self,)])
+            while queue:
+                l = queue.pop()
+                levelkeys = []
+                children = []
+                for c in l:
+                    if isinstance(c, self.default_factory):
+                        levelkeys.extend(c.iterkeys())
+                        children.extend(c.itervalues())
+                        queue.append(children)
+                    else:
+                        levelkeys.append(c)
+                yield levelkeys
 
 
 
@@ -194,7 +203,7 @@ class RequestResponse(object):
 
 class Link(object):
 
-    xpathsimplifier = re.compile(r"\[[^\]*]")
+    xpathsimplifier = re.compile(r"\[[^\]*]\]")
 
     def __init__(self, internal, reqresp):
         self.internal = internal
@@ -266,6 +275,9 @@ class Page(object):
     def linkstree(self):
         return linkstree(self)
 
+    @lazyproperty
+    def linksvector(self):
+        return linksvector(self)
 
 class AbstractLink(object):
 
@@ -388,16 +400,20 @@ def urlvector(request):
         keys, values = zip(*(i.split('=') for i in querytoks))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
-    return urltoks
+    return tuple(urltoks)
 
 def linkstree(page):
     # leaves in linkstree are counter of how many times that url occurred
     # therefore use that counter when compuing number of urls with "nleaves"
     linkstree = RecursiveDict(lambda x: x)
-    for a in page.anchors:
-        urlv = [a.dompath] + a.linkvector
-        # set leaf to 1 or increment
-        linkstree.setapplypath(urlv, 1, lambda x: x+1)
+    if page.anchors:
+        for a in page.anchors:
+            urlv = [a.dompath] + list(a.linkvector)
+            # set leaf to 1 or increment
+            linkstree.setapplypath(urlv, 1, lambda x: x+1)
+    else:
+        # all pages with no links will end up in the same special bin
+        linkstree.setapplypath(("<EMPTY>", ), 1, lambda x: x+1)
     return linkstree
 
 
@@ -405,19 +421,25 @@ def likstreedist(a, b):
     raise NotImplementedError
 
 def linksvector(page):
-    linksvector = [i for i in page.linkstree.iterlevels()]
+    linksvector = tuple([tuple(i) for i in page.linkstree.iterlevels()])
     return linksvector
 
 
-class Classfier(object):
+class Classfier(RecursiveDict):
 
     def __init__(self, featuresextractor):
-        self.rdict = RecursiveDict()
         self.featuresextractor = featuresextractor
+        # leaves should return the number of elements in the list for nleaves
+        RecursiveDict.__init__(self, lambda x: len(x))
 
     def add(self, obj):
         featvect = self.featuresextractor(obj)
-        self.rdict.setpath(featvect, obj)
+        # hack to use lambda function instead of def func(x); x.append(obj); return x
+        self.setapplypath(featvect, [obj], lambda x: (x.append(obj), x)[1])
+
+    def addall(self, it):
+        for i in it:
+            self.add(i)
 
 
 class PageClusterer(object):
@@ -431,6 +453,10 @@ class PageClusterer(object):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.debug("clustering pages")
 
+        self.levelclustering(reqresps)
+        self.simpleclustering(reqresps)
+
+    def simpleclustering(self, reqresps):
         buckets = Buckets(self.simplehash)
         cnt = 0
         for i in reqresps:
@@ -443,6 +469,22 @@ class PageClusterer(object):
                 rr.response.page.abspage = ap
         self.logger.debug("%d abstract pages generated", len(abspages))
         self.abspages = abspages
+
+    def printlevestat(self, level, n=0):
+        med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
+        self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
+        for k, v in level.iteritems():
+            nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
+            self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
+            if hasattr(v, "iteritems"):
+                self.printlevestat(v, n+1)
+
+    def levelclustering(self, reqresps):
+        classif = Classfier(lambda rr: rr.response.page.linksvector)
+        classif.addall(reqresps)
+        self.printlevestat(classif)
+
+
 
     def getAbstractPages(self):
         return self.abspages
@@ -711,14 +753,15 @@ class Engine(object):
         for cnt, url in enumerate(urls):
             self.logger.info("starting with URL %d/%d %s", cnt+1, len(urls), url)
             reqresp = cr.open(url)
-            print output.red("TREEEVECTOR %s" % linksvector(reqresp.response.page))
+            print output.red("TREE %s" % (reqresp.response.page.linkstree,))
+            print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
             nextAction = self.getNextAction(reqresp)
             while nextAction:
                 if nextAction[0] == Engine.ANCHOR:
                     reqresp = cr.click(nextAction[1])
                 if nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
-                print output.red("TREEEVECTOR %s" % linksvector(reqresp.response.page))
+                print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 pc = PageClusterer(cr.headreqresp)
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
                 ag.generateAppGraph()
