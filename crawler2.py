@@ -470,18 +470,36 @@ class PageClusterer(object):
         self.logger.debug("%d abstract pages generated", len(abspages))
         self.abspages = abspages
 
+    def scanlevestat(self, level, n=0):
+        med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
+        #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
+        for k, v in level.iteritems():
+            nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
+            #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
+            if hasattr(v, "nleaves"):
+                if nleaves > 1 and nleaves >= med:
+                    v.clusterable = True
+                    level.clusterable = False
+                else:
+                    v.clusterable = False
+                self.scanlevestat(v, n+1)
+
     def printlevestat(self, level, n=0):
         med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
         self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
             nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
-            self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
-            if hasattr(v, "iteritems"):
+            if hasattr(v, "nleaves") and v.clusterable:
+                self.logger.debug(output.yellow(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
+            else:
+                self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
+            if hasattr(v, "nleaves"):
                 self.printlevestat(v, n+1)
 
     def levelclustering(self, reqresps):
         classif = Classfier(lambda rr: rr.response.page.linksvector)
         classif.addall(reqresps)
+        self.scanlevestat(classif)
         self.printlevestat(classif)
 
 
