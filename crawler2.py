@@ -294,8 +294,7 @@ class Page(object):
 
 class AbstractLink(object):
 
-    def __init__(self, abspage):
-        self.abspage = abspage
+    def __init__(self):
         # map from state to AbstractRequest
         self.targets = {}
 
@@ -311,17 +310,35 @@ class AbstractLink(object):
 
 class AbstractAnchor(AbstractLink):
     
+    def __init__(self, anchors):
+        AbstractLink.__init__(self)
+        self.hrefs = set(i.href for i in anchors)
+
     @lazyproperty
     def _str(self):
-        return "AbstractAnchor(targets=%s)" % self.targets
+        return "AbstractAnchor(%s, targets=%s)" % (self.hrefs, self.targets)
+
+    def equals(self, a):
+        return self.hrefs == a.hrefs
 
 
 class AbstractForm(AbstractLink):
-    pass
+
+    def __init__(self, forms):
+        AbstractLink.__init__(self)
+        pass
+
+    @lazyproperty
+    def _str(self):
+        return "AbstractForm(targets=%s)" % (self.targets)
+
+    def equals(self, f):
+        return True
+
 
 class Links(object):
     # TODO: add redirect support
-    ANCHOR, FORM = range(2)
+    ANCHOR, FORM = ("ANCHOR", "FORM")
 
     def __init__(self, anchors, forms):
         self.anchors = anchors
@@ -332,14 +349,6 @@ class Links(object):
 
     def nForms(self):
         return len(self.forms)
-
-    def len(self, what):
-        if what == Links.ANCHOR:
-            return self.nAnchors()
-        elif what == Links.FORM:
-            return self.nForms()
-        else:
-            raise KeyError()
 
     def __getitem__(self, idx):
         if idx[0] == Links.ANCHOR:
@@ -360,6 +369,17 @@ class Links(object):
             yield v
         for v in self.forms:
             yield v
+
+    def getUnvisited(self, state):
+        return [(i, l) for i, l in self.iteritems() if state not in l.targets]
+
+    def __len__(self):
+        return self.nAnchors() + self.nForms()
+
+    def equals(self, l):
+        return self.nAnchors() == l.nAnchors() and self.nForms() == l.nForms() and \
+                all(a.equals(b) for a, b in zip(self.anchors, l.anchors)) and \
+                all(a.equals(b) for a, b in zip(self.forms, l.forms))
 
 
 class AbstractPage(object):
@@ -382,6 +402,9 @@ class AbstractPage(object):
 
     def __repr__(self):
         return str(self)
+
+    def contains(self, p):
+        return self.abslinks.equals(p.abslinks)
 
 
 class AbstractRequest(object):
@@ -577,7 +600,7 @@ class PageClusterer(object):
         classif = Classfier(lambda rr: rr.response.page.linksvector)
         classif.addall(reqresps)
         self.scanlevels(classif)
-        self.printlevelstat(classif)
+        #self.printlevelstat(classif)
         self.makeabspages(classif)
 
 
@@ -794,7 +817,7 @@ class Crawler(object):
             self.headreqresp = newreqresp
 
     def click(self, anchor):
-        self.logger.debug("clicking on %s", anchor)
+        self.logger.debug(output.purple("clicking on %s"), anchor)
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
@@ -806,7 +829,7 @@ class Crawler(object):
         return reqresp
 
     def back(self):
-        self.logger.debug("stepping back")
+        self.logger.debug(output.purple("stepping back"))
         # htmlunit has not "back" functrion
         if self.currreqresp.prev is None:
             raise Crawler.EmptyHistory()
@@ -814,27 +837,34 @@ class Crawler(object):
         return self.currreqresp
 
 class Dist(object):
+    LEN = 4
 
-    def __init__(self):
+    def __init__(self, v=None):
         """ The content of the vector is as follow:
         (POST form, GET form, anchor w/ params, anchor w/o params)
         only one element can be != 0, and contains the numb er of times that link has been visited
         """
-        self.val = (0, 0, 0, 0, 0)
+        self.val = tuple(v) if v else tuple([0]*Dist.LEN)
+        assert len(self.val) == Dist.LEN
 
-    def __add__(self, v):
-        return tuple(a+b for a, b in zip(self, v))
+    def __add__(self, d):
+        return Dist(a+b for a, b in zip(self.val, d.val))
 
-    def __cmp__(self, v):
-        return cmp(self.val, v)
+    def __cmp__(self, d):
+        return cmp(self.val, d.val)
+
+    def __str__(self):
+        return str(self.val)
 
 class Engine(object):
 
-    BACK, ANCHOR = range(2)
+    BACK, ANCHOR = ("BACK", "ANCHOR")
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.state = -1
+        self.followingpath = False
+        self.pathtofollow = []
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -845,7 +875,7 @@ class Engine(object):
         if abspage is None:
             if len(page.anchors) > 0:
                 self.logger.debug("abstract page not availabe, picking first anchor")
-                return page.anchors[0]
+                return (Links.ANCHOR, 0)
             else:
                 self.logger.debug("abstract page not availabe, and no anchors")
                 return None
@@ -853,29 +883,34 @@ class Engine(object):
         # find unvisited anchor
         for i, aa in enumerate(abspage.absanchors):
             if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
-                return reqresp.response.page.anchors[i]
+                return (Links.ANCHOR, i)
         return None
 
-    def linkcost(self):
-        return (0, 0, 0, 0)
+    def linkcost(self, link):
+        return Dist((0, 0, 0, 1))
 
     def findPathToUnvisited(self, startpage, startstate):
         heads = [(Dist(), startpage, startstate, [])]
         seen = set()
         while heads:
             dist, head, state, headpath = heapq.heappop(heads)
+            print output.yellow("H %s %s %s %s" % (dist, head, state, headpath)) 
             if (head, state) in seen:
                 continue
             seen.add((head, state))
-            unvlink = head.abslinks.getUnvisited(state)
-            if unvlink:
-                self.logger.debug("found invisited link %s in page %s (%d)", (head, unvlink, state))
-                # TODO generate path
-                return NotImplemented
+            unvlinks = head.abslinks.getUnvisited(state)
+            if unvlinks:
+                unvlink = unvlinks[0]
+                self.logger.debug("found unvisited link %s in page %s (%d)", unvlink,
+                        head, state)
+                path = list(reversed([(head, None, state)] + headpath))
+                return path
             for idx, link in head.abslinks.iteritems():
                 newpath = [(head, idx, state)] + headpath
-                if state in link:
-                    tgt = link[state]
+                if state in link.targets:
+                    nextabsreq = link.targets[state].target
+                    # do not put request in the heap, but just go for the next abstract page
+                    tgt = nextabsreq.targets[state]
                     assert tgt.target
                     if (tgt.target, tgt.transition) in seen:
                         continue
@@ -889,16 +924,46 @@ class Engine(object):
 
 
     def getNextAction(self, reqresp):
+        if self.pathtofollow:
+            assert self.followingpath
+            nexthop = self.pathtofollow.pop(0)
+            assert reqresp.response.page.abspage.contains(nexthop[0]),\
+                    "%s !contains %s" % (nexthop[0], reqresp.response.page.abspage)
+            assert nexthop[2] == self.state
+            if nexthop[1] is None:
+                assert not self.pathtofollow
+            else:
+                return (Engine.ANCHOR, reqresp.response.page.links[nexthop[1]])
+        if self.followingpath and not self.pathtofollow:
+            self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
+            self.followingpath = False
+
         unvisited = self.getUnvisitedLink(reqresp)
-        if unvisited is not None:
-            return (Engine.ANCHOR, unvisited)
+        if unvisited:
+            self.logger.debug(output.green("unvisited in current page: %s"), unvisited)
+            return (Engine.ANCHOR, reqresp.response.page.links[unvisited])
+
+        if reqresp.response.page.abspage:
+            path = self.findPathToUnvisited(reqresp.response.page.abspage, self.state)
+            self.logger.debug(output.green("PATH %s"), path)
+            if path:
+                self.logger.debug(output.red("<<<<<<<<<<<<<<<<<<<<<<<<<<<<< START following path"))
+                self.followingpath = True
+                assert not self.pathtofollow
+                self.pathtofollow = path
+                nexthop = self.pathtofollow.pop(0)
+                assert nexthop[0] == reqresp.response.page.abspage
+                assert nexthop[2] == self.state
+                return (Engine.ANCHOR, reqresp.response.page.links[nexthop[1]])
+
+        # no path found, step back
         return (Engine.BACK, )
 
     def main(self, urls):
         cr = Crawler()
 
         for cnt, url in enumerate(urls):
-            self.logger.info("starting with URL %d/%d %s", cnt+1, len(urls), url)
+            self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
             reqresp = cr.open(url)
             print output.red("TREE %s" % (reqresp.response.page.linkstree,))
             print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
@@ -906,8 +971,10 @@ class Engine(object):
             while nextAction:
                 if nextAction[0] == Engine.ANCHOR:
                     reqresp = cr.click(nextAction[1])
-                if nextAction[0] == Engine.BACK:
+                elif nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
+                else:
+                    assert False, nextAction
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 pc = PageClusterer(cr.headreqresp)
                 print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
