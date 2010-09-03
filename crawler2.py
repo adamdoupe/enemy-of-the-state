@@ -3,6 +3,7 @@
 import logging
 import urlparse
 import re
+import heapq
 
 import output
 
@@ -287,6 +288,10 @@ class Page(object):
     def linksvector(self):
         return linksvector(self)
 
+    @lazyproperty
+    def links(self):
+        return Links(self.anchors, self.forms)
+
 class AbstractLink(object):
 
     def __init__(self, abspage):
@@ -314,6 +319,49 @@ class AbstractAnchor(AbstractLink):
 class AbstractForm(AbstractLink):
     pass
 
+class Links(object):
+    # TODO: add redirect support
+    ANCHOR, FORM = range(2)
+
+    def __init__(self, anchors, forms):
+        self.anchors = anchors
+        self.forms = forms
+
+    def nAnchors(self):
+        return len(self.anchors)
+
+    def nForms(self):
+        return len(self.forms)
+
+    def len(self, what):
+        if what == Links.ANCHOR:
+            return self.nAnchors()
+        elif what == Links.FORM:
+            return self.nForms()
+        else:
+            raise KeyError()
+
+    def __getitem__(self, idx):
+        if idx[0] == Links.ANCHOR:
+            return self.anchors[idx[1]]
+        elif idx[0] == Links.FORM:
+            return self.forms[idx[1]]
+        else:
+            raise KeyError(idx)
+
+    def iteritems(self):
+        for i, v in enumerate(self.anchors):
+            yield ((Links.ANCHOR, i), v)
+        for i, v in enumerate(self.forms):
+            yield ((Links.FORM, i), v)
+
+    def itervalues(self):
+        for v in self.anchors:
+            yield v
+        for v in self.forms:
+            yield v
+
+
 class AbstractPage(object):
 
     def __init__(self, reqresps):
@@ -321,6 +369,7 @@ class AbstractPage(object):
         # TODO: number of links might not be the same in some more complex clustering
         self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in reqresps))]
         self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in reqresps))]
+        self.abslinks = Links(self.absanchors, self.absforms)
         self.statelinkmap = {}
 
     @lazyproperty
@@ -577,13 +626,14 @@ class AppGraphGenerator(object):
                     currabspage = currpage.abspage
                 # find which link goes to the next request in the history
                 # TODO do not limit to anchors
-                chosenlink = (i for i, l in enumerate(currpage.anchors) if curr.next in l.to).next()
+                chosenlink = (Links.ANCHOR,
+                        (i for i, l in enumerate(currpage.anchors) if curr.next in l.to).next())
                 nextabsreq = reqmap.getAbstract(curr.next.request)
                 # XXX we cannot just use the index for more complex clustering
-                assert not laststate in currabspage.absanchors[chosenlink].targets
-                currabspage.absanchors[chosenlink].targets[laststate] = Target(nextabsreq, laststate)
+                assert not laststate in currabspage.abslinks[chosenlink].targets
+                currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate)
                 assert not laststate in currabspage.statelinkmap
-                currabspage.statelinkmap[laststate] = currabspage.absanchors[chosenlink]
+                currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink]
 
 
             curr = curr.next
@@ -653,7 +703,7 @@ class AppGraphGenerator(object):
         # merge states that were reduced to the same one
         # and update visit counter
         for ap in self.abspages:
-            for aa in ap.absanchors:
+            for aa in ap.abslinks.itervalues():
                 statereduce = [(st, statemap[st]) for st in aa.targets]
                 for st, goodst in statereduce:
                     if goodst in aa.targets:
@@ -763,6 +813,20 @@ class Crawler(object):
         self.currreqresp = self.currreqresp.prev
         return self.currreqresp
 
+class Dist(object):
+
+    def __init__(self):
+        """ The content of the vector is as follow:
+        (POST form, GET form, anchor w/ params, anchor w/o params)
+        only one element can be != 0, and contains the numb er of times that link has been visited
+        """
+        self.val = (0, 0, 0, 0, 0)
+
+    def __add__(self, v):
+        return tuple(a+b for a, b in zip(self, v))
+
+    def __cmp__(self, v):
+        return cmp(self.val, v)
 
 class Engine(object):
 
@@ -786,11 +850,43 @@ class Engine(object):
                 self.logger.debug("abstract page not availabe, and no anchors")
                 return None
 
-        # find unvisited link
+        # find unvisited anchor
         for i, aa in enumerate(abspage.absanchors):
             if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
                 return reqresp.response.page.anchors[i]
         return None
+
+    def linkcost(self):
+        return (0, 0, 0, 0)
+
+    def findPathToUnvisited(self, startpage, startstate):
+        heads = [(Dist(), startpage, startstate, [])]
+        seen = set()
+        while heads:
+            dist, head, state, headpath = heapq.heappop(heads)
+            if (head, state) in seen:
+                continue
+            seen.add((head, state))
+            unvlink = head.abslinks.getUnvisited(state)
+            if unvlink:
+                self.logger.debug("found invisited link %s in page %s (%d)", (head, unvlink, state))
+                # TODO generate path
+                return NotImplemented
+            for idx, link in head.abslinks.iteritems():
+                newpath = [(head, idx, state)] + headpath
+                if state in link:
+                    tgt = link[state]
+                    assert tgt.target
+                    if (tgt.target, tgt.transition) in seen:
+                        continue
+                    newdist = dist + self.linkcost(link)
+                    heapq.heappush(heads, (newdist, tgt.target, state, newpath))
+                else:
+                    # TODO handle state changes
+                    raise NotImplementedError
+
+
+
 
     def getNextAction(self, reqresp):
         unvisited = self.getUnvisitedLink(reqresp)

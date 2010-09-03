@@ -125,6 +125,7 @@ class Form(LinkBase):
 class Links:
     ANCHOR = 0
     FORM = 1
+
     def __init__(self, anchors, forms):
         self.anchors = anchors
         self.forms = forms
