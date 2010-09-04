@@ -259,10 +259,21 @@ class Anchor(Link):
 
 
 class Form(Link):
+    GET, POST = ("GET", "POST")
+
+    @lazyproperty
+    def method(self):
+        methodattr = self.internal.getMethodAttribute().upper()
+        assert methodattr in ("GET", "POST")
+        return methodattr
+
+    @lazyproperty
+    def action(self):
+        return self.internal.getActionAttribute()
 
     @lazyproperty
     def _str(self):
-        return "Form"
+        return "Form(%s %s)" % (self.method, self.action)
 
 
 class Page(object):
@@ -321,19 +332,29 @@ class AbstractAnchor(AbstractLink):
     def equals(self, a):
         return self.hrefs == a.hrefs
 
+    @lazyproperty
+    def hasquery(self):
+        return any(i.find('?') != -1 for i in self.hrefs)
+
 
 class AbstractForm(AbstractLink):
 
     def __init__(self, forms):
         AbstractLink.__init__(self)
-        pass
+        self.methods = set(i.method for i in forms)
+        self.actions = set(i.action for i in forms)
 
     @lazyproperty
     def _str(self):
         return "AbstractForm(targets=%s)" % (self.targets)
 
     def equals(self, f):
-        return True
+        return (self.methods, self.actions) == (f.methods, f.actions)
+
+    @lazyproperty
+    def ispost(self):
+        return Form.POST in self.methods
+
 
 
 class Links(object):
@@ -858,7 +879,7 @@ class Dist(object):
 
 class Engine(object):
 
-    BACK, ANCHOR = ("BACK", "ANCHOR")
+    BACK, ANCHOR, FORM = ("BACK", "ANCHOR", "FORM")
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -886,8 +907,28 @@ class Engine(object):
                 return (Links.ANCHOR, i)
         return None
 
-    def linkcost(self, link):
-        return Dist((0, 0, 0, 1))
+    def linkcost(self, abspage, linkidx, link, state):
+        if state in link.targets:
+            nvisits = link.targets[state].nvisits + 1
+        else:
+            # never visisted, but it must be > 0
+            nvisits = 1
+        if linkidx[0] == Links.ANCHOR:
+            if link.hasquery:
+                dist = Dist((0, 0, nvisits, 0))
+            else:
+                dist = Dist((0, 0, 0, nvisits))
+        elif linkidx[0] == Links.FORM:
+            if link.ispost:
+                dist = Dist((nvisits, 0, 0, 0))
+            else:
+                dist = Dist((0, nvisits, 0, 0))
+        else:
+            assert False, linkidx
+
+        return dist
+
+
 
     def findPathToUnvisited(self, startpage, startstate):
         heads = [(Dist(), startpage, startstate, [])]
@@ -903,7 +944,8 @@ class Engine(object):
                 unvlink = unvlinks[0]
                 self.logger.debug("found unvisited link %s in page %s (%d)", unvlink,
                         head, state)
-                path = list(reversed([(head, None, state)] + headpath))
+                mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)[1]
+                path = list(reversed([(head, mincost, state)] + headpath))
                 return path
             for idx, link in head.abslinks.iteritems():
                 newpath = [(head, idx, state)] + headpath
@@ -914,11 +956,21 @@ class Engine(object):
                     assert tgt.target
                     if (tgt.target, tgt.transition) in seen:
                         continue
-                    newdist = dist + self.linkcost(link)
+                    newdist = dist + self.linkcost(head, idx, link, state)
                     heapq.heappush(heads, (newdist, tgt.target, state, newpath))
                 else:
                     # TODO handle state changes
                     raise NotImplementedError
+
+
+    def getEngineAction(self, linkidx):
+        if linkidx[0] == Links.ANCHOR:
+            engineaction = Engine.ANCHOR
+        elif linkidx[0] == Links.FORM:
+            engineaction = Engine.FORM
+        else:
+            assert False, linkidx
+        return engineaction
 
 
 
@@ -933,7 +985,7 @@ class Engine(object):
             if nexthop[1] is None:
                 assert not self.pathtofollow
             else:
-                return (Engine.ANCHOR, reqresp.response.page.links[nexthop[1]])
+                return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
         if self.followingpath and not self.pathtofollow:
             self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
             self.followingpath = False
@@ -954,7 +1006,7 @@ class Engine(object):
                 nexthop = self.pathtofollow.pop(0)
                 assert nexthop[0] == reqresp.response.page.abspage
                 assert nexthop[2] == self.state
-                return (Engine.ANCHOR, reqresp.response.page.links[nexthop[1]])
+                return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
 
         # no path found, step back
         return (Engine.BACK, )
@@ -971,6 +1023,8 @@ class Engine(object):
             while nextAction:
                 if nextAction[0] == Engine.ANCHOR:
                     reqresp = cr.click(nextAction[1])
+                elif nextAction[0] == Engine.FORM:
+                    raise NotImplementedError
                 elif nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
                 else:
