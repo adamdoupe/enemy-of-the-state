@@ -5,6 +5,8 @@ import urlparse
 import re
 import heapq
 
+import pydot
+
 import output
 
 import htmlunit
@@ -153,6 +155,10 @@ class Request(object):
         return "Request(%s %s)" % (self.method, self.fullpath)
 
     @lazyproperty
+    def shortstr(self):
+        return "%s %s" % (self.method, self.fullpath)
+
+    @lazyproperty
     def urlvector(self):
         return urlvector(self)
 
@@ -272,9 +278,16 @@ class Form(Link):
         return self.internal.getActionAttribute()
 
     @lazyproperty
+    def actionurl(self):
+        return urlparse.urlparse(self.action)
+
+    @lazyproperty
     def _str(self):
         return "Form(%s %s)" % (self.method, self.action)
 
+    @lazyproperty
+    def linkvector(self):
+        return formvector(self.method, self.actionurl)
 
 class Page(object):
 
@@ -320,7 +333,7 @@ class AbstractLink(object):
         return str(self)
 
 class AbstractAnchor(AbstractLink):
-    
+
     def __init__(self, anchors):
         AbstractLink.__init__(self)
         self.hrefs = set(i.href for i in anchors)
@@ -391,16 +404,29 @@ class Links(object):
         for v in self.forms:
             yield v
 
+    def __iter__(self):
+        return self.itervalues()
+
     def getUnvisited(self, state):
         return [(i, l) for i, l in self.iteritems() if state not in l.targets]
 
     def __len__(self):
         return self.nAnchors() + self.nForms()
 
+    def __nonzero__(self):
+        return self.nAnchors() != 0 or self.nForms() != 0
+
     def equals(self, l):
         return self.nAnchors() == l.nAnchors() and self.nForms() == l.nForms() and \
                 all(a.equals(b) for a, b in zip(self.anchors, l.anchors)) and \
                 all(a.equals(b) for a, b in zip(self.forms, l.forms))
+
+    def __str__(self):
+        return self._str
+
+    @lazyproperty
+    def _str(self):
+        return "Links(%s, %s)" % (self.anchors, self.forms)
 
 
 class AbstractPage(object):
@@ -430,16 +456,21 @@ class AbstractPage(object):
 
 class AbstractRequest(object):
 
-    def __init__(self, request):
+    def __init__(self, abspage):
         # map from state to AbstractPage
-        self.request = request
         self.targets = {}
 
     def __str__(self):
-        return "AbstractRequest(%s)" % self.request
+        return "AbstractRequest(%s)" % self.requestset
 
     def __repr__(self):
         return str(self)
+
+    @property
+    def requestset(self):
+        return set(rr.request.shortstr for t in self.targets.itervalues()
+                                for rr in t.target.reqresps)
+
 
 class Target(object):
     def __init__(self, target, transition, nvisits=0):
@@ -504,13 +535,24 @@ def urlvector(request):
         urltoks.append(tuple(values))
     return tuple(urltoks)
 
+def formvector(method, action):
+    # TODO params & values
+    urltoks = [method] + action.path.split('/')
+    query = action.query
+    if query:
+        querytoks = action.query.split('&')
+        keys, values = zip(*(i.split('=') for i in querytoks))
+        urltoks.append(tuple(keys))
+        urltoks.append(tuple(values))
+    return tuple(urltoks)
+
 def linkstree(page):
     # leaves in linkstree are counter of how many times that url occurred
     # therefore use that counter when compuing number of urls with "nleaves"
     linkstree = RecursiveDict(lambda x: x)
-    if page.anchors:
-        for a in page.anchors:
-            urlv = [a.dompath] + list(a.linkvector)
+    if page.links:
+        for l in page.links.itervalues():
+            urlv = [l.dompath] + list(l.linkvector)
             # set leaf to 1 or increment
             linkstree.setapplypath(urlv, 1, lambda x: x+1)
     else:
@@ -636,6 +678,7 @@ class AppGraphGenerator(object):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.reqrespshead = reqrespshead
         self.abspages = abspages
+        self.reqmap = None
 
     def generateAppGraph(self):
         self.logger.debug("generating application graph")
@@ -684,6 +727,9 @@ class AppGraphGenerator(object):
             currabsreq = nextabsreq
             cnt += 1
 
+        for r in reqmap:
+            print r, output.brown(str(r.targets))
+
 
         self.maxstate = laststate
         self.logger.debug("application graph generated in %d steps", cnt)
@@ -708,7 +754,7 @@ class AppGraphGenerator(object):
         # need history to handle navigatin back; pair of (absrequest,absresponse)
         history = []
         currstate = 0
-        
+
         while True:
             respage = currreq.targets[currstate].target
             history.append((currreq, respage))
@@ -734,7 +780,7 @@ class AppGraphGenerator(object):
                     if ssmapsto != currmapsto:
                         # TODO need to split current state!
                         raise NotImplementedError
-            
+
             currreq = chosentarget
 
         for i in range(len(statemap)):
@@ -755,19 +801,29 @@ class AppGraphGenerator(object):
                             "%s %s" % (aa.targets[st], aa.targets[goodst])
                     else:
                         aa.targets[goodst] = aa.targets[st]
-                        del aa.targets[st]
+                        # also map transition state to the reduced one
+                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
                         assert aa.targets[goodst].nvisits == 0
+                    if st == goodst:
+                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
+                    else:
+                        del aa.targets[st]
                     aa.targets[goodst].nvisits += 1
 
         for ar in self.reqmap:
             statereduce = [(st, statemap[st]) for st in ar.targets]
-            for st, goodst in statereduce:
+            for (st, goodst) in statereduce:
                 if goodst in ar.targets:
                     assert ar.targets[st].target == ar.targets[goodst].target
                 else:
                     ar.targets[goodst] = ar.targets[st]
-                    del ar.targets[st]
+                    # also map transition state to the reduced one
+                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
                     assert ar.targets[goodst].nvisits == 0
+                if st == goodst:
+                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
+                else:
+                    del ar.targets[st]
                 ar.targets[goodst].nvisits += 1
 
         # return last current state
@@ -1012,6 +1068,8 @@ class Engine(object):
         return (Engine.BACK, )
 
     def main(self, urls):
+        self.pc = None
+        self.ag = None
         cr = Crawler()
 
         for cnt, url in enumerate(urls):
@@ -1029,19 +1087,71 @@ class Engine(object):
                     reqresp = cr.back()
                 else:
                     assert False, nextAction
+                print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 pc = PageClusterer(cr.headreqresp)
+                self.pc = pc
                 print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
+                self.ag = ag
                 ag.generateAppGraph()
                 self.state = ag.reduceStates()
                 nextAction = self.getNextAction(reqresp)
 
+    def writeDot(self):
+        self.logger.info("creating DOT graph")
+        dot = pydot.Dot()
+        nodes = {}
+
+        for p in self.ag.abspages:
+            name = str(id(p))
+            node = pydot.Node(name)
+            nodes[p] = node
+
+        for p in self.ag.reqmap:
+            name = str('\\n'.join(p.requestset))
+            node = pydot.Node(name)
+            nodes[p] = node
+
+        self.logger.debug("%d DOT nodes", len(nodes))
+
+        for n in nodes.itervalues():
+            dot.add_node(n)
+
+        for p in self.ag.abspages:
+            for l in p.abslinks:
+                for s, t in l.targets.iteritems():
+                    edge = pydot.Edge(nodes[p], nodes[t.target])
+                    #print "LINK %s => %s" % (p, t.target)
+                    edge.set_label("%s->%s" % (s, t.transition))
+                    dot.add_edge(edge)
+
+        for p in self.ag.reqmap:
+            for s, t in p.targets.iteritems():
+                edge = pydot.Edge(nodes[p], nodes[t.target])
+                #print "LINK %s => %s" % (p, t.target)
+                edge.set_label("%s->%s" % (s, t.transition))
+                edge.set_color("blue")
+                dot.add_edge(edge)
+
+        dot.write_ps('graph.ps')
+        #dot.write_pdf('graph.pdf')
+        with open('graph.dot', 'w') as f:
+            f.write(dot.to_string())
+        self.logger.debug("DOT graph written")
 
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.DEBUG)
-    Engine().main(sys.argv[1:])
+    e = Engine()
+    try:
+        e.main(sys.argv[1:])
+    finally:
+        try:
+            e.writeDot()
+        except:
+            import traceback
+            traceback.print_exc()
 
 
 # vim:sw=4:et:
