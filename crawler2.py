@@ -487,6 +487,7 @@ class AbstractRequest(object):
     def __init__(self, abspage):
         # map from state to AbstractPage
         self.targets = {}
+        self.abspage = abspage
 
     def __str__(self):
         return "AbstractRequest(%s)" % self.requestset
@@ -795,13 +796,13 @@ class AppGraphGenerator(object):
             chosentarget = chosenlink.targets[currstate].target
             assert currstate in chosenlink.targets
             # find if there are other states that we have already processed that lead to a different target
-            smallerstates = sorted([i for i, t in chosenlink.targets.iteritems() if i < currstate and t != chosentarget], reverse=True)
+            smallerstates = sorted([i for i, t in chosenlink.targets.iteritems() if i < currstate and t.target != chosentarget], reverse=True)
             if smallerstates:
-                #print output.red("SMALLER respage=%s chosenlink=%s chosentarget=%s smallerstates=%s" % (respage, chosenlink, chosentarget, smallerstates))
                 currmapsto = self.getMinMappedState(currstate, statemap)
                 for ss in smallerstates:
                     ssmapsto = self.getMinMappedState(ss, statemap)
-                    if ssmapsto != currmapsto:
+                    print "%d %d" % (ssmapsto, currmapsto)
+                    if ssmapsto == currmapsto:
                         # TODO need to split current state!
                         raise NotImplementedError
 
