@@ -19,8 +19,14 @@ htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
 import signal
 
+wanttoexit = False
+
 def signalhandler(signum, frame):
-    raise KeyboardInterrupt
+    global wanttoexit
+    if wanttoexit:
+        raise KeyboardInterrupt
+    else:
+        wanttoexit = True
 
 #signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
@@ -479,7 +485,7 @@ class AbstractPage(object):
     def __repr__(self):
         return str(self) + str(id(self))
 
-    def contains(self, p):
+    def match(self, p):
         return self.abslinks.equals(p.abslinks)
 
 
@@ -1248,13 +1254,17 @@ class Engine(object):
         if self.pathtofollow:
             assert self.followingpath
             nexthop = self.pathtofollow.pop(0)
-            assert reqresp.response.page.abspage.contains(nexthop[0]),\
-                    "%s !contains %s" % (nexthop[0], reqresp.response.page.abspage)
-            assert nexthop[2] == self.state
-            if nexthop[1] is None:
-                assert not self.pathtofollow
+            if not reqresp.response.page.abspage.match(nexthop[0]):
+                self.logger.debug(output.red("got %s not matching expected %s"), reqresp.response.page.abspage, nexthop[0])
+                self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> ABORT following path"))
+                self.followingpath = False
+                self.pathtofollow = []
             else:
-                return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
+                assert nexthop[2] == self.state
+                if nexthop[1] is None:
+                    assert not self.pathtofollow
+                else:
+                    return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
         if self.followingpath and not self.pathtofollow:
             self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
             self.followingpath = False
@@ -1323,6 +1333,9 @@ class Engine(object):
                 self.state = ag.reduceStates()
                 nextAction = self.getNextAction(reqresp)
 
+                if wanttoexit:
+                    return
+
     def writeDot(self):
         self.logger.info("creating DOT graph")
         dot = pydot.Dot()
@@ -1345,19 +1358,33 @@ class Engine(object):
 
         for p in self.ag.abspages:
             for l in p.abslinks:
+                linksequal = defaultdict(list)
                 for s, t in l.targets.iteritems():
-                    edge = pydot.Edge(nodes[p], nodes[t.target])
-                    #print "LINK %s => %s" % (p, t.target)
-                    edge.set_label("%s->%s" % (s, t.transition))
+                    assert s == t.transition
+                    linksequal[t.target].append(s)
+                for t, ss in linksequal.iteritems():
+                    edge = pydot.Edge(nodes[p], nodes[t])
+                    ss.sort()
+                    edge.set_label(",".join(str(i) for i in ss))
                     dot.add_edge(edge)
 
         for p in self.ag.absrequests:
+            linksequal = defaultdict(list)
             for s, t in p.targets.iteritems():
-                edge = pydot.Edge(nodes[p], nodes[t.target])
-                #print "LINK %s => %s" % (p, t.target)
-                edge.set_label("%s->%s" % (s, t.transition))
-                edge.set_color("blue")
+                if s != t.transition:
+                    edge = pydot.Edge(nodes[p], nodes[t.target])
+                    #print "LINK %s => %s" % (p, t.target)
+                    edge.set_label("%s->%s" % (s, t.transition))
+                    edge.set_color("red")
+                    dot.add_edge(edge)
+                else:
+                    linksequal[t.target].append(s)
+            for t, ss in linksequal.iteritems():
+                edge = pydot.Edge(nodes[p], nodes[t])
+                ss.sort()
+                edge.set_label(",".join(str(i) for i in ss))
                 dot.add_edge(edge)
+                edge.set_color("blue")
 
         dot.write_ps('graph.ps')
         #dot.write_pdf('graph.pdf')
