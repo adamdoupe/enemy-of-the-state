@@ -289,6 +289,34 @@ class Form(Link):
     def linkvector(self):
         return formvector(self.method, self.actionurl)
 
+    @lazyproperty
+    def keys(self):
+        return self.inputs + self.textareas + self.selects
+
+    @lazyproperty
+    def inputs(self):
+        return [e.getAttribute('name')
+                for e in (htmlunit.HtmlElement.cast_(i)
+                    for i in self.internal.getHtmlElementsByTagName('input'))
+                if e.getAttribute('type').lower() != "hidden"]
+
+    @lazyproperty
+    def hiddens(self):
+        return [e.getAttribute('name')
+                for e in (htmlunit.HtmlElement.cast_(i)
+                    for i in self.internal.getHtmlElementsByTagName('input'))
+                if e.getAttribute('type').lower() == "hidden"]
+
+    @lazyproperty
+    def textareas(self):
+        # TODO
+        return []
+
+    @lazyproperty
+    def selects(self):
+        # TODO
+        return []
+
 class Page(object):
 
     def __init__(self, internal, reqresp):
@@ -712,9 +740,7 @@ class AppGraphGenerator(object):
                     currpage = curr.next.backto.response.page
                     currabspage = currpage.abspage
                 # find which link goes to the next request in the history
-                # TODO do not limit to anchors
-                chosenlink = (Links.ANCHOR,
-                        (i for i, l in enumerate(currpage.anchors) if curr.next in l.to).next())
+                chosenlink = (i for i, l in currpage.links.iteritems() if curr.next in l.to).next()
                 nextabsreq = reqmap.getAbstract(curr.next.request)
                 # XXX we cannot just use the index for more complex clustering
                 assert not laststate in currabspage.abslinks[chosenlink].targets
@@ -726,9 +752,6 @@ class AppGraphGenerator(object):
             curr = curr.next
             currabsreq = nextabsreq
             cnt += 1
-
-        for r in reqmap:
-            print r, output.brown(str(r.targets))
 
 
         self.maxstate = laststate
@@ -774,6 +797,7 @@ class AppGraphGenerator(object):
             # find if there are other states that we have already processed that lead to a different target
             smallerstates = sorted([i for i, t in chosenlink.targets.iteritems() if i < currstate and t != chosentarget], reverse=True)
             if smallerstates:
+                #print output.red("SMALLER respage=%s chosenlink=%s chosentarget=%s smallerstates=%s" % (respage, chosenlink, chosentarget, smallerstates))
                 currmapsto = self.getMinMappedState(currstate, statemap)
                 for ss in smallerstates:
                     ssmapsto = self.getMinMappedState(ss, statemap)
@@ -847,6 +871,12 @@ class Crawler(object):
     class EmptyHistory(Exception):
         pass
 
+    class ActionFailure(Exception):
+        pass
+
+    class UnsubmittableForm(ActionFailure):
+        pass
+
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.INTERNET_EXPLORER_6)
@@ -905,6 +935,62 @@ class Crawler(object):
                 "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpath)
         return reqresp
 
+    def submitForm(self, form, params):
+        htmlpage = None
+
+        self.logger.info(output.fuscia("submitting form %s %r and params: %r"),
+                form.method.upper(), form.action,
+                params)
+
+        iform = form.internal
+
+        for k,v in params.iteritems():
+            iform.getInputByName(k).setValueAttribute(v)
+
+        try:
+            # find an element to click in order to submit the form
+            # TODO: explore clickable regions in input type=image
+            for submittable in [("input", "type", "submit"),
+                    ("input", "type", "image"),
+                    ("input", "type", "button"),
+                    ("button", "type", "submit")]:
+                try:
+                    submitter = iform.getOneHtmlElementByAttribute(*submittable)
+                    htmlpage = submitter.click()
+                    break
+                except htmlunit.JavaError, e:
+                    javaex = e.getJavaException()
+                    if not htmlunit.ElementNotFoundException.instance_(javaex):
+                        raise
+                    continue
+
+            if not htmlpage:
+                self.logger.warn("could not find submit button for form %s %r in page",
+                        form.method,
+                        form.action)
+                raise Crawler.UnsubmittableForm()
+
+        except htmlunit.JavaError, e:
+            javaex = e.getJavaException()
+            if not htmlunit.FailingHttpStatusCodeException.instance_(javaex):
+                raise
+            javaex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
+            ecode = javaex.getStatusCode()
+            emsg = javaex.getStatusMessage()
+            self.logger.warn(output.red("%d %s, %s %s"), ecode, emsg,
+                    form.method, form.action)
+            assert False
+            self.history.append(self.htmlpage)
+            return self.errorPage(ecode)
+
+        htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
+        # TODO: handle HTTP redirects, they will throw an exception
+        reqresp = self.newPage(htmlpage)
+        form.to.append(reqresp)
+        assert reqresp.request.fullpath.split('?')[0][-len(form.action):] == form.action, \
+                "Unhandled redirect %s !sub %s" % (form.href, reqresp.request.fullpath)
+        return reqresp
+
     def back(self):
         self.logger.debug(output.purple("stepping back"))
         # htmlunit has not "back" functrion
@@ -933,15 +1019,26 @@ class Dist(object):
     def __str__(self):
         return str(self.val)
 
+class FormFiller:
+    def __init__(self):
+        self.forms = {}
+
+    def add(self, k):
+        self.forms[tuple(sorted(k.keys()))] = k
+
+    def __getitem__(self, k):
+        return self.forms[tuple(sorted([i for i in k if i]))]
+
 class Engine(object):
 
     BACK, ANCHOR, FORM = ("BACK", "ANCHOR", "FORM")
 
-    def __init__(self):
+    def __init__(self, formfiller=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.state = -1
         self.followingpath = False
         self.pathtofollow = []
+        self.formfiller = formfiller
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -989,6 +1086,7 @@ class Engine(object):
     def findPathToUnvisited(self, startpage, startstate):
         heads = [(Dist(), startpage, startstate, [])]
         seen = set()
+        candidates = []
         while heads:
             dist, head, state, headpath = heapq.heappop(heads)
             print output.yellow("H %s %s %s %s" % (dist, head, state, headpath)) 
@@ -1002,7 +1100,8 @@ class Engine(object):
                         head, state)
                 mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)[1]
                 path = list(reversed([(head, mincost, state)] + headpath))
-                return path
+                heapq.heappush(candidates, (dist, path))
+                continue
             for idx, link in head.abslinks.iteritems():
                 newpath = [(head, idx, state)] + headpath
                 if state in link.targets:
@@ -1017,6 +1116,10 @@ class Engine(object):
                 else:
                     # TODO handle state changes
                     raise NotImplementedError
+        if candidates:
+            return candidates[0][1]
+        else:
+            return None
 
 
     def getEngineAction(self, linkidx):
@@ -1067,10 +1170,22 @@ class Engine(object):
         # no path found, step back
         return (Engine.BACK, )
 
+    def submitForm(self, form):
+        try:
+            formkeys = form.keys
+            self.logger.debug("form keys %r", formkeys)
+            params = self.formfiller[formkeys]
+        except KeyError:
+            # we do not have parameters for the form
+            params = {}
+        return self.cr.submitForm(form, params)
+
+
     def main(self, urls):
         self.pc = None
         self.ag = None
         cr = Crawler()
+        self.cr = cr
 
         for cnt, url in enumerate(urls):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
@@ -1082,7 +1197,7 @@ class Engine(object):
                 if nextAction[0] == Engine.ANCHOR:
                     reqresp = cr.click(nextAction[1])
                 elif nextAction[0] == Engine.FORM:
-                    raise NotImplementedError
+                    reqresp = self.submitForm(nextAction[1])
                 elif nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
                 else:
@@ -1143,15 +1258,21 @@ class Engine(object):
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.DEBUG)
-    e = Engine()
+    ff = FormFiller()
+    login = {'username': 'ludo', 'password': 'duuwhe782osjs'}
+    ff.add(login)
+    login = {'user': 'ludo', 'pass': 'ludo'}
+    ff.add(login)
+    login = {'userId': 'temp01', 'password': 'Temp@67A%', 'newURL': "", "datasource": "myyardi", 'form_submit': ""}
+    ff.add(login)
+    e = Engine(ff)
     try:
         e.main(sys.argv[1:])
+    except:
+        import traceback
+        traceback.print_exc()
     finally:
-        try:
-            e.writeDot()
-        except:
-            import traceback
-            traceback.print_exc()
+        e.writeDot()
 
 
 # vim:sw=4:et:
