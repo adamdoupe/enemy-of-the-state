@@ -835,7 +835,53 @@ class AppGraphGenerator(object):
         currstate = 0
 
         while True:
-            respage = currreq.targets[currstate].target
+            currtarget = currreq.targets[currstate]
+
+            # find if there are other states that we have already processed that lead to a different target
+            smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate and t.target != currtarget.target], reverse=True)
+            if smallerstates:
+                currmapsto = self.getMinMappedState(currstate, statemap)
+                for ss in smallerstates:
+                    ssmapsto = self.getMinMappedState(ss, statemap)
+                    if ssmapsto == currmapsto:
+                        self.logger.debug(output.teal("need to split state for request %s")
+                                % currtarget)
+                        self.logger.debug("\t%d(%d)->%s"
+                                % (currstate, currmapsto, currtarget))
+                        self.logger.debug("\t%d(%d)->%s"
+                                % (ss, ssmapsto, currreq.targets[ss]))
+                        stateoff = 1
+                        for (j, (req, page)) in enumerate(reversed(history)):
+                            laststate = currstate-j-stateoff
+                            print currstate, j, req.targets.keys()
+                            if laststate not in req.targets:
+                                # happening due to browser back(), adjust offset
+                                laststate = max(i for i in req.targets if i <= laststate)
+                                stateoff = currstate-j-laststate
+                                print "stetoff", stateoff
+                            target = req.targets[laststate]
+                            assert target.target == page, "%s != %s" % (target.target, page)
+                            # the Target.nvisit has not been updated yet, because we have not finalized state assignment
+                            # let's compute the number of simits by counting the states that
+                            # map to the same one and share the target abstract page
+                            assert target.nvisits == 0, target.nvisits
+                            mappedlaststate = self.getMinMappedState(laststate, statemap)
+                            visits = [s for s, t in req.targets.iteritems() if t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
+                            nvisits = len(visits)
+                            assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
+                            if nvisits == 1:
+                                self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
+                                assert statemap[target.transition] == laststate
+                                statemap[target.transition] = target.transition
+                                break
+                        else:
+                            # if we get hear, we need a better heuristic for splitting state
+                            raise RuntimeError()
+                        currmapsto = self.getMinMappedState(currstate, statemap)
+                        assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
+
+            respage = currtarget.target
+
             history.append((currreq, respage))
             currstate += 1
             statemap[currstate] = currstate-1
