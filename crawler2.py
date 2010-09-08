@@ -118,6 +118,7 @@ class Request(object):
     def __init__(self, webrequest, reqresp):
         self.webrequest = webrequest
         self.reqresp = reqresp
+        self.absrequest = None
 
     @lazyproperty
     def method(self):
@@ -476,7 +477,7 @@ class AbstractPage(object):
         return self._str
 
     def __repr__(self):
-        return str(self)
+        return str(self) + str(id(self))
 
     def contains(self, p):
         return self.abslinks.equals(p.abslinks)
@@ -484,21 +485,22 @@ class AbstractPage(object):
 
 class AbstractRequest(object):
 
-    def __init__(self, abspage):
+    def __init__(self, request):
         # map from state to AbstractPage
         self.targets = {}
-        self.abspage = abspage
+        self.method = request.method
+        self.path = request.path
+        self.reqresps = []
 
     def __str__(self):
-        return "AbstractRequest(%s)" % self.requestset
+        return "AbstractRequest(%s)%d" % (self.requestset, id(self))
 
     def __repr__(self):
         return str(self)
 
     @property
     def requestset(self):
-        return set(rr.request.shortstr for t in self.targets.itervalues()
-                                for rr in t.target.reqresps)
+        return set(rr.request.shortstr for rr in self.reqresps)
 
 
 class Target(object):
@@ -539,13 +541,15 @@ class AbstractMap(dict):
         self.h = h
         self.absobj = absobj
 
-    def __missing__(self, k):
-        v = self.absobj(k)
-        self[k] = v
-        return v
-
     def getAbstract(self, obj):
-        return self[self.h(obj)]
+        h = self.h(obj)
+        if h in self:
+            v = self[h]
+        else:
+            v = self.absobj(obj)
+            self[h] = v
+        print output.yellow("%s (%s) -> %s" % (h, obj, v))
+        return v
 
     def __iter__(self):
         return self.itervalues()
@@ -707,24 +711,66 @@ class AppGraphGenerator(object):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.reqrespshead = reqrespshead
         self.abspages = abspages
-        self.reqmap = None
+        self.absrequests = None
 
     def generateAppGraph(self):
         self.logger.debug("generating application graph")
 
         # make sure we are at the beginning
         assert self.reqrespshead.prev is None
+
+        # clustering requests on the abstrct pages is a bad idea, because we do dot want
+        # the exact same request to be split in 2 clusters
+        #reqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path))
+        # actually, if we do not cluster based on the abstract pages, we get issues with the
+        # "trap.php" test case, because pages are clustered but requests are not
+        # compromise: cluster based on abstract pages only if also the previous abspage is the same
+
+        # first map all request based on method, path, and previous and next abstratc pages
+        contextreqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path, x.reqresp.response.page.abspage, x.reqresp.prev.response.page.abspage if x.reqresp.prev else None))
+
+        mappedrequests = defaultdict(list)
+
+        for rr in self.reqrespshead:
+            mappedrequests[contextreqmap.getAbstract(rr.request)].append(rr)
+
+        del contextreqmap
+
+        # if there are multiple requests that were assigned to the same abstractrequest
+        # in the preious mapping, consider assignment final, otherwise do mapping
+        # using the full path but not the next and previous pages
+
+        reqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path, x.query))
+
+        absrequests = set()
+
+        for ar, rrs in mappedrequests.iteritems():
+            if len(rrs) > 1:
+                for rr in rrs:
+                    rr.request.absrequest = ar
+                    ar.reqresps.append(rr)
+                    absrequests.add(ar)
+            else:
+                absreq = reqmap.getAbstract(rrs[0].request)
+                rrs[0].request.absrequest = absreq
+                absreq.reqresps.append(rrs[0])
+                absrequests.add(absreq)
+
+        del reqmap
+        del mappedrequests
+
+        for r in absrequests:
+            print output.turquoise("%s" % r)
+
+        self.absrequests = absrequests
+
         curr = self.reqrespshead
         laststate = 0
 
-        ## map requests with same "signature" to the same AbstractRequest object
-        # disable separate request clustering, but cluster on the basis of the clustered AbstractPages
-        #reqmap = AbstractMap(AbstractRequest, lambda x: repr(x))
-        reqmap = AbstractMap(AbstractRequest, lambda x: x.reqresp.response.page.abspage)
 
-        self.reqmap = reqmap
-        currabsreq = reqmap.getAbstract(curr.request)
+        currabsreq = curr.request.absrequest
         self.headabsreq = currabsreq
+
 
         # go through the while navigation path and link together AbstractRequests and AbstractPages
         # for now, every request will generate a new state, post processing will happen late
@@ -733,7 +779,11 @@ class AppGraphGenerator(object):
             currpage = curr.response.page
             currabspage = currpage.abspage
             assert not laststate in currabsreq.targets
+            #print output.red("A %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
+            #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             currabsreq.targets[laststate] = Target(currabspage, laststate+1)
+            #print output.red("B %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
+            #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             laststate += 1
 
             if curr.next:
@@ -742,13 +792,17 @@ class AppGraphGenerator(object):
                     currabspage = currpage.abspage
                 # find which link goes to the next request in the history
                 chosenlink = (i for i, l in currpage.links.iteritems() if curr.next in l.to).next()
-                nextabsreq = reqmap.getAbstract(curr.next.request)
+                nextabsreq = curr.next.request.absrequest
+                #print output.green("A %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
+                #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
                 # XXX we cannot just use the index for more complex clustering
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate)
                 assert not laststate in currabspage.statelinkmap
                 currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink]
 
+            #print output.green("B %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
+            #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
 
             curr = curr.next
             currabsreq = nextabsreq
@@ -801,9 +855,15 @@ class AppGraphGenerator(object):
                 currmapsto = self.getMinMappedState(currstate, statemap)
                 for ss in smallerstates:
                     ssmapsto = self.getMinMappedState(ss, statemap)
-                    print "%d %d" % (ssmapsto, currmapsto)
                     if ssmapsto == currmapsto:
-                        # TODO need to split current state!
+                        self.logger.debug(output.teal("need to split state from page %s link %s")
+                                % (respage, chosenlink))
+                        self.logger.debug("\t%d(%d)->%s\n"
+                                % (currstate, currmapsto, chosenlink))
+                        self.logger.debug("\t%d(%d)->%s\n"
+                                % (ss, ssmapsto, chosenlink.targets[ss]))
+            #            for (req, page) in reversed(history):
+
                         raise NotImplementedError
 
             currreq = chosentarget
@@ -835,11 +895,13 @@ class AppGraphGenerator(object):
                         del aa.targets[st]
                     aa.targets[goodst].nvisits += 1
 
-        for ar in self.reqmap:
+        for ar in self.absrequests:
             statereduce = [(st, statemap[st]) for st in ar.targets]
             for (st, goodst) in statereduce:
                 if goodst in ar.targets:
-                    assert ar.targets[st].target == ar.targets[goodst].target
+                    assert ar.targets[st].target == ar.targets[goodst].target, \
+                            "%s\n\t%d->%s\n\t%d->%s" % (ar, st, ar.targets[st].target,
+                                    goodst, ar.targets[goodst].target)
                 else:
                     ar.targets[goodst] = ar.targets[st]
                     # also map transition state to the reduced one
@@ -1224,7 +1286,7 @@ class Engine(object):
             node = pydot.Node(name)
             nodes[p] = node
 
-        for p in self.ag.reqmap:
+        for p in self.ag.absrequests:
             name = str('\\n'.join(p.requestset))
             node = pydot.Node(name)
             nodes[p] = node
@@ -1242,7 +1304,7 @@ class Engine(object):
                     edge.set_label("%s->%s" % (s, t.transition))
                     dot.add_edge(edge)
 
-        for p in self.ag.reqmap:
+        for p in self.ag.absrequests:
             for s, t in p.targets.iteritems():
                 edge = pydot.Edge(nodes[p], nodes[t.target])
                 #print "LINK %s => %s" % (p, t.target)
