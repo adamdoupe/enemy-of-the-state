@@ -548,7 +548,7 @@ class AbstractMap(dict):
         else:
             v = self.absobj(obj)
             self[h] = v
-        print output.yellow("%s (%s) -> %s" % (h, obj, v))
+        #print output.yellow("%s (%s) -> %s" % (h, obj, v))
         return v
 
     def __iter__(self):
@@ -745,16 +745,17 @@ class AppGraphGenerator(object):
         absrequests = set()
 
         for ar, rrs in mappedrequests.iteritems():
-            if len(rrs) > 1:
+            if len(rrs) > 1 and len(set(rr.request.query for rr in rrs)) > 1:
                 for rr in rrs:
                     rr.request.absrequest = ar
                     ar.reqresps.append(rr)
                     absrequests.add(ar)
             else:
-                absreq = reqmap.getAbstract(rrs[0].request)
-                rrs[0].request.absrequest = absreq
-                absreq.reqresps.append(rrs[0])
-                absrequests.add(absreq)
+                for rr in rrs:
+                    absreq = reqmap.getAbstract(rr.request)
+                    rr.request.absrequest = absreq
+                    absreq.reqresps.append(rr)
+                    absrequests.add(absreq)
 
         del reqmap
         del mappedrequests
@@ -858,9 +859,9 @@ class AppGraphGenerator(object):
                     if ssmapsto == currmapsto:
                         self.logger.debug(output.teal("need to split state from page %s link %s")
                                 % (respage, chosenlink))
-                        self.logger.debug("\t%d(%d)->%s\n"
-                                % (currstate, currmapsto, chosenlink))
-                        self.logger.debug("\t%d(%d)->%s\n"
+                        self.logger.debug("\t%d(%d)->%s"
+                                % (currstate, currmapsto, chosenlink.targets[currstate]))
+                        self.logger.debug("\t%d(%d)->%s"
                                 % (ss, ssmapsto, chosenlink.targets[ss]))
             #            for (req, page) in reversed(history):
 
