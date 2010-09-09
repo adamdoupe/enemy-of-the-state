@@ -867,7 +867,7 @@ class AppGraphGenerator(object):
                                 laststate = max(i for i in req.targets if i <= laststate)
                                 stateoff = currstate-j-laststate
                                 print "stetoff", stateoff
-                            print laststate, j, req.targets.keys()
+                            print laststate, j, req.targets.keys(), req
                             target = req.targets[laststate]
                             assert target.target == page, "%s != %s" % (target.target, page)
                             # the Target.nvisit has not been updated yet, because we have not finalized state assignment
@@ -876,15 +876,17 @@ class AppGraphGenerator(object):
                             assert target.nvisits == 0, target.nvisits
                             mappedlaststate = self.getMinMappedState(laststate, statemap)
                             #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
-                            visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page]
+                            # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
+                            visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
+                                    self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
                             nvisits = len(visits)
                             assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
                             if nvisits == 1:
                                 self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
                                 assert statemap[target.transition] == laststate
                                 statemap[target.transition] = target.transition
-                                if laststate >= 100:
-                                    gracefulexit()
+                                #if laststate >= 100:
+                                #    gracefulexit()
                                 break
                         else:
                             # if we get hear, we need a better heuristic for splitting state
