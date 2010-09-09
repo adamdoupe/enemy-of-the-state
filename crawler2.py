@@ -909,23 +909,6 @@ class AppGraphGenerator(object):
 
             chosenlink = respage.statelinkmap[currstate]
             chosentarget = chosenlink.targets[currstate].target
-            assert currstate in chosenlink.targets
-            # find if there are other states that we have already processed that lead to a different target
-            smallerstates = sorted([i for i, t in chosenlink.targets.iteritems() if i < currstate and t.target != chosentarget], reverse=True)
-            if smallerstates:
-                currmapsto = self.getMinMappedState(currstate, statemap)
-                for ss in smallerstates:
-                    ssmapsto = self.getMinMappedState(ss, statemap)
-                    if ssmapsto == currmapsto:
-                        self.logger.debug(output.teal("need to split state from page %s link %s")
-                                % (respage, chosenlink))
-                        self.logger.debug("\t%d(%d)->%s"
-                                % (currstate, currmapsto, chosenlink.targets[currstate]))
-                        self.logger.debug("\t%d(%d)->%s"
-                                % (ss, ssmapsto, chosenlink.targets[ss]))
-            #            for (req, page) in reversed(history):
-
-                        raise NotImplementedError
 
             currreq = chosentarget
 
