@@ -917,7 +917,55 @@ class AppGraphGenerator(object):
 
         nstates = len(set(statemap))
 
-        self.logger.debug("final states %d, collapsing graph", nstates)
+        self.logger.debug("reduced states %d", nstates)
+
+        self.collapseGraphUpdateVisists(statemap)
+
+        equalstates = [set(statemap)]
+
+        # try to detect which states are actually equivalent to older ones
+        # assume all staes are eqivalent, and split the set of states into bins
+        # when two states prove to be non equivalent
+        for ar in self.absrequests:
+            bins = defaultdict(set)
+            newequalstates = []
+            for s, t in ar.targets.iteritems():
+                bins[t.target].add(t.transition)
+            seenstates = set(i.transition for i in ar.targets.itervalues())
+            print output.darkred("BINS %s" % ' '.join(str(i) for i in bins.itervalues()))
+            for ss in bins.itervalues():
+                otherstates = seenstates - ss
+                print output.darkred("OS %s" % otherstates)
+                for es in equalstates:
+                    newequalstates.append(es-otherstates)
+            equalstates = newequalstates
+            print output.darkred("ES %s" % equalstates)
+
+        sumbinlen = sum(len(i) for i in equalstates)
+        if sumbinlen != len(set(statemap)):
+            raise RuntimeError, "not able to perform state allocation\n\t%s" % equalstates
+
+        equalstatemap = {}
+        for es in equalstates:
+            mins = min(es)
+            for s in es:
+                equalstatemap[s] = mins
+
+
+        for i in range(len(statemap)):
+            statemap[i] = equalstatemap[statemap[i]]
+
+        nstates = len(set(statemap))
+        self.logger.debug("final states %d", nstates)
+
+        self.collapseGraph(statemap)
+
+        # return last current state
+        return statemap[-1]
+
+
+    def collapseGraphUpdateVisists(self, statemap):
+        self.logger.debug("collapsing graph")
 
         # merge states that were reduced to the same one
         # and update visit counter
@@ -957,9 +1005,43 @@ class AppGraphGenerator(object):
                     del ar.targets[st]
                 ar.targets[goodst].nvisits += 1
 
-        # return last current state
-        return statemap[-1]
+    def collapseGraph(self, statemap):
+        self.logger.debug("collapsing graph")
 
+        # merge states that were reduced to the same one
+        for ap in self.abspages:
+            for aa in ap.abslinks.itervalues():
+                statereduce = [(st, statemap[st]) for st in aa.targets]
+                for st, goodst in statereduce:
+                    if goodst in aa.targets:
+                        assert aa.targets[st].target == aa.targets[goodst].target, \
+                            "%s %s" % (aa.targets[st], aa.targets[goodst])
+                    else:
+                        aa.targets[goodst] = aa.targets[st]
+                        # also map transition state to the reduced one
+                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
+                    if st == goodst:
+                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
+                    else:
+                        aa.targets[goodst].nvisits += aa.targets[st].nvisits
+                        del aa.targets[st]
+
+        for ar in self.absrequests:
+            statereduce = [(st, statemap[st]) for st in ar.targets]
+            for (st, goodst) in statereduce:
+                if goodst in ar.targets:
+                    assert ar.targets[st].target == ar.targets[goodst].target, \
+                            "%s\n\t%d->%s\n\t%d->%s" % (ar, st, ar.targets[st].target,
+                                    goodst, ar.targets[goodst].target)
+                else:
+                    ar.targets[goodst] = ar.targets[st]
+                    # also map transition state to the reduced one
+                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
+                if st == goodst:
+                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
+                else:
+                    ar.targets[goodst].nvisits += ar.targets[st].nvisits
+                    del ar.targets[st]
 
 
 class DeferringRefreshHandler(htmlunit.RefreshHandler):
