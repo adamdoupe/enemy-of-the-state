@@ -107,9 +107,11 @@ class RecursiveDict(defaultdict):
                     if isinstance(c, self.default_factory):
                         levelkeys.extend(c.iterkeys())
                         children.extend(c.itervalues())
-                        queue.append(children)
                     else:
                         levelkeys.append(c)
+                if children:
+                    queue.append(children)
+                #print "LK", len(queue), levelkeys, queue
                 yield levelkeys
 
     def iterleaves(self):
@@ -120,6 +122,17 @@ class RecursiveDict(defaultdict):
                         yield i
                 else:
                     yield c
+
+    def __str__(self, level=0):
+        out = ""
+        for k, v in self.iteritems():
+            out += "\n%s%s:"  % ("\t"*level, k)
+            if isinstance(v, RecursiveDict):
+                out += "%s" % v.__str__(level+1)
+            else:
+                out += "%s" % v
+        return out
+            
 
 
 class Request(object):
@@ -568,7 +581,7 @@ def urlvector(request):
         ->
         ['path', 'to', 'page.html', ('p1', 'p2'), ('v1', 'v2')]
     """
-    urltoks = request.path.split('/')
+    urltoks = [i if i else '/' for i in request.path.split('/')]
     query = request.query
     if query:
         querytoks = request.query.split('&')
@@ -579,7 +592,7 @@ def urlvector(request):
 
 def formvector(method, action):
     # TODO params & values
-    urltoks = [method] + action.path.split('/')
+    urltoks = [method] + [i if i  else '/' for i in action.path.split('/')]
     query = action.query
     if query:
         querytoks = action.query.split('&')
@@ -1384,7 +1397,7 @@ class Engine(object):
         for cnt, url in enumerate(urls):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
             reqresp = cr.open(url)
-            print output.red("TREE %s" % (reqresp.response.page.linkstree,))
+            #print output.red("TREE %s" % (reqresp.response.page.linkstree,))
             print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
             nextAction = self.getNextAction(reqresp)
             while nextAction:
@@ -1396,7 +1409,7 @@ class Engine(object):
                     reqresp = cr.back()
                 else:
                     assert False, nextAction
-                print output.red("TREE %s" % (reqresp.response.page.linkstree,))
+                #print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 pc = PageClusterer(cr.headreqresp)
                 print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
