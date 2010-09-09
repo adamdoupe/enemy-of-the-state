@@ -21,12 +21,15 @@ import signal
 
 wanttoexit = False
 
-def signalhandler(signum, frame):
+def gracefulexit():
     global wanttoexit
+    wanttoexit = True
+
+def signalhandler(signum, frame):
     if wanttoexit:
         raise KeyboardInterrupt
     else:
-        wanttoexit = True
+        gracefulexit()
 
 #signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
@@ -859,12 +862,12 @@ class AppGraphGenerator(object):
                         stateoff = 1
                         for (j, (req, page)) in enumerate(reversed(history)):
                             laststate = currstate-j-stateoff
-                            print currstate, j, req.targets.keys()
                             if laststate not in req.targets:
                                 # happening due to browser back(), adjust offset
                                 laststate = max(i for i in req.targets if i <= laststate)
                                 stateoff = currstate-j-laststate
                                 print "stetoff", stateoff
+                            print laststate, j, req.targets.keys()
                             target = req.targets[laststate]
                             assert target.target == page, "%s != %s" % (target.target, page)
                             # the Target.nvisit has not been updated yet, because we have not finalized state assignment
@@ -872,13 +875,16 @@ class AppGraphGenerator(object):
                             # map to the same one and share the target abstract page
                             assert target.nvisits == 0, target.nvisits
                             mappedlaststate = self.getMinMappedState(laststate, statemap)
-                            visits = [s for s, t in req.targets.iteritems() if t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
+                            #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
+                            visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page]
                             nvisits = len(visits)
                             assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
                             if nvisits == 1:
                                 self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
                                 assert statemap[target.transition] == laststate
                                 statemap[target.transition] = target.transition
+                                if laststate >= 100:
+                                    gracefulexit()
                                 break
                         else:
                             # if we get hear, we need a better heuristic for splitting state
@@ -1212,11 +1218,11 @@ class Engine(object):
             unvlinks = head.abslinks.getUnvisited(state)
             if unvlinks:
                 unvlink = unvlinks[0]
-                self.logger.debug("found unvisited link %s in page %s (%d)", unvlink,
-                        head, state)
-                mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)[1]
-                path = list(reversed([(head, mincost, state)] + headpath))
-                heapq.heappush(candidates, (dist, path))
+                self.logger.debug("found unvisited link %s in page %s (%d) dist %s", unvlink,
+                        head, state, dist)
+                mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)
+                path = list(reversed([(head, mincost[1], state)] + headpath))
+                heapq.heappush(candidates, (dist + mincost[0], path))
                 continue
             for idx, link in head.abslinks.iteritems():
                 newpath = [(head, idx, state)] + headpath
@@ -1269,10 +1275,11 @@ class Engine(object):
             self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
             self.followingpath = False
 
-        unvisited = self.getUnvisitedLink(reqresp)
-        if unvisited:
-            self.logger.debug(output.green("unvisited in current page: %s"), unvisited)
-            return (Engine.ANCHOR, reqresp.response.page.links[unvisited])
+        if not reqresp.response.page.abspage:
+            unvisited = self.getUnvisitedLink(reqresp)
+            if unvisited:
+                self.logger.debug(output.green("unvisited in current page: %s"), unvisited)
+                return (Engine.ANCHOR, reqresp.response.page.links[unvisited])
 
         if reqresp.response.page.abspage:
             path = self.findPathToUnvisited(reqresp.response.page.abspage, self.state)
