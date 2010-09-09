@@ -1332,13 +1332,14 @@ class Engine(object):
                 print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 pc = PageClusterer(cr.headreqresp)
-                self.pc = pc
                 print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
-                self.ag = ag
                 ag.generateAppGraph()
                 self.state = ag.reduceStates()
                 nextAction = self.getNextAction(reqresp)
+
+                self.pc = pc
+                self.ag = ag
 
                 if wanttoexit:
                     return
