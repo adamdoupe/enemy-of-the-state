@@ -137,9 +137,9 @@ class RecursiveDict(defaultdict):
 
 class Request(object):
 
-    def __init__(self, webrequest, reqresp):
+    def __init__(self, webrequest):
         self.webrequest = webrequest
-        self.reqresp = reqresp
+        self.reqresp = None
         self.absrequest = None
 
     @lazyproperty
@@ -194,9 +194,11 @@ class Request(object):
 
 class Response(object):
 
-    def __init__(self, webresponse, page):
+    def __init__(self, webresponse, page=None, redirect=None):
+        assert page or redirect
         self.webresponse = webresponse
         self.page = page
+        self.redirect = redirect
 
     @lazyproperty
     def code(self):
@@ -220,14 +222,14 @@ class Response(object):
 
 class RequestResponse(object):
 
-    def __init__(self, page, prev=None, next=None, backto=None):
-        webresponse = page.getWebResponse()
-        self.response = Response(webresponse, Page(page, self))
-        self.request = Request(webresponse.getWebRequest(), self)
-        self.prev = prev
-        self.next = next
+    def __init__(self, request, response):
+        request.reqresp = self
+        self.request = request
+        self.response = response
+        self.prev = None
+        self.next = None
         # how many pages we went back before performing this new request
-        self.backto = backto
+        self.backto = None
 
     def __iter__(self):
         curr = self
@@ -342,9 +344,9 @@ class Form(Link):
 
 class Page(object):
 
-    def __init__(self, internal, reqresp):
+    def __init__(self, internal):
         self.internal = internal
-        self.reqresp = reqresp
+        self.reqresp = None
         self.abspage = None
 
     @lazyproperty
@@ -366,6 +368,22 @@ class Page(object):
     @lazyproperty
     def links(self):
         return Links(self.anchors, self.forms)
+
+
+class Redirect(object):
+
+    def __init__(self, internal):
+        self.internal = internal
+        self.reqresp = None
+        self.abspage = None
+
+    @lazyproperty
+    def location(self):
+        return self.internal.getResponseHeaderValue("Location")
+
+    def __str__(self):
+        return "Redirect(%s)" % self.location
+
 
 class AbstractLink(object):
 
@@ -1111,27 +1129,64 @@ class Crawler(object):
         return self.newPage(htmlpage)
 
     def newPage(self, htmlpage):
-        self.updateInternalData(htmlpage)
-        self.logger.info("%s", self.currreqresp)
+        page = Page(htmlpage)
+        webresponse = htmlpage.getWebResponse()
+        response = Response(webresponse, page=page)
+        request = Request(webresponse.getWebRequest())
+        reqresp = RequestResponse(request, response)
+        request.reqresp = reqresp
+        page.reqresp = reqresp
+
+        self.updateInternalData(reqresp)
         return self.currreqresp
 
-    def updateInternalData(self, htmlpage):
+    def newHttpRedirect(self, webresponse):
+        redirect = Redirect(webresponse)
+        response = Response(webresponse, redirect=redirect)
+        request = Request(webresponse.getWebRequest())
+        reqresp = RequestResponse(request, response)
+        request.reqresp = reqresp
+        redirect.reqresp = reqresp
+
+        self.updateInternalData(reqresp)
+        return self.currreqresp
+
+    def updateInternalData(self, reqresp):
         backto = self.currreqresp if self.lastreqresp != self.currreqresp else None
-        newreqresp = RequestResponse(htmlpage, self.lastreqresp, backto=backto)
+        reqresp.prev = self.lastreqresp
+        reqresp.backto = backto
         if self.lastreqresp is not None:
-            self.lastreqresp.next = newreqresp
-        self.lastreqresp = newreqresp
-        self.currreqresp = newreqresp
+            self.lastreqresp.next = reqresp
+        self.lastreqresp = reqresp
+        self.currreqresp = reqresp
         if self.headreqresp is None:
-            self.headreqresp = newreqresp
+            self.headreqresp = reqresp
+
+        self.logger.info("%s", self.currreqresp)
 
     def click(self, anchor):
         self.logger.debug(output.purple("clicking on %s"), anchor)
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
-        htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
-        # TODO: handle HTTP redirects, they will throw an exception
-        reqresp = self.newPage(htmlpage)
+        try:
+            htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
+            reqresp = self.newPage(htmlpage)
+        except htmlunit.JavaError, e:
+            javaex = e.getJavaException()
+            if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
+                httpex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
+                self.logger.info("%s" % httpex)
+                statuscode = httpex.getStatusCode()
+                message = httpex.getMessage()
+                if statuscode == 303:
+                    response = httpex.getResponse()
+                    location = response.getResponseHeaderValue("Location")
+                    self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
+                    reqresp = self.newHttpRedirect(response)
+                else:
+                    raise
+            else:
+                raise
         anchor.to.append(reqresp)
         assert reqresp.request.fullpath[-len(anchor.href):] == anchor.href, \
                 "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpath)
@@ -1425,6 +1480,10 @@ class Engine(object):
                     return
 
     def writeDot(self):
+        if not self.ag:
+            self.logger.debug("not creating DOT graph")
+            return
+
         self.logger.info("creating DOT graph")
         dot = pydot.Dot()
         nodes = {}
