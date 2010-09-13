@@ -194,11 +194,9 @@ class Request(object):
 
 class Response(object):
 
-    def __init__(self, webresponse, page=None, redirect=None):
-        assert page or redirect
+    def __init__(self, webresponse, page):
         self.webresponse = webresponse
         self.page = page
-        self.redirect = redirect
 
     @lazyproperty
     def code(self):
@@ -253,7 +251,6 @@ class Link(object):
     @lazyproperty
     def dompath(self):
         return Link.xpathsimplifier.sub("", self.internal.getCanonicalXPath())
-        return self.internal.getCanonicalXPath()
 
     @lazyproperty
     def _str(self):
@@ -342,20 +339,50 @@ class Form(Link):
         # TODO
         return []
 
+
+class Redirect(Link):
+
+    @property
+    def location(self):
+        return self.internal
+
+    def __str__(self):
+        return "Redirect(%s)" % (self.location)
+
+    @property
+    def linkvector(self):
+        return [self.location]
+
+    @lazyproperty
+    def dompath(self):
+        return "/"
+
+
+def validanchor(a):
+    href = a.getHrefAttribute()
+    return not href.split(':', 1)[0].lower() in ['mailto']
+
 class Page(object):
 
-    def __init__(self, internal):
+    def __init__(self, internal, redirect=False, error=False):
         self.internal = internal
         self.reqresp = None
         self.abspage = None
+        self.redirect = redirect
+        self.error = error
+        assert not self.redirect or len(self.redirects) == 1, self.redirects
 
     @lazyproperty
     def anchors(self):
-        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors()]
+        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(i)] if not self.redirect and not self.error else []
 
     @lazyproperty
     def forms(self):
-        return [Form(i, self.reqresp) for i in self.internal.getForms()]
+        return [Form(i, self.reqresp) for i in self.internal.getForms()] if not self.redirect and not self.error else []
+
+    @lazyproperty
+    def redirects(self):
+        return [Redirect(self.internal.getResponseHeaderValue("Location"), self.reqresp)] if self.redirect else []
 
     @lazyproperty
     def linkstree(self):
@@ -367,22 +394,7 @@ class Page(object):
 
     @lazyproperty
     def links(self):
-        return Links(self.anchors, self.forms)
-
-
-class Redirect(object):
-
-    def __init__(self, internal):
-        self.internal = internal
-        self.reqresp = None
-        self.abspage = None
-
-    @lazyproperty
-    def location(self):
-        return self.internal.getResponseHeaderValue("Location")
-
-    def __str__(self):
-        return "Redirect(%s)" % self.location
+        return Links(self.anchors, self.forms, self.redirects)
 
 
 class AbstractLink(object):
@@ -438,14 +450,32 @@ class AbstractForm(AbstractLink):
         return Form.POST in self.methods
 
 
+class AbstractRedirect(AbstractLink):
+
+    def __init__(self, redirects):
+        AbstractLink.__init__(self)
+        self.locations = set(i.location for i in redirects)
+
+    @lazyproperty
+    def _str(self):
+        return "AbstractRedirect(%s, targets=%s)" % (self.locations, self.targets)
+
+    def equals(self, a):
+        return self.locations == a.locations
+
+    @lazyproperty
+    def hasquery(self):
+        return any(i.find('?') != -1 for i in self.locations)
+
 
 class Links(object):
     # TODO: add redirect support
-    ANCHOR, FORM = ("ANCHOR", "FORM")
+    ANCHOR, FORM, REDIRECT = ("ANCHOR", "FORM", "REDIRECT")
 
-    def __init__(self, anchors, forms):
+    def __init__(self, anchors=[], forms=[], redirects=[]):
         self.anchors = anchors
         self.forms = forms
+        self.redirects = redirects
 
     def nAnchors(self):
         return len(self.anchors)
@@ -453,11 +483,16 @@ class Links(object):
     def nForms(self):
         return len(self.forms)
 
+    def nRedirects(self):
+        return len(self.redirects)
+
     def __getitem__(self, idx):
         if idx[0] == Links.ANCHOR:
             return self.anchors[idx[1]]
         elif idx[0] == Links.FORM:
             return self.forms[idx[1]]
+        elif idx[0] == Links.REDIRECT:
+            return self.redirects[idx[1]]
         else:
             raise KeyError(idx)
 
@@ -466,11 +501,15 @@ class Links(object):
             yield ((Links.ANCHOR, i), v)
         for i, v in enumerate(self.forms):
             yield ((Links.FORM, i), v)
+        for i, v in enumerate(self.redirects):
+            yield ((Links.REDIRECT, i), v)
 
     def itervalues(self):
         for v in self.anchors:
             yield v
         for v in self.forms:
+            yield v
+        for v in self.redirects:
             yield v
 
     def __iter__(self):
@@ -480,22 +519,24 @@ class Links(object):
         return [(i, l) for i, l in self.iteritems() if state not in l.targets]
 
     def __len__(self):
-        return self.nAnchors() + self.nForms()
+        return self.nAnchors() + self.nForms() + self.nRedirects()
 
     def __nonzero__(self):
-        return self.nAnchors() != 0 or self.nForms() != 0
+        return self.nAnchors() != 0 or self.nForms() != 0 or self.nRedirects() != 0
 
     def equals(self, l):
         return self.nAnchors() == l.nAnchors() and self.nForms() == l.nForms() and \
+                self.nRedirects() == l.nRedirects() and \
                 all(a.equals(b) for a, b in zip(self.anchors, l.anchors)) and \
-                all(a.equals(b) for a, b in zip(self.forms, l.forms))
+                all(a.equals(b) for a, b in zip(self.forms, l.forms)) and \
+                all(a.equals(b) for a, b in zip(self.redirects, l.redirects))
 
     def __str__(self):
         return self._str
 
     @lazyproperty
     def _str(self):
-        return "Links(%s, %s)" % (self.anchors, self.forms)
+        return "Links(%s, %s, %s)" % (self.anchors, self.forms, self.redirects)
 
 
 class AbstractPage(object):
@@ -505,7 +546,8 @@ class AbstractPage(object):
         # TODO: number of links might not be the same in some more complex clustering
         self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in reqresps))]
         self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in reqresps))]
-        self.abslinks = Links(self.absanchors, self.absforms)
+        self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in reqresps))]
+        self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
         self.statelinkmap = {}
 
     @lazyproperty
@@ -521,6 +563,17 @@ class AbstractPage(object):
 
     def match(self, p):
         return self.abslinks.equals(p.abslinks)
+
+    @lazyproperty
+    def label(self):
+        response = self.reqresps[0].response
+        if response.page.error:
+            return "%d %s" % (response.code, response.message)
+        if response.page.redirect:
+            redirects = ' '.join(i.location for i in response.page.redirects)
+            return "%d %s\\n%s" % (response.code, response.message, redirects)
+        else:
+            return "Page(%x)" % id(self)
 
 
 class AbstractRequest(object):
@@ -952,29 +1005,57 @@ class AppGraphGenerator(object):
 
         self.collapseGraphUpdateVisists(statemap)
 
-        equalstates = [set(statemap)]
+        equalstates = set((frozenset(statemap), ))
 
         # try to detect which states are actually equivalent to older ones
         # assume all staes are eqivalent, and split the set of states into bins
         # when two states prove to be non equivalent
         for ar in self.absrequests:
             bins = defaultdict(set)
-            newequalstates = []
+            newequalstates = set()
             for s, t in ar.targets.iteritems():
                 bins[t.target].add(t.transition)
             seenstates = set(i.transition for i in ar.targets.itervalues())
-            print output.darkred("BINS %s" % ' '.join(str(i) for i in bins.itervalues()))
+            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in bins.itervalues()), ar))
             for ss in bins.itervalues():
                 otherstates = seenstates - ss
                 print output.darkred("OS %s" % otherstates)
                 for es in equalstates:
-                    newequalstates.append(es-otherstates)
+                    newes = es-otherstates
+                    if newes:
+                        newequalstates.add(newes)
             equalstates = newequalstates
             print output.darkred("ES %s" % equalstates)
 
+#        # if one state set is subset of another one, drop it
+#        newequalstates = []
+#        for es in equalstates:
+#            for es2 in equalstates:
+#                if es != es2 and es.issubset(es2):
+#                    break
+#            else:
+#                newequalstates.append(es)
+#        equalstates = newequalstates
+
+        # if a set of states has no unique states, drop it
+        # this removes sets that are subsets of others, and other state equivalences
+        # that would cause the state assignment to fail
+        # sort by lnegth and state number, in order to make multiple runs deterministic
+        equalstateslist = [sorted(i) for i in equalstates]
+        equalstateslist.sort(key=lambda x: (len(x), x))
+        for es in equalstateslist:
+            esset = frozenset(es)
+            allothersets = equalstates - frozenset((esset, ))
+            assert len(equalstates) == len(allothersets) + 1, "%s %s %s" % (equalstates , allothersets, esset)
+            if allothersets:
+                allothers = reduce(lambda a, b: a | b, allothersets)
+                uniqueelems = esset - allothers
+                if not uniqueelems:
+                    equalstates -= frozenset((esset,))
+
         sumbinlen = sum(len(i) for i in equalstates)
         if sumbinlen != len(set(statemap)):
-            raise RuntimeError, "not able to perform state allocation\n\t%s" % equalstates
+            raise RuntimeError, "not able to perform state allocation %d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
 
         equalstatemap = {}
         for es in equalstates:
@@ -1128,6 +1209,26 @@ class Crawler(object):
         # TODO: handle HTTP redirects, they will throw an exception
         return self.newPage(htmlpage)
 
+    def followRedirect(self, redirect):
+        lastvalidpage = self.currreqresp.response.page
+        while lastvalidpage.redirect or lastvalidpage.error:
+            if not lastvalidpage.reqresp.prev:
+                # beginning of history
+                lastvalidpage = None
+                break
+            lastvalidpage = lastvalidpage.reqresp.prev.response.page
+        if lastvalidpage:
+            fqurl = lastvalidpage.internal.getFullyQualifiedUrl(redirect.location)
+        else:
+            fqurl = redirect.location
+        try:
+            htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(fqurl))
+        except htmlunit.JavaError, e:
+            reqresp = self.handleNavigationException(e)
+        reqresp = self.newPage(htmlpage)
+        redirect.to.append(reqresp)
+        return reqresp
+
     def newPage(self, htmlpage):
         page = Page(htmlpage)
         webresponse = htmlpage.getWebResponse()
@@ -1141,8 +1242,19 @@ class Crawler(object):
         return self.currreqresp
 
     def newHttpRedirect(self, webresponse):
-        redirect = Redirect(webresponse)
-        response = Response(webresponse, redirect=redirect)
+        redirect = Page(webresponse, redirect=True)
+        response = Response(webresponse, page=redirect)
+        request = Request(webresponse.getWebRequest())
+        reqresp = RequestResponse(request, response)
+        request.reqresp = reqresp
+        redirect.reqresp = reqresp
+
+        self.updateInternalData(reqresp)
+        return self.currreqresp
+
+    def newHttpError(self, webresponse):
+        redirect = Page(webresponse, error=True)
+        response = Response(webresponse, page=redirect)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
         request.reqresp = reqresp
@@ -1164,6 +1276,29 @@ class Crawler(object):
 
         self.logger.info("%s", self.currreqresp)
 
+    
+    def handleNavigationException(self, e):
+        javaex = e.getJavaException()
+        if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
+            httpex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
+            self.logger.info("%s" % httpex)
+            statuscode = httpex.getStatusCode()
+            message = httpex.getMessage()
+            if statuscode == 303:
+                response = httpex.getResponse()
+                location = response.getResponseHeaderValue("Location")
+                self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
+                reqresp = self.newHttpRedirect(response)
+            elif statuscode == 404:
+                response = httpex.getResponse()
+                self.logger.info(output.purple("error %d (%s)" % (statuscode, message)))
+                reqresp = self.newHttpError(response)
+            else:
+                raise
+        else:
+            raise
+        return reqresp
+
     def click(self, anchor):
         self.logger.debug(output.purple("clicking on %s"), anchor)
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
@@ -1172,21 +1307,7 @@ class Crawler(object):
             htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
             reqresp = self.newPage(htmlpage)
         except htmlunit.JavaError, e:
-            javaex = e.getJavaException()
-            if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
-                httpex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
-                self.logger.info("%s" % httpex)
-                statuscode = httpex.getStatusCode()
-                message = httpex.getMessage()
-                if statuscode == 303:
-                    response = httpex.getResponse()
-                    location = response.getResponseHeaderValue("Location")
-                    self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
-                    reqresp = self.newHttpRedirect(response)
-                else:
-                    raise
-            else:
-                raise
+            reqresp = self.handleNavigationException(e)
         anchor.to.append(reqresp)
         assert reqresp.request.fullpath[-len(anchor.href):] == anchor.href, \
                 "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpath)
@@ -1227,25 +1348,15 @@ class Crawler(object):
                         form.action)
                 raise Crawler.UnsubmittableForm()
 
-        except htmlunit.JavaError, e:
-            javaex = e.getJavaException()
-            if not htmlunit.FailingHttpStatusCodeException.instance_(javaex):
-                raise
-            javaex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
-            ecode = javaex.getStatusCode()
-            emsg = javaex.getStatusMessage()
-            self.logger.warn(output.red("%d %s, %s %s"), ecode, emsg,
-                    form.method, form.action)
-            assert False
-            self.history.append(self.htmlpage)
-            return self.errorPage(ecode)
+            htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
+            reqresp = self.newPage(htmlpage)
 
-        htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
-        # TODO: handle HTTP redirects, they will throw an exception
-        reqresp = self.newPage(htmlpage)
+        except htmlunit.JavaError, e:
+            reqresp = self.handleNavigationException(e)
+
         form.to.append(reqresp)
-        assert reqresp.request.fullpath.split('?')[0][-len(form.action):] == form.action, \
-                "Unhandled redirect %s !sub %s" % (form.href, reqresp.request.fullpath)
+        assert reqresp.request.fullpath.split('?')[0][-len(form.action):] == form.action.split('?')[0], \
+                "Unhandled redirect %s !sub %s" % (form.action, reqresp.request.fullpath)
         return reqresp
 
     def back(self):
@@ -1257,11 +1368,11 @@ class Crawler(object):
         return self.currreqresp
 
 class Dist(object):
-    LEN = 4
+    LEN = 5
 
     def __init__(self, v=None):
         """ The content of the vector is as follow:
-        (POST form, GET form, anchor w/ params, anchor w/o params)
+        (POST form, GET form, anchor w/ params, anchor w/o params, redirect)
         only one element can be != 0, and contains the numb er of times that link has been visited
         """
         self.val = tuple(v) if v else tuple([0]*Dist.LEN)
@@ -1288,7 +1399,7 @@ class FormFiller:
 
 class Engine(object):
 
-    BACK, ANCHOR, FORM = ("BACK", "ANCHOR", "FORM")
+    BACK, ANCHOR, FORM, REDIRECT = ("BACK", "ANCHOR", "FORM", "REDIRECT")
 
     def __init__(self, formfiller=None):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -1325,14 +1436,16 @@ class Engine(object):
             nvisits = 1
         if linkidx[0] == Links.ANCHOR:
             if link.hasquery:
-                dist = Dist((0, 0, nvisits, 0))
+                dist = Dist((0, 0, nvisits, 0, 0))
             else:
-                dist = Dist((0, 0, 0, nvisits))
+                dist = Dist((0, 0, 0, nvisits, 0))
         elif linkidx[0] == Links.FORM:
             if link.ispost:
-                dist = Dist((nvisits, 0, 0, 0))
+                dist = Dist((nvisits, 0, 0, 0, 0))
             else:
-                dist = Dist((0, nvisits, 0, 0))
+                dist = Dist((0, nvisits, 0, 0, 0))
+        elif linkidx[0] == Links.REDIRECT:
+            dist = Dist((0, 0, 0, 0, nvisits))
         else:
             assert False, linkidx
 
@@ -1384,6 +1497,8 @@ class Engine(object):
             engineaction = Engine.ANCHOR
         elif linkidx[0] == Links.FORM:
             engineaction = Engine.FORM
+        elif linkidx[0] == Links.REDIRECT:
+            engineaction = Engine.REDIRECT
         else:
             assert False, linkidx
         return engineaction
@@ -1452,7 +1567,7 @@ class Engine(object):
         for cnt, url in enumerate(urls):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
             reqresp = cr.open(url)
-            #print output.red("TREE %s" % (reqresp.response.page.linkstree,))
+            print output.red("TREE %s" % (reqresp.response.page.linkstree,))
             print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
             nextAction = self.getNextAction(reqresp)
             while nextAction:
@@ -1462,9 +1577,11 @@ class Engine(object):
                     reqresp = self.submitForm(nextAction[1])
                 elif nextAction[0] == Engine.BACK:
                     reqresp = cr.back()
+                elif nextAction[0] == Engine.REDIRECT:
+                    reqresp = cr.followRedirect(nextAction[1])
                 else:
                     assert False, nextAction
-                #print output.red("TREE %s" % (reqresp.response.page.linkstree,))
+                print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 pc = PageClusterer(cr.headreqresp)
                 print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
@@ -1489,7 +1606,7 @@ class Engine(object):
         nodes = {}
 
         for p in self.ag.abspages:
-            name = str(id(p))
+            name = p.label
             node = pydot.Node(name)
             nodes[p] = node
 
