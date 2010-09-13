@@ -4,6 +4,7 @@ import logging
 import urlparse
 import re
 import heapq
+import itertools
 
 import pydot
 
@@ -914,6 +915,34 @@ class AppGraphGenerator(object):
             mapped = statemap[mapped]
         return mapped
 
+    def addStateBins(self, statebins, equalstates):
+        seenstates = set(itertools.chain.from_iterable(statebins))
+        newequalstates = set()
+        for ss in statebins:
+            otherstates = seenstates - ss
+            #print output.darkred("OS %s" % otherstates)
+            for es in equalstates:
+                newes = es-otherstates
+                if newes:
+                    newequalstates.add(newes)
+        return newequalstates
+
+    def dropRedundantStateGroups(self, equalstates):
+        # if a set of states has no unique states, drop it
+        # this removes sets that are subsets of others, and other state equivalences
+        # that would cause the state assignment to fail
+        # sort by lnegth and state number, in order to make multiple runs deterministic
+        equalstateslist = [sorted(i) for i in equalstates]
+        equalstateslist.sort(key=lambda x: (len(x), x))
+        for es in equalstateslist:
+            esset = frozenset(es)
+            allothersets = equalstates - frozenset((esset, ))
+            assert len(equalstates) == len(allothersets) + 1, "%s %s %s" % (equalstates , allothersets, esset)
+            if allothersets:
+                allothers = reduce(lambda a, b: a | b, allothersets)
+                uniqueelems = esset - allothers
+                if not uniqueelems:
+                    equalstates -= frozenset((esset,))
 
     def reduceStates(self):
         self.logger.debug("reducing state number from %d", self.maxstate)
@@ -928,61 +957,73 @@ class AppGraphGenerator(object):
         currstate = 0
 
         while True:
+            #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
             currtarget = currreq.targets[currstate]
+            
+            # if all the previous states leading to the same target caused a state transition,
+            # directly guess that this request will cause a state transition
+            # this behavior is needed because it might happen that the state transition is not detected,
+            # and the state assignment fails
+            smallerstates = [(s, t) for s, t in currreq.targets.iteritems() 
+                    if s < currstate and t.target == currtarget.target]
+            if smallerstates and all(statemap[t.transition] != s for s, t in smallerstates):
+                #print output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets)
+                currstate += 1
+            else:
+                # find if there are other states that we have already processed that lead to a different target
+                smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate and t.target != currtarget.target], reverse=True)
+                if smallerstates:
+                    currmapsto = self.getMinMappedState(currstate, statemap)
+                    for ss in smallerstates:
+                        ssmapsto = self.getMinMappedState(ss, statemap)
+                        if ssmapsto == currmapsto:
+                            self.logger.debug(output.teal("need to split state for request %s")
+                                    % currtarget)
+                            self.logger.debug("\t%d(%d)->%s"
+                                    % (currstate, currmapsto, currtarget))
+                            self.logger.debug("\t%d(%d)->%s"
+                                    % (ss, ssmapsto, currreq.targets[ss]))
+                            stateoff = 1
+                            for (j, (req, page)) in enumerate(reversed(history)):
+                                laststate = currstate-j-stateoff
+                                if laststate not in req.targets:
+                                    # happening due to browser back(), adjust offset
+                                    laststate = max(i for i in req.targets if i <= laststate)
+                                    stateoff = currstate-j-laststate
+                                    #print "stetoff", stateoff
+                                #print laststate, j, req.targets.keys(), req
+                                target = req.targets[laststate]
+                                assert target.target == page, "%s != %s" % (target.target, page)
+                                # the Target.nvisit has not been updated yet, because we have not finalized state assignment
+                                # let's compute the number of simits by counting the states that
+                                # map to the same one and share the target abstract page
+                                assert target.nvisits == 0, target.nvisits
+                                mappedlaststate = self.getMinMappedState(laststate, statemap)
+                                #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
+                                # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
+                                visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
+                                        self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
+                                nvisits = len(visits)
+                                assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
+                                if nvisits == 1:
+                                    self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
+                                    assert statemap[target.transition] == laststate
+                                    statemap[target.transition] = target.transition
+                                    #if laststate >= 100:
+                                    #    gracefulexit()
+                                    break
+                            else:
+                                # if we get hear, we need a better heuristic for splitting state
+                                raise RuntimeError()
+                            currmapsto = self.getMinMappedState(currstate, statemap)
+                            assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
 
-            # find if there are other states that we have already processed that lead to a different target
-            smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate and t.target != currtarget.target], reverse=True)
-            if smallerstates:
-                currmapsto = self.getMinMappedState(currstate, statemap)
-                for ss in smallerstates:
-                    ssmapsto = self.getMinMappedState(ss, statemap)
-                    if ssmapsto == currmapsto:
-                        self.logger.debug(output.teal("need to split state for request %s")
-                                % currtarget)
-                        self.logger.debug("\t%d(%d)->%s"
-                                % (currstate, currmapsto, currtarget))
-                        self.logger.debug("\t%d(%d)->%s"
-                                % (ss, ssmapsto, currreq.targets[ss]))
-                        stateoff = 1
-                        for (j, (req, page)) in enumerate(reversed(history)):
-                            laststate = currstate-j-stateoff
-                            if laststate not in req.targets:
-                                # happening due to browser back(), adjust offset
-                                laststate = max(i for i in req.targets if i <= laststate)
-                                stateoff = currstate-j-laststate
-                                print "stetoff", stateoff
-                            print laststate, j, req.targets.keys(), req
-                            target = req.targets[laststate]
-                            assert target.target == page, "%s != %s" % (target.target, page)
-                            # the Target.nvisit has not been updated yet, because we have not finalized state assignment
-                            # let's compute the number of simits by counting the states that
-                            # map to the same one and share the target abstract page
-                            assert target.nvisits == 0, target.nvisits
-                            mappedlaststate = self.getMinMappedState(laststate, statemap)
-                            #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
-                            # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
-                            visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
-                                    self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
-                            nvisits = len(visits)
-                            assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
-                            if nvisits == 1:
-                                self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
-                                assert statemap[target.transition] == laststate
-                                statemap[target.transition] = target.transition
-                                #if laststate >= 100:
-                                #    gracefulexit()
-                                break
-                        else:
-                            # if we get hear, we need a better heuristic for splitting state
-                            raise RuntimeError()
-                        currmapsto = self.getMinMappedState(currstate, statemap)
-                        assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
+                currstate += 1
+                statemap[currstate] = currstate-1
 
             respage = currtarget.target
 
             history.append((currreq, respage))
-            currstate += 1
-            statemap[currstate] = currstate-1
             if currstate not in respage.statelinkmap:
                 if currstate == self.maxstate:
                     # end reached
@@ -1012,50 +1053,50 @@ class AppGraphGenerator(object):
         # when two states prove to be non equivalent
         for ar in self.absrequests:
             bins = defaultdict(set)
-            newequalstates = set()
             for s, t in ar.targets.iteritems():
                 bins[t.target].add(t.transition)
-            seenstates = set(i.transition for i in ar.targets.itervalues())
-            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in bins.itervalues()), ar))
-            for ss in bins.itervalues():
-                otherstates = seenstates - ss
-                print output.darkred("OS %s" % otherstates)
-                for es in equalstates:
-                    newes = es-otherstates
-                    if newes:
-                        newequalstates.add(newes)
-            equalstates = newequalstates
-            print output.darkred("ES %s" % equalstates)
+            statebins = bins.values()
 
-#        # if one state set is subset of another one, drop it
-#        newequalstates = []
-#        for es in equalstates:
-#            for es2 in equalstates:
-#                if es != es2 and es.issubset(es2):
-#                    break
-#            else:
-#                newequalstates.append(es)
-#        equalstates = newequalstates
+            #print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
 
-        # if a set of states has no unique states, drop it
-        # this removes sets that are subsets of others, and other state equivalences
-        # that would cause the state assignment to fail
-        # sort by lnegth and state number, in order to make multiple runs deterministic
-        equalstateslist = [sorted(i) for i in equalstates]
-        equalstateslist.sort(key=lambda x: (len(x), x))
-        for es in equalstateslist:
-            esset = frozenset(es)
-            allothersets = equalstates - frozenset((esset, ))
-            assert len(equalstates) == len(allothersets) + 1, "%s %s %s" % (equalstates , allothersets, esset)
-            if allothersets:
-                allothers = reduce(lambda a, b: a | b, allothersets)
-                uniqueelems = esset - allothers
-                if not uniqueelems:
-                    equalstates -= frozenset((esset,))
+            equalstates = self.addStateBins(statebins, equalstates)
+
+            #print output.darkred("ES %s" % equalstates)
+
+        self.dropRedundantStateGroups(equalstates)
 
         sumbinlen = sum(len(i) for i in equalstates)
-        if sumbinlen != len(set(statemap)):
-            raise RuntimeError, "not able to perform state allocation %d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
+        while sumbinlen != len(set(statemap)):
+            self.logger.debug("unable to perform state allocation %d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates))
+
+            cntdict = defaultdict(int)
+            for es in equalstates:
+                for s in es:
+                    cntdict[s] += 1
+            violating = sorted(((v, s) for s, v in cntdict.iteritems() if v > 1), key=lambda x: (-x[1], x[0]))
+            self.logger.debug("violating states %s" % violating)
+            assert violating, "%d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
+            # try to add some constraints that will solve the abiguitiy in state allocation
+            # start looking first at the states that appears in multiple groups 
+            # if we are trying to merge it with its previous state, add a rule to separate them
+            for (vc, vs) in violating:
+                vsprev = self.getMinMappedState(vs-1, statemap)
+                vsprevset = set([vs, vsprev])
+                for es in equalstates:
+                    if vsprevset <= es:
+                        self.logger.debug("separating %d and %d" % (vs, vsprev))
+                        equalstates = self.addStateBins([frozenset([vs]), frozenset([vsprev])], equalstates)
+                        self.dropRedundantStateGroups(equalstates)
+                        break
+                else:
+                    continue
+                break
+            else:
+                raise RuntimeError("unable to perform state allocation")
+
+            sumbinlen = sum(len(i) for i in equalstates)
+
+        self.logger.debug(output.darkred("final state allocation %s" % equalstates))
 
         equalstatemap = {}
         for es in equalstates:
@@ -1510,8 +1551,9 @@ class Engine(object):
         if self.pathtofollow:
             assert self.followingpath
             nexthop = self.pathtofollow.pop(0)
-            if not reqresp.response.page.abspage.match(nexthop[0]):
-                self.logger.debug(output.red("got %s not matching expected %s"), reqresp.response.page.abspage, nexthop[0])
+            if not reqresp.response.page.abspage.match(nexthop[0]) or nexthop[2] != self.state:
+                self.logger.debug(output.red("got %s %d) not matching expected %s (%d)"),
+                        reqresp.response.page.abspage, nexthop[0], self.state, nexthop[2])
                 self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> ABORT following path"))
                 self.followingpath = False
                 self.pathtofollow = []
