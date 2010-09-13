@@ -554,7 +554,7 @@ class AbstractPage(object):
     @lazyproperty
     def _str(self):
         return "AbstractPage(#%d, %s)" % (len(self.reqresps),
-                set(str(i.request.fullpath) for i in self.reqresps))
+                set("%s %s" % (i.request.method, i.request.fullpath) for i in self.reqresps))
 
     def __str__(self):
         return self._str
@@ -1515,15 +1515,17 @@ class Engine(object):
                 continue
             for idx, link in head.abslinks.iteritems():
                 newpath = [(head, idx, state)] + headpath
+                #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
                     nextabsreq = link.targets[state].target
                     # do not put request in the heap, but just go for the next abstract page
                     tgt = nextabsreq.targets[state]
+                    #print "TGT %s %s" % (tgt, nextabsreq)
                     assert tgt.target
                     if (tgt.target, tgt.transition) in seen:
                         continue
                     newdist = dist + self.linkcost(head, idx, link, state)
-                    heapq.heappush(heads, (newdist, tgt.target, state, newpath))
+                    heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     # TODO handle state changes
                     raise NotImplementedError
@@ -1552,8 +1554,8 @@ class Engine(object):
             assert self.followingpath
             nexthop = self.pathtofollow.pop(0)
             if not reqresp.response.page.abspage.match(nexthop[0]) or nexthop[2] != self.state:
-                self.logger.debug(output.red("got %s %d) not matching expected %s (%d)"),
-                        reqresp.response.page.abspage, nexthop[0], self.state, nexthop[2])
+                self.logger.debug(output.red("got %s (%d) not matching expected %s (%d)"),
+                        reqresp.response.page.abspage, self.state, nexthop[0], nexthop[2])
                 self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> ABORT following path"))
                 self.followingpath = False
                 self.pathtofollow = []
@@ -1630,6 +1632,7 @@ class Engine(object):
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
                 ag.generateAppGraph()
                 self.state = ag.reduceStates()
+                self.logger.debug(output.green("current state %d"), self.state)
                 nextAction = self.getNextAction(reqresp)
 
                 self.pc = pc
