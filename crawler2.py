@@ -366,9 +366,22 @@ class Redirect(Link):
         return "/"
 
 
+class StateSet(frozenset):
+
+    @lazyproperty
+    def _str(self):
+        return "[%s]" % ', '.join(str(i) for i in sorted(self))
+
+    def __str__(self):
+        return self._str
+
+    def __repr__(self):
+        return str(self)
+
+
 def validanchor(a):
     href = a.getHrefAttribute()
-    return not href.split(':', 1)[0].lower() in ['mailto']
+    return href.find('://') == -1 and href.strip()[:7] != "mailto:"
 
 class Page(object):
 
@@ -571,7 +584,7 @@ class AbstractPage(object):
         return self._str
 
     def __repr__(self):
-        return str(self) + str(id(self))
+        return str(self) + str(self.instance)
 
     def match(self, p):
         return self.abslinks.equals(p.abslinks)
@@ -585,7 +598,7 @@ class AbstractPage(object):
             redirects = ' '.join(i.location for i in response.page.redirects)
             return "%d %s\\n%s" % (response.code, response.message, redirects)
         else:
-            return "Page(%x)" % id(self)
+            return "Page(%d)" % self.instance
 
     def __cmp__(self, o):
         return cmp(self.instance, o.instance)
@@ -593,15 +606,19 @@ class AbstractPage(object):
 
 class AbstractRequest(object):
 
+    InstanceCounter = 0
+
     def __init__(self, request):
         # map from state to AbstractPage
         self.targets = {}
         self.method = request.method
         self.path = request.path
         self.reqresps = []
+        self.instance = AbstractRequest.InstanceCounter
+        AbstractRequest.InstanceCounter += 1
 
     def __str__(self):
-        return "AbstractRequest(%s)%d" % (self.requestset, id(self))
+        return "AbstractRequest(%s)%d" % (self.requestset, self.instance)
 
     def __repr__(self):
         return str(self)
@@ -921,6 +938,8 @@ class AppGraphGenerator(object):
         self.maxstate = laststate
         self.logger.debug("application graph generated in %d steps", cnt)
 
+        return laststate
+
     def getMinMappedState(self, state, statemap):
         prev = state
         mapped = statemap[state]
@@ -936,7 +955,7 @@ class AppGraphGenerator(object):
             otherstates = seenstates - ss
             #print output.darkred("OS %s" % otherstates)
             for es in equalstates:
-                newes = es-otherstates
+                newes = StateSet(es-otherstates)
                 if newes:
                     newequalstates.add(newes)
         return newequalstates
@@ -1060,7 +1079,7 @@ class AppGraphGenerator(object):
 
         self.collapseGraphUpdateVisists(statemap)
 
-        equalstates = set((frozenset(statemap), ))
+        equalstates = set((StateSet(statemap), ))
 
         # try to detect which states are actually equivalent to older ones
         # assume all staes are eqivalent, and split the set of states into bins
@@ -1069,15 +1088,15 @@ class AppGraphGenerator(object):
             bins = defaultdict(set)
             for s, t in ar.targets.iteritems():
                 bins[t.target].add(t.transition)
-            statebins = bins.values()
+            statebins = [StateSet(i) for i in bins.itervalues()]
 
             print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
 
             equalstates = self.addStateBins(statebins, equalstates)
+            self.dropRedundantStateGroups(equalstates)
 
             print output.darkred("ES %s" % equalstates)
 
-        self.dropRedundantStateGroups(equalstates)
 
         sumbinlen = sum(len(i) for i in equalstates)
         while sumbinlen != len(set(statemap)):
@@ -1657,9 +1676,9 @@ class Engine(object):
                 pc = PageClusterer(cr.headreqresp)
                 print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
                 ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
-                ag.generateAppGraph()
+                maxstate = ag.generateAppGraph()
                 self.state = ag.reduceStates()
-                self.logger.debug(output.green("current state %d"), self.state)
+                self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
 
