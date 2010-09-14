@@ -549,6 +549,8 @@ class Links(object):
 
 class AbstractPage(object):
 
+    InstanceCounter = 0
+
     def __init__(self, reqresps):
         self.reqresps = reqresps
         # TODO: number of links might not be the same in some more complex clustering
@@ -557,6 +559,8 @@ class AbstractPage(object):
         self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in reqresps))]
         self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
         self.statelinkmap = {}
+        self.instance = AbstractPage.InstanceCounter
+        AbstractPage.InstanceCounter += 1
 
     @lazyproperty
     def _str(self):
@@ -582,6 +586,9 @@ class AbstractPage(object):
             return "%d %s\\n%s" % (response.code, response.message, redirects)
         else:
             return "Page(%x)" % id(self)
+
+    def __cmp__(self, o):
+        return cmp(self.instance, o.instance)
 
 
 class AbstractRequest(object):
@@ -732,7 +739,7 @@ class PageClusterer(object):
         self.logger.debug("clustering pages")
 
         self.levelclustering(reqresps)
-        #self.simpleclustering(reqresps)
+        self.simpleclustering(reqresps)
 
     def simpleclustering(self, reqresps):
         buckets = Buckets(self.simplehash)
@@ -1064,11 +1071,11 @@ class AppGraphGenerator(object):
                 bins[t.target].add(t.transition)
             statebins = bins.values()
 
-            #print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
+            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
 
             equalstates = self.addStateBins(statebins, equalstates)
 
-            #print output.darkred("ES %s" % equalstates)
+            print output.darkred("ES %s" % equalstates)
 
         self.dropRedundantStateGroups(equalstates)
 
