@@ -363,7 +363,7 @@ class Redirect(Link):
 
     @lazyproperty
     def dompath(self):
-        return "/"
+        return None
 
 
 class StateSet(frozenset):
@@ -710,7 +710,8 @@ def linkstree(page):
     linkstree = RecursiveDict(lambda x: x)
     if page.links:
         for l in page.links.itervalues():
-            urlv = [l.dompath] + list(l.linkvector)
+            urlv = [l.dompath] if l.dompath else []
+            urlv += list(l.linkvector)
             # set leaf to 1 or increment
             linkstree.setapplypath(urlv, 1, lambda x: x+1)
     else:
@@ -756,7 +757,7 @@ class PageClusterer(object):
         self.logger.debug("clustering pages")
 
         self.levelclustering(reqresps)
-        self.simpleclustering(reqresps)
+        #self.simpleclustering(reqresps)
 
     def simpleclustering(self, reqresps):
         buckets = Buckets(self.simplehash)
@@ -821,7 +822,7 @@ class PageClusterer(object):
         classif = Classfier(lambda rr: rr.response.page.linksvector)
         classif.addall(reqresps)
         self.scanlevels(classif)
-        #self.printlevelstat(classif)
+        self.printlevelstat(classif)
         self.makeabspages(classif)
 
 
@@ -1201,7 +1202,11 @@ class AppGraphGenerator(object):
                 for st, goodst in statereduce:
                     if goodst in aa.targets:
                         assert aa.targets[st].target == aa.targets[goodst].target, \
-                            "%s %s" % (aa.targets[st], aa.targets[goodst])
+                            "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
+                        assert st == goodst or aa.targets[goodst].transition == statemap[aa.targets[st].transition], \
+                            "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
+                            % (aa, st, aa.targets[st], statemap[aa.targets[goodst].transition],
+                                    goodst, aa.targets[goodst], statemap[aa.targets[st].transition])
                     else:
                         aa.targets[goodst] = aa.targets[st]
                         # also map transition state to the reduced one
@@ -1219,6 +1224,10 @@ class AppGraphGenerator(object):
                     assert ar.targets[st].target == ar.targets[goodst].target, \
                             "%s\n\t%d->%s\n\t%d->%s" % (ar, st, ar.targets[st].target,
                                     goodst, ar.targets[goodst].target)
+                    assert st == goodst or statemap[ar.targets[goodst].transition] == statemap[ar.targets[st].transition], \
+                            "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
+                            % (ar, st, ar.targets[st], statemap[ar.targets[goodst].transition],
+                                    goodst, ar.targets[goodst], statemap[ar.targets[st].transition])
                 else:
                     ar.targets[goodst] = ar.targets[st]
                     # also map transition state to the reduced one
