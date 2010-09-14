@@ -684,7 +684,11 @@ def urlvector(request):
         ->
         ['path', 'to', 'page.html', ('p1', 'p2'), ('v1', 'v2')]
     """
-    urltoks = [i if i else '/' for i in request.path.split('/')]
+    # XXX "/path/to" and "path/to" will be trated the same!
+    if request.path.strip() == ('/'):
+        urltoks = ['/']
+    else:
+        urltoks = [i for i in request.path.split('/') if i]
     query = request.query
     if query:
         querytoks = request.query.split('&')
