@@ -1519,7 +1519,7 @@ class Engine(object):
         if state in link.targets:
             nvisits = link.targets[state].nvisits + 1
         else:
-            # never visisted, but it must be > 0
+            # never visited, but it must be > 0
             nvisits = 1
         if linkidx[0] == Links.Type.ANCHOR:
             if link.hasquery:
@@ -1627,7 +1627,7 @@ class Engine(object):
         if reqresp.response.page.abspage:
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state)
             if self.ag:
-                self.logger.debug("visisted %d/%d abstract pages", nvisited, len(self.ag.abspages))
+                self.logger.debug("visited %d/%d abstract pages", nvisited, len(self.ag.abspages))
             self.logger.debug(output.green("PATH %s"), path)
             if path:
                 self.logger.debug(output.red("<<<<<<<<<<<<<<<<<<<<<<<<<<<<< START following path"))
@@ -1640,7 +1640,7 @@ class Engine(object):
                 return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
             elif self.ag and float(nvisited)/len(self.ag.abspages) > 0.9:
                 # we can reach almost everywhere form the current page, still we cannot find unvisited links
-                # very likely we visisted all the pages or we can no longer go back to some older states anyway
+                # very likely we visited all the pages or we can no longer go back to some older states anyway
                 return (Engine.Actions.DONE, )
 
         # no path found, step back
