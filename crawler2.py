@@ -56,6 +56,12 @@ class lazyproperty(object):
         result = obj.__dict__[self.__name__] = self._func(obj)
         return result
 
+class Constants(object):
+
+    def __init__(self, *args):
+        for a in args:
+            setattr(self, a, a)
+
 class RecursiveDict(defaultdict): 
     def __init__(self, nleavesfunc=lambda x: 1): 
         self.default_factory = RecursiveDict
@@ -248,6 +254,7 @@ class Link(object):
         self.internal = internal
         self.reqresp = reqresp
         self.to = []
+        self.skip = False
 
     @lazyproperty
     def dompath(self):
@@ -400,9 +407,10 @@ class Page(object):
 
 class AbstractLink(object):
 
-    def __init__(self):
+    def __init__(self, links):
         # map from state to AbstractRequest
         self.targets = {}
+        self.skip = any(i.skip for i in links)
 
     @lazyproperty
     def _str(self):
@@ -417,7 +425,7 @@ class AbstractLink(object):
 class AbstractAnchor(AbstractLink):
 
     def __init__(self, anchors):
-        AbstractLink.__init__(self)
+        AbstractLink.__init__(self, anchors)
         self.hrefs = set(i.href for i in anchors)
 
     @lazyproperty
@@ -435,7 +443,7 @@ class AbstractAnchor(AbstractLink):
 class AbstractForm(AbstractLink):
 
     def __init__(self, forms):
-        AbstractLink.__init__(self)
+        AbstractLink.__init__(self, forms)
         self.methods = set(i.method for i in forms)
         self.actions = set(i.action for i in forms)
 
@@ -454,7 +462,7 @@ class AbstractForm(AbstractLink):
 class AbstractRedirect(AbstractLink):
 
     def __init__(self, redirects):
-        AbstractLink.__init__(self)
+        AbstractLink.__init__(self, redirects)
         self.locations = set(i.location for i in redirects)
 
     @lazyproperty
@@ -470,8 +478,7 @@ class AbstractRedirect(AbstractLink):
 
 
 class Links(object):
-    # TODO: add redirect support
-    ANCHOR, FORM, REDIRECT = ("ANCHOR", "FORM", "REDIRECT")
+    Type = Constants("ANCHOR", "FORM", "REDIRECT")
 
     def __init__(self, anchors=[], forms=[], redirects=[]):
         self.anchors = anchors
@@ -488,22 +495,22 @@ class Links(object):
         return len(self.redirects)
 
     def __getitem__(self, idx):
-        if idx[0] == Links.ANCHOR:
+        if idx[0] == Links.Type.ANCHOR:
             return self.anchors[idx[1]]
-        elif idx[0] == Links.FORM:
+        elif idx[0] == Links.Type.FORM:
             return self.forms[idx[1]]
-        elif idx[0] == Links.REDIRECT:
+        elif idx[0] == Links.Type.REDIRECT:
             return self.redirects[idx[1]]
         else:
             raise KeyError(idx)
 
     def iteritems(self):
         for i, v in enumerate(self.anchors):
-            yield ((Links.ANCHOR, i), v)
+            yield ((Links.Type.ANCHOR, i), v)
         for i, v in enumerate(self.forms):
-            yield ((Links.FORM, i), v)
+            yield ((Links.Type.FORM, i), v)
         for i, v in enumerate(self.redirects):
-            yield ((Links.REDIRECT, i), v)
+            yield ((Links.Type.REDIRECT, i), v)
 
     def itervalues(self):
         for v in self.anchors:
@@ -517,7 +524,7 @@ class Links(object):
         return self.itervalues()
 
     def getUnvisited(self, state):
-        return [(i, l) for i, l in self.iteritems() if state not in l.targets]
+        return [(i, l) for i, l in self.iteritems() if state not in l.targets and not l.skip]
 
     def __len__(self):
         return self.nAnchors() + self.nForms() + self.nRedirects()
@@ -1440,7 +1447,7 @@ class FormFiller:
 
 class Engine(object):
 
-    BACK, ANCHOR, FORM, REDIRECT = ("BACK", "ANCHOR", "FORM", "REDIRECT")
+    Actions = Constants("BACK", "ANCHOR", "FORM", "REDIRECT", "DONE")
 
     def __init__(self, formfiller=None):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -1458,7 +1465,7 @@ class Engine(object):
         if abspage is None:
             if len(page.anchors) > 0:
                 self.logger.debug("abstract page not availabe, picking first anchor")
-                return (Links.ANCHOR, 0)
+                return (Links.Type.ANCHOR, 0)
             else:
                 self.logger.debug("abstract page not availabe, and no anchors")
                 return None
@@ -1466,7 +1473,7 @@ class Engine(object):
         # find unvisited anchor
         for i, aa in enumerate(abspage.absanchors):
             if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
-                return (Links.ANCHOR, i)
+                return (Links.Type.ANCHOR, i)
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
@@ -1475,17 +1482,17 @@ class Engine(object):
         else:
             # never visisted, but it must be > 0
             nvisits = 1
-        if linkidx[0] == Links.ANCHOR:
+        if linkidx[0] == Links.Type.ANCHOR:
             if link.hasquery:
                 dist = Dist((0, 0, nvisits, 0, 0))
             else:
                 dist = Dist((0, 0, 0, nvisits, 0))
-        elif linkidx[0] == Links.FORM:
+        elif linkidx[0] == Links.Type.FORM:
             if link.ispost:
                 dist = Dist((nvisits, 0, 0, 0, 0))
             else:
                 dist = Dist((0, nvisits, 0, 0, 0))
-        elif linkidx[0] == Links.REDIRECT:
+        elif linkidx[0] == Links.Type.REDIRECT:
             dist = Dist((0, 0, 0, 0, nvisits))
         else:
             assert False, linkidx
@@ -1514,6 +1521,8 @@ class Engine(object):
                 heapq.heappush(candidates, (dist + mincost[0], path))
                 continue
             for idx, link in head.abslinks.iteritems():
+                if link.skip:
+                    continue
                 newpath = [(head, idx, state)] + headpath
                 #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
@@ -1529,19 +1538,20 @@ class Engine(object):
                 else:
                     # TODO handle state changes
                     raise NotImplementedError
+        nvisited = len(set(i[0] for i in seen))
         if candidates:
-            return candidates[0][1]
+            return candidates[0][1], nvisited
         else:
-            return None
+            return None, nvisited
 
 
     def getEngineAction(self, linkidx):
-        if linkidx[0] == Links.ANCHOR:
-            engineaction = Engine.ANCHOR
-        elif linkidx[0] == Links.FORM:
-            engineaction = Engine.FORM
-        elif linkidx[0] == Links.REDIRECT:
-            engineaction = Engine.REDIRECT
+        if linkidx[0] == Links.Type.ANCHOR:
+            engineaction = Engine.Actions.ANCHOR
+        elif linkidx[0] == Links.Type.FORM:
+            engineaction = Engine.Actions.FORM
+        elif linkidx[0] == Links.Type.REDIRECT:
+            engineaction = Engine.Actions.REDIRECT
         else:
             assert False, linkidx
         return engineaction
@@ -1573,10 +1583,12 @@ class Engine(object):
             unvisited = self.getUnvisitedLink(reqresp)
             if unvisited:
                 self.logger.debug(output.green("unvisited in current page: %s"), unvisited)
-                return (Engine.ANCHOR, reqresp.response.page.links[unvisited])
+                return (Engine.Actions.ANCHOR, reqresp.response.page.links[unvisited])
 
         if reqresp.response.page.abspage:
-            path = self.findPathToUnvisited(reqresp.response.page.abspage, self.state)
+            path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state)
+            if self.ag:
+                self.logger.debug("visisted %d/%d abstract pages", nvisited, len(self.ag.abspages))
             self.logger.debug(output.green("PATH %s"), path)
             if path:
                 self.logger.debug(output.red("<<<<<<<<<<<<<<<<<<<<<<<<<<<<< START following path"))
@@ -1587,9 +1599,13 @@ class Engine(object):
                 assert nexthop[0] == reqresp.response.page.abspage
                 assert nexthop[2] == self.state
                 return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
+            elif self.ag and float(nvisited)/len(self.ag.abspages) > 0.9:
+                # we can reach almost everywhere form the current page, still we cannot find unvisited links
+                # very likely we visisted all the pages or we can no longer go back to some older states anyway
+                return (Engine.Actions.DONE, )
 
         # no path found, step back
-        return (Engine.BACK, )
+        return (Engine.Actions.BACK, )
 
     def submitForm(self, form):
         try:
@@ -1614,14 +1630,18 @@ class Engine(object):
             print output.red("TREE %s" % (reqresp.response.page.linkstree,))
             print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
             nextAction = self.getNextAction(reqresp)
-            while nextAction:
-                if nextAction[0] == Engine.ANCHOR:
+            while nextAction[0] != Engine.Actions.DONE:
+                if nextAction[0] == Engine.Actions.ANCHOR:
                     reqresp = cr.click(nextAction[1])
-                elif nextAction[0] == Engine.FORM:
-                    reqresp = self.submitForm(nextAction[1])
-                elif nextAction[0] == Engine.BACK:
+                elif nextAction[0] == Engine.Actions.FORM:
+                    try:
+                        reqresp = self.submitForm(nextAction[1])
+                    except Crawler.UnsubmittableForm:
+                        nextAction[1].skip = True
+                        nextAction = self.getNextAction(reqresp)
+                elif nextAction[0] == Engine.Actions.BACK:
                     reqresp = cr.back()
-                elif nextAction[0] == Engine.REDIRECT:
+                elif nextAction[0] == Engine.Actions.REDIRECT:
                     reqresp = cr.followRedirect(nextAction[1])
                 else:
                     assert False, nextAction
@@ -1634,6 +1654,7 @@ class Engine(object):
                 self.state = ag.reduceStates()
                 self.logger.debug(output.green("current state %d"), self.state)
                 nextAction = self.getNextAction(reqresp)
+                assert nextAction
 
                 self.pc = pc
                 self.ag = ag
@@ -1700,6 +1721,7 @@ class Engine(object):
         with open('graph.dot', 'w') as f:
             f.write(dot.to_string())
         self.logger.debug("DOT graph written")
+
 
 if __name__ == "__main__":
     import sys
