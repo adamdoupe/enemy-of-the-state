@@ -1163,21 +1163,21 @@ class AppGraphGenerator(object):
         for aa in nodes:
             statereduce = [(st, statemap[st]) for st in aa.targets]
             for st, goodst in statereduce:
-                if goodst in aa.targets:
-                    assert aa.targets[st].target == aa.targets[goodst].target, \
-                            "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
-                    assert st == goodst or statemap[aa.targets[goodst].transition] == statemap[aa.targets[st].transition], \
-                            "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
-                            % (aa, st, aa.targets[st], statemap[aa.targets[goodst].transition],
-                                    goodst, aa.targets[goodst], statemap[aa.targets[st].transition])
-                else:
-                    aa.targets[goodst] = aa.targets[st]
-                    # also map transition state to the reduced one
-                    aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
                 if st == goodst:
                     aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
                 else:
-                    aa.targets[goodst].nvisits += aa.targets[st].nvisits
+                    if goodst in aa.targets:
+                        assert aa.targets[st].target == aa.targets[goodst].target, \
+                                "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
+                        assert st == goodst or statemap[aa.targets[goodst].transition] == statemap[aa.targets[st].transition], \
+                                "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
+                                % (aa, st, aa.targets[st], statemap[aa.targets[goodst].transition],
+                                        goodst, aa.targets[goodst], statemap[aa.targets[st].transition])
+                        aa.targets[goodst].nvisits += aa.targets[st].nvisits
+                    else:
+                        aa.targets[goodst] = aa.targets[st]
+                        # also map transition state to the reduced one
+                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
                     del aa.targets[st]
 
     def collapseGraph(self, statemap):
@@ -1244,6 +1244,7 @@ class Crawler(object):
         return self.newPage(htmlpage)
 
     def followRedirect(self, redirect):
+        self.logger.debug(output.purple("following redirect %s"), redirect)
         lastvalidpage = self.currreqresp.response.page
         while lastvalidpage.redirect or lastvalidpage.error:
             if not lastvalidpage.reqresp.prev:
@@ -1514,11 +1515,11 @@ class Engine(object):
                     nextabsreq = link.targets[state].target
                     # do not put request in the heap, but just go for the next abstract page
                     tgt = nextabsreq.targets[state]
-                    #print "TGT %s %s" % (tgt, nextabsreq)
                     assert tgt.target
                     if (tgt.target, tgt.transition) in seen:
                         continue
                     newdist = dist + self.linkcost(head, idx, link, state)
+                    #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
                     heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     # TODO handle state changes
