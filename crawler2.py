@@ -838,6 +838,31 @@ class PageClusterer(object):
     def getAbstractPages(self):
         return self.abspages
 
+class PairCounter(object):
+
+    def __init__(self):
+        self._dict = defaultdict(int)
+
+    def add(self, a, b):
+        assert a != b
+        if a < b:
+            self._dict[(a, b)] += 1
+        else:
+            self._dict[(b, a)] += 1
+
+    def addset(self, s):
+        ss = sorted(s)
+        for i, a in enumerate(ss):
+            for b in ss[i+1:]:
+                self._dict[(a, b)] += 1
+
+    def get(self, a, b):
+        assert a != b
+        if a < b:
+            return self._dict.get((a, b), 0)
+        else:
+            return self._dict.get((b, a), 0)
+
 
 class AppGraphGenerator(object):
 
@@ -1089,6 +1114,7 @@ class AppGraphGenerator(object):
         self.collapseGraph(statemap)
 
         equalstates = set((StateSet(statemap), ))
+        seentogether = PairCounter()
 
         # try to detect which states are actually equivalent to older ones
         # assume all staes are eqivalent, and split the set of states into bins
@@ -1100,6 +1126,10 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in bins.itervalues()]
 
             print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
+
+            for sb in statebins:
+                seentogether.addset(sb)
+
 
             equalstates = self.addStateBins(statebins, equalstates)
             self.dropRedundantStateGroups(equalstates)
@@ -1119,12 +1149,33 @@ class AppGraphGenerator(object):
             self.logger.debug("states in multiple groups %s" % violating)
             assert violating, "%d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
 
+            multiples = StateSet(i[1] for i in violating)
+
+            # if a state appras in multiple sets, choose the set that contains the elements
+            # it was seen together the biggest number of times
+            for m in multiples:
+                containingsets = [i for i in sorted(equalstates) if m in i]
+                reducedcontainingsets = [i - multiples for i in containingsets]
+                containingsetscores = [sum(seentogether.get(m, i) for i in cs if i != m) for cs in reducedcontainingsets]
+
+                bestset = max((score, s) for score, s in zip(containingsetscores, containingsets))[1]
+
+                self.logger.debug("keep state %s in stateset %s" % (m, bestset))
+                #print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
+
+                for cs in containingsets:
+                    if cs != bestset:
+                        equalstates.remove(cs)
+                        equalstates.add(StateSet(cs - frozenset([m])))
+            sumbinlen = sum(len(i) for i in equalstates)
+            continue
+
+
             # common problem: we have just went though a state-changing request,
             # however it has not been detected yet, preventing the correct classification
             # of the last state
             # if it is the case, in the equal set we have a set made of all violating states,
             # plus the last state
-            multiples = StateSet(i[1] for i in violating)
             lastplusmultiples = StateSet(multiples | set([statemap[self.maxstate]]))
             if lastplusmultiples in equalstates:
                 self.logger.debug("state %s has an undetected state change, make it a separate state" % statemap[self.maxstate])
