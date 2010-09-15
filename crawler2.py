@@ -916,7 +916,7 @@ class AppGraphGenerator(object):
             assert not laststate in currabsreq.targets
             #print output.red("A %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
-            currabsreq.targets[laststate] = Target(currabspage, laststate+1)
+            currabsreq.targets[laststate] = Target(currabspage, laststate+1, nvisits=1)
             #print output.red("B %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             laststate += 1
@@ -932,7 +932,7 @@ class AppGraphGenerator(object):
                 #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
                 # XXX we cannot just use the index for more complex clustering
                 assert not laststate in currabspage.abslinks[chosenlink].targets
-                currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate)
+                currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate, nvisits=1)
                 assert not laststate in currabspage.statelinkmap
                 currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink]
 
@@ -1039,7 +1039,7 @@ class AppGraphGenerator(object):
                                 # the Target.nvisit has not been updated yet, because we have not finalized state assignment
                                 # let's compute the number of simits by counting the states that
                                 # map to the same one and share the target abstract page
-                                assert target.nvisits == 0, target.nvisits
+                                assert target.nvisits == 1, target.nvisits
                                 mappedlaststate = self.getMinMappedState(laststate, statemap)
                                 #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
                                 # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
@@ -1086,14 +1086,14 @@ class AppGraphGenerator(object):
 
         self.logger.debug("reduced states %d", nstates)
 
-        self.collapseGraphUpdateVisists(statemap)
+        self.collapseGraph(statemap)
 
         equalstates = set((StateSet(statemap), ))
 
         # try to detect which states are actually equivalent to older ones
         # assume all staes are eqivalent, and split the set of states into bins
         # when two states prove to be non equivalent
-        for ar in self.absrequests:
+        for ar in sorted(self.absrequests):
             bins = defaultdict(set)
             for s, t in ar.targets.iteritems():
                 bins[t.target].add(t.transition)
@@ -1159,92 +1159,35 @@ class AppGraphGenerator(object):
         return statemap[-1]
 
 
-    def collapseGraphUpdateVisists(self, statemap):
-        self.logger.debug("collapsing graph")
-
-        # merge states that were reduced to the same one
-        # and update visit counter
-        for ap in self.abspages:
-            for aa in ap.abslinks.itervalues():
-                statereduce = [(st, statemap[st]) for st in aa.targets]
-                for st, goodst in statereduce:
-                    if goodst in aa.targets:
-                        assert aa.targets[st].target == aa.targets[goodst].target, \
-                            "%s %s" % (aa.targets[st], aa.targets[goodst])
-                    else:
-                        aa.targets[goodst] = aa.targets[st]
-                        # also map transition state to the reduced one
-                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
-                        assert aa.targets[goodst].nvisits == 0
-                    if st == goodst:
-                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
-                    else:
-                        del aa.targets[st]
-                    aa.targets[goodst].nvisits += 1
-
-        for ar in self.absrequests:
-            statereduce = [(st, statemap[st]) for st in ar.targets]
-            for (st, goodst) in statereduce:
-                if goodst in ar.targets:
-                    assert ar.targets[st].target == ar.targets[goodst].target, \
-                            "%s\n\t%d->%s\n\t%d->%s" % (ar, st, ar.targets[st].target,
-                                    goodst, ar.targets[goodst].target)
+    def collapseNode(self, nodes, statemap):
+        for aa in nodes:
+            statereduce = [(st, statemap[st]) for st in aa.targets]
+            for st, goodst in statereduce:
+                if goodst in aa.targets:
+                    assert aa.targets[st].target == aa.targets[goodst].target, \
+                            "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
+                    assert st == goodst or statemap[aa.targets[goodst].transition] == statemap[aa.targets[st].transition], \
+                            "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
+                            % (aa, st, aa.targets[st], statemap[aa.targets[goodst].transition],
+                                    goodst, aa.targets[goodst], statemap[aa.targets[st].transition])
                 else:
-                    ar.targets[goodst] = ar.targets[st]
+                    aa.targets[goodst] = aa.targets[st]
                     # also map transition state to the reduced one
-                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
-                    assert ar.targets[goodst].nvisits == 0
+                    aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
                 if st == goodst:
-                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
+                    aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
                 else:
-                    del ar.targets[st]
-                ar.targets[goodst].nvisits += 1
+                    aa.targets[goodst].nvisits += aa.targets[st].nvisits
+                    del aa.targets[st]
 
     def collapseGraph(self, statemap):
         self.logger.debug("collapsing graph")
 
         # merge states that were reduced to the same one
         for ap in self.abspages:
-            for aa in ap.abslinks.itervalues():
-                statereduce = [(st, statemap[st]) for st in aa.targets]
-                for st, goodst in statereduce:
-                    if goodst in aa.targets:
-                        assert aa.targets[st].target == aa.targets[goodst].target, \
-                            "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
-                        assert st == goodst or aa.targets[goodst].transition == statemap[aa.targets[st].transition], \
-                            "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
-                            % (aa, st, aa.targets[st], statemap[aa.targets[goodst].transition],
-                                    goodst, aa.targets[goodst], statemap[aa.targets[st].transition])
-                    else:
-                        aa.targets[goodst] = aa.targets[st]
-                        # also map transition state to the reduced one
-                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
-                    if st == goodst:
-                        aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
-                    else:
-                        aa.targets[goodst].nvisits += aa.targets[st].nvisits
-                        del aa.targets[st]
+            self.collapseNode(ap.abslinks.itervalues(), statemap)
 
-        for ar in self.absrequests:
-            statereduce = [(st, statemap[st]) for st in ar.targets]
-            for (st, goodst) in statereduce:
-                if goodst in ar.targets:
-                    assert ar.targets[st].target == ar.targets[goodst].target, \
-                            "%s\n\t%d->%s\n\t%d->%s" % (ar, st, ar.targets[st].target,
-                                    goodst, ar.targets[goodst].target)
-                    assert st == goodst or statemap[ar.targets[goodst].transition] == statemap[ar.targets[st].transition], \
-                            "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
-                            % (ar, st, ar.targets[st], statemap[ar.targets[goodst].transition],
-                                    goodst, ar.targets[goodst], statemap[ar.targets[st].transition])
-                else:
-                    ar.targets[goodst] = ar.targets[st]
-                    # also map transition state to the reduced one
-                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
-                if st == goodst:
-                    ar.targets[goodst].transition = statemap[ar.targets[goodst].transition]
-                else:
-                    ar.targets[goodst].nvisits += ar.targets[st].nvisits
-                    del ar.targets[st]
+        self.collapseNode(self.absrequests, statemap)
 
 
 class DeferringRefreshHandler(htmlunit.RefreshHandler):
