@@ -1116,8 +1116,24 @@ class AppGraphGenerator(object):
                 for s in es:
                     cntdict[s] += 1
             violating = sorted(((v, s) for s, v in cntdict.iteritems() if v > 1), key=lambda x: (-x[1], x[0]))
-            self.logger.debug("violating states %s" % violating)
+            self.logger.debug("states in multiple groups %s" % violating)
             assert violating, "%d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
+
+            # common problem: we have just went though a state-changing request,
+            # however it has not been detected yet, preventing the correct classification
+            # of the last state
+            # if it is the case, in the equal set we have a set made of all violating states,
+            # plus the last state
+            multiples = StateSet(i[1] for i in violating)
+            lastplusmultiples = StateSet(multiples | set([statemap[self.maxstate]]))
+            if lastplusmultiples in equalstates:
+                self.logger.debug("state %s has an undetected state change, make it a separate state" % statemap[self.maxstate])
+                equalstates.remove(lastplusmultiples)
+                equalstates.add(StateSet([statemap[self.maxstate]]))
+                sumbinlen = sum(len(i) for i in equalstates)
+                continue
+
+
             # try to add some constraints that will solve the abiguitiy in state allocation
             # start looking first at the states that appears in multiple groups
             # if we are trying to merge it with its previous state, add a rule to separate them
