@@ -62,8 +62,8 @@ class Constants(object):
         for a in args:
             setattr(self, a, a)
 
-class RecursiveDict(defaultdict): 
-    def __init__(self, nleavesfunc=lambda x: 1): 
+class RecursiveDict(defaultdict):
+    def __init__(self, nleavesfunc=lambda x: 1):
         self.default_factory = RecursiveDict
         # when counting leaves, apply this function to non RecursiveDict objects
         self.nleavesfunc = nleavesfunc
@@ -139,7 +139,6 @@ class RecursiveDict(defaultdict):
             else:
                 out += "%s" % v
         return out
-            
 
 
 class Request(object):
@@ -245,6 +244,8 @@ class RequestResponse(object):
     def __str__(self):
         return "%s -> %s" % (self.request, self.response)
 
+    def __repr__(self):
+        return str(self)
 
 class Link(object):
 
@@ -627,6 +628,9 @@ class AbstractRequest(object):
     def requestset(self):
         return set(rr.request.shortstr for rr in self.reqresps)
 
+    def __cmp__(self, o):
+        return cmp(self.instance, o.instance)
+
 
 class Target(object):
     def __init__(self, target, transition, nvisits=0):
@@ -849,7 +853,7 @@ class AppGraphGenerator(object):
         # make sure we are at the beginning
         assert self.reqrespshead.prev is None
 
-        # clustering requests on the abstrct pages is a bad idea, because we do dot want
+        # clustering requests on the abstrct pages is a bad idea, because we do not want
         # the exact same request to be split in 2 clusters
         #reqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path))
         # actually, if we do not cluster based on the abstract pages, we get issues with the
@@ -874,7 +878,7 @@ class AppGraphGenerator(object):
 
         absrequests = set()
 
-        for ar, rrs in mappedrequests.iteritems():
+        for ar, rrs in sorted(mappedrequests.iteritems()):
             if len(rrs) > 1 and len(set(rr.request.query for rr in rrs)) > 1:
                 for rr in rrs:
                     rr.request.absrequest = ar
@@ -890,7 +894,7 @@ class AppGraphGenerator(object):
         del reqmap
         del mappedrequests
 
-        for r in absrequests:
+        for r in sorted(absrequests):
             print output.turquoise("%s" % r)
 
         self.absrequests = absrequests
@@ -997,12 +1001,12 @@ class AppGraphGenerator(object):
         while True:
             #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
             currtarget = currreq.targets[currstate]
-            
+
             # if all the previous states leading to the same target caused a state transition,
             # directly guess that this request will cause a state transition
             # this behavior is needed because it might happen that the state transition is not detected,
             # and the state assignment fails
-            smallerstates = [(s, t) for s, t in currreq.targets.iteritems() 
+            smallerstates = [(s, t) for s, t in currreq.targets.iteritems()
                     if s < currstate and t.target == currtarget.target]
             if smallerstates and all(statemap[t.transition] != s for s, t in smallerstates):
                 #print output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets)
@@ -1115,7 +1119,7 @@ class AppGraphGenerator(object):
             self.logger.debug("violating states %s" % violating)
             assert violating, "%d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
             # try to add some constraints that will solve the abiguitiy in state allocation
-            # start looking first at the states that appears in multiple groups 
+            # start looking first at the states that appears in multiple groups
             # if we are trying to merge it with its previous state, add a rule to separate them
             for (vc, vs) in violating:
                 vsprev = self.getMinMappedState(vs-1, statemap)
@@ -1363,7 +1367,6 @@ class Crawler(object):
 
         self.logger.info("%s", self.currreqresp)
 
-    
     def handleNavigationException(self, e):
         javaex = e.getJavaException()
         if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
@@ -1546,7 +1549,7 @@ class Engine(object):
         candidates = []
         while heads:
             dist, head, state, headpath = heapq.heappop(heads)
-            print output.yellow("H %s %s %s %s" % (dist, head, state, headpath)) 
+            print output.yellow("H %s %s %s %s" % (dist, head, state, headpath))
             if (head, state) in seen:
                 continue
             seen.add((head, state))
