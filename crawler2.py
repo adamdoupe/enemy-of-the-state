@@ -1120,21 +1120,50 @@ class AppGraphGenerator(object):
         # assume all staes are eqivalent, and split the set of states into bins
         # when two states prove to be non equivalent
         for ar in sorted(self.absrequests):
-            bins = defaultdict(set)
+            diffbins = defaultdict(set)
+            equalbins = defaultdict(set)
             for s, t in ar.targets.iteritems():
-                bins[t.target].add(t.transition)
-            statebins = [StateSet(i) for i in bins.itervalues()]
+                diffbins[t.target].add(s)
+                equalbins[t.target].add(t.transition)
+            statebins = [StateSet(i) for i in diffbins.itervalues()]
+            equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
             print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
+            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in equalstatebins))
 
             for sb in statebins:
                 seentogether.addset(sb)
+            for esb in equalstatebins:
+                seentogether.addset(esb)
 
 
             equalstates = self.addStateBins(statebins, equalstates)
             self.dropRedundantStateGroups(equalstates)
 
             print output.darkred("ES %s" % equalstates)
+
+        # in the previous step, we marked as different states that were leading to different target pages,
+        # regardless of the target state
+        # now that we know that some states are different for sure,
+        # let's do a second scan taking into considereation also the state of the target page
+        # marking as different state that lead to the the same target page, but in diferent states
+#        for ar in sorted(self.absrequests):
+#            bins = defaultdict(set)
+#            for s, t in ar.targets.iteritems():
+#                bins[t.target].add(t.transition)
+#            statebins = [StateSet(i) for i in bins.itervalues()]
+#
+#            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
+#
+#            for sb in statebins:
+#                seentogether.addset(sb)
+#
+#
+#            equalstates = self.addStateBins(statebins, equalstates)
+#            self.dropRedundantStateGroups(equalstates)
+#
+#            print output.darkred("ES %s" % equalstates)
+
 
 
         sumbinlen = sum(len(i) for i in equalstates)
@@ -1161,7 +1190,7 @@ class AppGraphGenerator(object):
                 bestset = max((score, s) for score, s in zip(containingsetscores, containingsets))[1]
 
                 self.logger.debug("keep state %s in stateset %s" % (m, bestset))
-                #print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
+                print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
 
                 for cs in containingsets:
                     if cs != bestset:
