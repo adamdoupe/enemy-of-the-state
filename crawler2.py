@@ -856,6 +856,15 @@ class PairCounter(object):
             for b in ss[i+1:]:
                 self._dict[(a, b)] += 1
 
+    def addallcombinations(self, bins):
+        for bin in bins:
+            for a in bin:
+                for bin2 in bins:
+                    if bin2 != bin:
+                        for b in bin2:
+                            if a != b:
+                                self.add(a, b)
+
     def get(self, a, b):
         assert a != b
         if a < b:
@@ -1115,6 +1124,7 @@ class AppGraphGenerator(object):
 
         equalstates = set((StateSet(statemap), ))
         seentogether = PairCounter()
+        differentpairs = PairCounter()
 
         # try to detect which states are actually equivalent to older ones
         # assume all staes are eqivalent, and split the set of states into bins
@@ -1124,6 +1134,8 @@ class AppGraphGenerator(object):
             equalbins = defaultdict(set)
             for s, t in ar.targets.iteritems():
                 diffbins[t.target].add(s)
+                # these quality-only bins are usful in the case the last examined pages caused a state transition:
+                # we need the latest state to appear in at least one bin!
                 equalbins[t.target].add(t.transition)
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
@@ -1136,104 +1148,93 @@ class AppGraphGenerator(object):
             for esb in equalstatebins:
                 seentogether.addset(esb)
 
+            differentpairs.addallcombinations(statebins)
+
 
             equalstates = self.addStateBins(statebins, equalstates)
             self.dropRedundantStateGroups(equalstates)
 
-            print output.darkred("ES %s" % equalstates)
+            print output.darkred("ES %s" % sorted(equalstates))
+
 
         # in the previous step, we marked as different states that were leading to different target pages,
         # regardless of the target state
         # now that we know that some states are different for sure,
         # let's do a second scan taking into considereation also the state of the target page
         # marking as different state that lead to the the same target page, but in diferent states
-#        for ar in sorted(self.absrequests):
-#            bins = defaultdict(set)
-#            for s, t in ar.targets.iteritems():
-#                bins[t.target].add(t.transition)
-#            statebins = [StateSet(i) for i in bins.itervalues()]
-#
-#            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
-#
-#            for sb in statebins:
-#                seentogether.addset(sb)
-#
-#
-#            equalstates = self.addStateBins(statebins, equalstates)
-#            self.dropRedundantStateGroups(equalstates)
-#
-#            print output.darkred("ES %s" % equalstates)
+        again = True
+        while again:
+            while again:
+                again = False
+                for ar in sorted(self.absrequests):
+                    targetbins = defaultdict(set)
+                    targetstatebins = defaultdict(set)
+                    for s, t in ar.targets.iteritems():
+                        targetbins[t.target].add(t.transition)
+                        targetstatebins[(t.target, t.transition)].add(s)
+
+                    for t, states in targetbins.iteritems():
+                        targetequalstates = set([StateSet(states)])
+
+                        for a in states:
+                            for b in states:
+                                if a != b and differentpairs.get(a, b):
+                                    targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
+                                    print "DIFF", a, b
+                        self.dropRedundantStateGroups(targetequalstates)
+
+                        print "TES", targetequalstates, ar, t
+
+                        startstatebins = set(reduce(lambda a, b: StateSet(a | b), (StateSet(targetstatebins[(t, ts)]) for ts in esb)) for esb in targetequalstates)
+
+                        print "SSB", targetequalstates, ar, t
+
+                        newequalstates = self.addStateBins(startstatebins, equalstates)
+                        self.dropRedundantStateGroups(newequalstates)
+                        if newequalstates != equalstates:
+                            equalstates = newequalstates
+                            again = True
+
+                        print output.darkred("ES %s" % sorted(equalstates))
 
 
 
-        sumbinlen = sum(len(i) for i in equalstates)
-        while sumbinlen != len(set(statemap)):
-            self.logger.debug("unable to perform state allocation %d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates))
 
-            cntdict = defaultdict(int)
-            for es in equalstates:
-                for s in es:
-                    cntdict[s] += 1
-            violating = sorted(((v, s) for s, v in cntdict.iteritems() if v > 1), key=lambda x: (-x[1], x[0]))
-            self.logger.debug("states in multiple groups %s" % violating)
-            assert violating, "%d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
 
-            multiples = StateSet(i[1] for i in violating)
-
-            # if a state appras in multiple sets, choose the set that contains the elements
-            # it was seen together the biggest number of times
-            for m in multiples:
-                containingsets = [i for i in sorted(equalstates) if m in i]
-                reducedcontainingsets = [i - multiples for i in containingsets]
-                containingsetscores = [sum(seentogether.get(m, i) for i in cs if i != m) for cs in reducedcontainingsets]
-
-                bestset = max((score, s) for score, s in zip(containingsetscores, containingsets))[1]
-
-                self.logger.debug("keep state %s in stateset %s" % (m, bestset))
-                print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
-
-                for cs in containingsets:
-                    if cs != bestset:
-                        equalstates.remove(cs)
-                        equalstates.add(StateSet(cs - frozenset([m])))
             sumbinlen = sum(len(i) for i in equalstates)
-            continue
+            while sumbinlen != len(set(statemap)):
+                again = True
+                self.logger.debug("unable to perform state allocation %d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates))
 
-
-            # common problem: we have just went though a state-changing request,
-            # however it has not been detected yet, preventing the correct classification
-            # of the last state
-            # if it is the case, in the equal set we have a set made of all violating states,
-            # plus the last state
-            lastplusmultiples = StateSet(multiples | set([statemap[self.maxstate]]))
-            if lastplusmultiples in equalstates:
-                self.logger.debug("state %s has an undetected state change, make it a separate state" % statemap[self.maxstate])
-                equalstates.remove(lastplusmultiples)
-                equalstates.add(StateSet([statemap[self.maxstate]]))
-                sumbinlen = sum(len(i) for i in equalstates)
-                continue
-
-
-            # try to add some constraints that will solve the abiguitiy in state allocation
-            # start looking first at the states that appears in multiple groups
-            # if we are trying to merge it with its previous state, add a rule to separate them
-            for (vc, vs) in violating:
-                vsprev = self.getMinMappedState(vs-1, statemap)
-                vsprevset = set([vs, vsprev])
+                cntdict = defaultdict(int)
                 for es in equalstates:
-                    if vsprevset <= es:
-                        self.logger.debug("separating %d and %d" % (vs, vsprev))
-                        equalstates = self.addStateBins([frozenset([vs]), frozenset([vsprev])], equalstates)
-                        self.dropRedundantStateGroups(equalstates)
-                        break
-                else:
-                    continue
-                break
-            else:
-                raise RuntimeError("unable to perform state allocation")
+                    for s in es:
+                        cntdict[s] += 1
+                violating = sorted(((v, s) for s, v in cntdict.iteritems() if v > 1), key=lambda x: (-x[1], x[0]))
+                self.logger.debug("states in multiple groups %s" % violating)
+                assert violating, "%d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
 
-            sumbinlen = sum(len(i) for i in equalstates)
+                multiples = StateSet(i[1] for i in violating)
 
+                # if a state appras in multiple sets, choose the set that contains the elements
+                # it was seen together the biggest number of times
+                for m in multiples:
+                    containingsets = [i for i in sorted(equalstates) if m in i]
+                    reducedcontainingsets = [i - multiples for i in containingsets]
+                    containingsetscores = [sum(seentogether.get(m, i) for i in cs if i != m) for cs in reducedcontainingsets]
+
+                    bestset = max((score, s) for score, s in zip(containingsetscores, containingsets))[1]
+
+                    self.logger.debug("keep state %s in stateset %s" % (m, bestset))
+                    print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
+
+                    for cs in containingsets:
+                        if cs != bestset:
+                            equalstates.remove(cs)
+                            equalstates.add(StateSet(cs - frozenset([m])))
+                sumbinlen = sum(len(i) for i in equalstates)
+
+            self.logger.debug(output.darkred("almost-final state allocation %s" % equalstates))
         self.logger.debug(output.darkred("final state allocation %s" % equalstates))
 
         equalstatemap = {}
@@ -1267,8 +1268,8 @@ class AppGraphGenerator(object):
                                 "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
                         assert st == goodst or statemap[aa.targets[goodst].transition] == statemap[aa.targets[st].transition], \
                                 "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
-                                % (aa, st, aa.targets[st], statemap[aa.targets[goodst].transition],
-                                        goodst, aa.targets[goodst], statemap[aa.targets[st].transition])
+                                % (aa, st, aa.targets[st], statemap[aa.targets[st].transition],
+                                        goodst, aa.targets[goodst], statemap[aa.targets[goodst].transition])
                         aa.targets[goodst].nvisits += aa.targets[st].nvisits
                     else:
                         aa.targets[goodst] = aa.targets[st]
