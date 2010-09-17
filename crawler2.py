@@ -1162,10 +1162,17 @@ class AppGraphGenerator(object):
         # now that we know that some states are different for sure,
         # let's do a second scan taking into considereation also the state of the target page
         # marking as different state that lead to the the same target page, but in diferent states
-        again = True
-        while again:
-            while again:
-                again = False
+        again1 = True
+        firstrun = True
+        while again1:
+            again1 = False
+            if not firstrun:
+                print "ADDCOMB", equalstates
+                differentpairs.addallcombinations(equalstates)
+            firstrun = False
+            again2 = True
+            while again2:
+                again2 = False
                 for ar in sorted(self.absrequests):
                     targetbins = defaultdict(set)
                     targetstatebins = defaultdict(set)
@@ -1179,9 +1186,9 @@ class AppGraphGenerator(object):
                         for a in states:
                             for b in states:
                                 if a != b and differentpairs.get(a, b):
-                                    targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
                                     print "DIFF", a, b
-                        self.dropRedundantStateGroups(targetequalstates)
+                                    targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
+                                    self.dropRedundantStateGroups(targetequalstates)
 
                         print "TES", targetequalstates, ar, t
 
@@ -1193,7 +1200,8 @@ class AppGraphGenerator(object):
                         self.dropRedundantStateGroups(newequalstates)
                         if newequalstates != equalstates:
                             equalstates = newequalstates
-                            again = True
+                            again1 = True
+                            again2 = True
 
                         print output.darkred("ES %s" % sorted(equalstates))
 
@@ -1203,7 +1211,7 @@ class AppGraphGenerator(object):
 
             sumbinlen = sum(len(i) for i in equalstates)
             while sumbinlen != len(set(statemap)):
-                again = True
+                again1 = True
                 self.logger.debug("unable to perform state allocation %d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates))
 
                 cntdict = defaultdict(int)
