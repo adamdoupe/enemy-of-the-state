@@ -872,6 +872,17 @@ class PairCounter(object):
         else:
             return self._dict.get((b, a), 0)
 
+    def __len__(self):
+        return len(self._dict)
+
+    def __nonzero__(self):
+        return len(self) != 0
+
+    def __str__(self):
+        return str(self._dict)
+
+    def __repr__(self):
+        return repr(self._dict)
 
 class AppGraphGenerator(object):
 
@@ -1163,16 +1174,13 @@ class AppGraphGenerator(object):
         # let's do a second scan taking into considereation also the state of the target page
         # marking as different state that lead to the the same target page, but in diferent states
         again1 = True
-        firstrun = True
-        while again1:
+        while differentpairs:
             again1 = False
-            if not firstrun:
-                print "ADDCOMB", equalstates
-                differentpairs.addallcombinations(equalstates)
-            firstrun = False
             again2 = True
             while again2:
                 again2 = False
+                currentdifferentpairs = differentpairs
+                differentpairs = PairCounter()
                 for ar in sorted(self.absrequests):
                     targetbins = defaultdict(set)
                     targetstatebins = defaultdict(set)
@@ -1181,33 +1189,36 @@ class AppGraphGenerator(object):
                         targetstatebins[(t.target, t.transition)].add(s)
 
                     for t, states in targetbins.iteritems():
-                        targetequalstates = set([StateSet(states)])
+                        if len(states) > 1:
+                            targetequalstates = set([StateSet(states)])
+                            print "preTES", targetequalstates, ar, t
 
-                        for a in states:
-                            for b in states:
-                                if a != b and differentpairs.get(a, b):
-                                    print "DIFF", a, b
-                                    targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
-                                    self.dropRedundantStateGroups(targetequalstates)
+                            statelist = sorted(states)
 
-                        print "TES", targetequalstates, ar, t
+                            for i, a in enumerate(statelist):
+                                for b in statelist[i+1:]:
+                                    if currentdifferentpairs.get(a, b):
+                                        print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
+                                        differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
+                                        targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
+                                        self.dropRedundantStateGroups(targetequalstates)
 
-                        startstatebins = set(reduce(lambda a, b: StateSet(a | b), (StateSet(targetstatebins[(t, ts)]) for ts in esb)) for esb in targetequalstates)
+                            print "TES", targetequalstates, ar, t
 
-                        print "SSB", targetequalstates, ar, t
+                            startstatebins = set(reduce(lambda a, b: StateSet(a | b), (StateSet(targetstatebins[(t, ts)]) for ts in esb)) for esb in targetequalstates)
 
-                        newequalstates = self.addStateBins(startstatebins, equalstates)
-                        self.dropRedundantStateGroups(newequalstates)
-                        if newequalstates != equalstates:
-                            equalstates = newequalstates
-                            again1 = True
-                            again2 = True
+                            print "SSB", startstatebins, ar, t
 
-                        print output.darkred("ES %s" % sorted(equalstates))
+                            newequalstates = self.addStateBins(startstatebins, equalstates)
+                            self.dropRedundantStateGroups(newequalstates)
+                            if newequalstates != equalstates:
+                                equalstates = newequalstates
+                                again2 = True
+                                print output.darkred("ES %s" % sorted(equalstates))
 
+                assert len(differentpairs) > 0 or not again2, "%s %s %s" % (again2, differentpairs, (len(differentpairs) > 0))
 
-
-
+            differentpairs = PairCounter()
 
             sumbinlen = sum(len(i) for i in equalstates)
             while sumbinlen != len(set(statemap)):
@@ -1236,13 +1247,19 @@ class AppGraphGenerator(object):
                     self.logger.debug("keep state %s in stateset %s" % (m, bestset))
                     print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
 
-                    for cs in containingsets:
+                    for (cs, rcs) in zip(containingsets, reducedcontainingsets):
                         if cs != bestset:
                             equalstates.remove(cs)
                             equalstates.add(StateSet(cs - frozenset([m])))
+                            for ds in rcs:
+                                if ds != m:
+                                    differentpairs.add(ds, m)
                 sumbinlen = sum(len(i) for i in equalstates)
 
             self.logger.debug(output.darkred("almost-final state allocation %s" % equalstates))
+
+            assert again1 == (len(differentpairs) > 0), "%s %s %s" % (again1, differentpairs, (len(differentpairs) > 0))
+
         self.logger.debug(output.darkred("final state allocation %s" % equalstates))
 
         equalstatemap = {}
