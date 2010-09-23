@@ -153,6 +153,10 @@ class Request(object):
         return self.webrequest.getHttpMethod()
 
     @lazyproperty
+    def isPOST(self):
+        return self.method == htmlunit.HttpMethod.POST
+
+    @lazyproperty
     def path(self):
         return self.webrequest.getUrl().getPath()
 
@@ -469,7 +473,7 @@ class AbstractForm(AbstractLink):
         return (self.methods, self.actions) == (f.methods, f.actions)
 
     @lazyproperty
-    def ispost(self):
+    def isPOST(self):
         return Form.POST in self.methods
 
 
@@ -617,6 +621,8 @@ class AbstractRequest(object):
         self.reqresps = []
         self.instance = AbstractRequest.InstanceCounter
         AbstractRequest.InstanceCounter += 1
+        # counter of how often this page gave hints for detecting a state change
+        self.statehints = 0
 
     def __str__(self):
         return "AbstractRequest(%s)%d" % (self.requestset, self.instance)
@@ -630,6 +636,10 @@ class AbstractRequest(object):
 
     def __cmp__(self, o):
         return cmp(self.instance, o.instance)
+
+    @lazyproperty
+    def isPOST(self):
+        return any(i.request.isPOST for i in self.reqresps)
 
 
 class Target(object):
@@ -892,12 +902,8 @@ class AppGraphGenerator(object):
         self.abspages = abspages
         self.absrequests = None
 
-    def generateAppGraph(self):
-        self.logger.debug("generating application graph")
 
-        # make sure we are at the beginning
-        assert self.reqrespshead.prev is None
-
+    def clusterRequests(self):
         # clustering requests on the abstrct pages is a bad idea, because we do not want
         # the exact same request to be split in 2 clusters
         #reqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path))
@@ -944,9 +950,16 @@ class AppGraphGenerator(object):
 
         self.absrequests = absrequests
 
+    def generateAppGraph(self):
+        self.logger.debug("generating application graph")
+
+        # make sure we are at the beginning
+        assert self.reqrespshead.prev is None
+
         curr = self.reqrespshead
         laststate = 0
 
+        self.clusterRequests()
 
         currabsreq = curr.request.absrequest
         self.headabsreq = currabsreq
@@ -987,7 +1000,6 @@ class AppGraphGenerator(object):
             curr = curr.next
             currabsreq = nextabsreq
             cnt += 1
-
 
         self.maxstate = laststate
         self.logger.debug("application graph generated in %d steps", cnt)
@@ -1070,6 +1082,8 @@ class AppGraphGenerator(object):
                                     % (currstate, currmapsto, currtarget))
                             self.logger.debug("\t%d(%d)->%s"
                                     % (ss, ssmapsto, currreq.targets[ss]))
+                            # mark this request as givin hints for state change detection
+                            currreq.statehints += 1
                             stateoff = 1
                             for (j, (req, page)) in enumerate(reversed(history)):
                                 laststate = currstate-j-stateoff
@@ -1596,7 +1610,7 @@ class Engine(object):
             else:
                 dist = Dist((0, 0, 0, nvisits, 0))
         elif linkidx[0] == Links.Type.FORM:
-            if link.ispost:
+            if link.isPOST:
                 dist = Dist((nvisits, 0, 0, 0, 0))
             else:
                 dist = Dist((0, nvisits, 0, 0, 0))
