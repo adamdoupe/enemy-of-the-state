@@ -12,7 +12,7 @@ import output
 
 import htmlunit
 
-from collections import defaultdict, deque
+from collections import defaultdict, deque, namedtuple
 
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
@@ -204,9 +204,13 @@ class Request(object):
 
 class Response(object):
 
+    InstanceCounter = 1
+
     def __init__(self, webresponse, page):
         self.webresponse = webresponse
         self.page = page
+        self.instance = Response.InstanceCounter
+        Response.InstanceCounter += 1
 
     @lazyproperty
     def code(self):
@@ -226,6 +230,9 @@ class Response(object):
 
     def __str__(self):
         return "Response(%d %s)" % (self.code, self.message)
+
+    def __cmp__(self, o):
+        return cmp(self.InstanceCounter, o.InstanceCounter)
 
 
 class RequestResponse(object):
@@ -1119,6 +1126,7 @@ class AppGraphGenerator(object):
 
         # map each state to its equivalent one
         statemap = range(self.maxstate+1)
+        lenstatemap = len(statemap)
 
         currreq = self.headabsreq
 
@@ -1209,10 +1217,10 @@ class AppGraphGenerator(object):
 
             currreq = chosentarget
 
-        for i in range(len(statemap)):
+        for i in range(lenstatemap):
             statemap[i] = self.getMinMappedState(i, statemap)
 
-        nstates = len(set(statemap))
+        nstates = lenstatemap
 
         self.logger.debug("reduced states %d", nstates)
         print statemap
@@ -1355,7 +1363,7 @@ class AppGraphGenerator(object):
                 equalstatemap[s] = mins
 
 
-        for i in range(len(statemap)):
+        for i in range(lenstatemap):
             statemap[i] = equalstatemap[statemap[i]]
 
         nstates = len(set(statemap))
@@ -1640,6 +1648,9 @@ class FormFiller:
     def __getitem__(self, k):
         return self.forms[tuple(sorted([i for i in k if i]))]
 
+Candidate = namedtuple("Candidate", "priority dist path")
+PathStep = namedtuple("PathStep", "abspage idx state")
+
 class Engine(object):
 
     Actions = Constants("BACK", "ANCHOR", "FORM", "REDIRECT", "DONE")
@@ -1694,15 +1705,16 @@ class Engine(object):
 
         return dist
 
-    def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates):
+    def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority):
         unvlink = unvlinks[0]
         self.logger.debug("found unvisited link %s in page %s (%d) dist %s", unvlink,
                 head, state, dist)
         mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)
-        path = list(reversed([(head, mincost[1], state)] + headpath))
-        heapq.heappush(candidates, (dist + mincost[0], path))
+        path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
+        heapq.heappush(candidates, Candidate(priority, dist + mincost[0], path))
 
-    def findPathToUnvisited(self, startpage, startstate):
+    def findPathToUnvisited(self, startpage, startstate, recentlyseen):
+        # recentlyseen is the set of requests done since last state change
         heads = [(Dist(), startpage, startstate, [])]
         seen = set()
         candidates = []
@@ -1714,17 +1726,21 @@ class Engine(object):
             seen.add((head, state))
             unvlinks = head.abslinks.getUnvisited(state)
             if unvlinks:
-                self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates)
+                self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0)
                 continue
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
                     continue
-                newpath = [(head, idx, state)] + headpath
+                newpath = [PathStep(head, idx, state)] + headpath
                 #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
                     nextabsreq = link.targets[state].target
+                    if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
+                        # this is a page known to be revelaing of possible state change
+                        # go there first, priority=-1 !
+                        self.addUnvisisted(dist, head, state, headpath, [(idx, link)], candidates, -1)
                     if state not in nextabsreq.targets:
-                        self.addUnvisisted(dist, head, state, headpath, [(idx, link)], candidates)
+                        self.addUnvisisted(dist, head, state, headpath, [(idx, link)], candidates, 0)
                         continue
                     # do not put request in the heap, but just go for the next abstract page
                     tgt = nextabsreq.targets[state]
@@ -1739,7 +1755,7 @@ class Engine(object):
                     raise NotImplementedError
         nvisited = len(set(i[0] for i in seen))
         if candidates:
-            return candidates[0][1], nvisited
+            return candidates[0].path, nvisited
         else:
             return None, nvisited
 
@@ -1762,18 +1778,18 @@ class Engine(object):
         if self.pathtofollow:
             assert self.followingpath
             nexthop = self.pathtofollow.pop(0)
-            if not reqresp.response.page.abspage.match(nexthop[0]) or nexthop[2] != self.state:
+            if not reqresp.response.page.abspage.match(nexthop.abspage) or nexthop.state != self.state:
                 self.logger.debug(output.red("got %s (%d) not matching expected %s (%d)"),
-                        reqresp.response.page.abspage, self.state, nexthop[0], nexthop[2])
+                        reqresp.response.page.abspage, self.state, nexthop.abspage, nexthop.state)
                 self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> ABORT following path"))
                 self.followingpath = False
                 self.pathtofollow = []
             else:
-                assert nexthop[2] == self.state
-                if nexthop[1] is None:
+                assert nexthop.state == self.state
+                if nexthop.idx is None:
                     assert not self.pathtofollow
                 else:
-                    return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
+                    return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx])
         if self.followingpath and not self.pathtofollow:
             self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
             self.followingpath = False
@@ -1785,19 +1801,49 @@ class Engine(object):
                 return (Engine.Actions.ANCHOR, reqresp.response.page.links[unvisited])
 
         if reqresp.response.page.abspage:
-            path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state)
+            recentlyseen = set()
+            rr = reqresp
+            found = False
+            while rr:
+                destination = rr.response.page.abspage
+                for s, t in rr.request.absrequest.targets.iteritems():
+                    if (t.target, t.transition) == (destination, self.state):
+                        if s == self.state:
+                            # state transition did not happen here
+                            recentlyseen.add(rr.request.absrequest)
+                            break
+                        else:
+                            found = True
+                            break
+                else:
+                    # we should always be able to find the destination page in ta target object
+                    assert False
+                if found:
+                    break
+                rr = rr.prev
+                print "RRRR", rr
+            self.logger.debug("last changing request %s", rr)
+            print "recentlyseen", recentlyseen
+            path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
             if self.ag:
                 self.logger.debug("visited %d/%d abstract pages", nvisited, len(self.ag.abspages))
             self.logger.debug(output.green("PATH %s"), path)
             if path:
+                # if there is a state change along the path, drop all following steps
+                for i, p in enumerate(path):
+                    if i > 0 and p.state != path[i-1].state:
+                        path[i:] = []
+                        break
+                self.logger.debug(output.green("REDUCED PATH %s"), path)
                 self.logger.debug(output.red("<<<<<<<<<<<<<<<<<<<<<<<<<<<<< START following path"))
                 self.followingpath = True
                 assert not self.pathtofollow
                 self.pathtofollow = path
                 nexthop = self.pathtofollow.pop(0)
-                assert nexthop[0] == reqresp.response.page.abspage
-                assert nexthop[2] == self.state
-                return (self.getEngineAction(nexthop[1]), reqresp.response.page.links[nexthop[1]])
+                print nexthop
+                assert nexthop.abspage == reqresp.response.page.abspage
+                assert nexthop.state == self.state
+                return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx])
             elif self.ag and float(nvisited)/len(self.ag.abspages) > 0.9:
                 # we can reach almost everywhere form the current page, still we cannot find unvisited links
                 # very likely we visited all the pages or we can no longer go back to some older states anyway
