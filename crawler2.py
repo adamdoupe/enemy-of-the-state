@@ -422,6 +422,15 @@ class Page(object):
     def links(self):
         return Links(self.anchors, self.forms, self.redirects)
 
+    def getNewRequest(self, link):
+        if isinstance(link, AbstractAnchor):
+            if len(link.hrefs) == 1:
+                href = iter(link.hrefs).next()
+                if not href.strip().lower().startswith("javascript:"):
+                    url = self.internal.getFullyQualifiedUrl(href)
+                    return htmlunit.WebRequest(url)
+        return None
+
 
 class AbstractLink(object):
 
@@ -446,7 +455,7 @@ class AbstractAnchor(AbstractLink):
         AbstractLink.__init__(self, anchors)
         self.hrefs = set(i.href for i in anchors)
 
-    @lazyproperty
+    @property
     def _str(self):
         return "AbstractAnchor(%s, targets=%s)" % (self.hrefs, self.targets)
 
@@ -465,7 +474,7 @@ class AbstractForm(AbstractLink):
         self.methods = set(i.method for i in forms)
         self.actions = set(i.action for i in forms)
 
-    @lazyproperty
+    @property
     def _str(self):
         return "AbstractForm(targets=%s)" % (self.targets)
 
@@ -483,7 +492,7 @@ class AbstractRedirect(AbstractLink):
         AbstractLink.__init__(self, redirects)
         self.locations = set(i.location for i in redirects)
 
-    @lazyproperty
+    @property
     def _str(self):
         return "AbstractRedirect(%s, targets=%s)" % (self.locations, self.targets)
 
@@ -542,7 +551,10 @@ class Links(object):
         return self.itervalues()
 
     def getUnvisited(self, state):
-        return [(i, l) for i, l in self.iteritems() if state not in l.targets and not l.skip]
+        # unvisited if we never did the request for that state
+        return [(i, l) for i, l in self.iteritems() if not l.skip \
+                and (state not in l.targets
+                    or not l.targets[state].target.targets)]
 
     def __len__(self):
         return self.nAnchors() + self.nForms() + self.nRedirects()
@@ -655,6 +667,32 @@ class Target(object):
     def __repr__(self):
         return str(self)
 
+
+class CustomDict(dict):
+
+    def __init__(self, items, missing, h=hash):
+        dict.__init__(self)
+        self.h = h
+        self.missing = missing
+        for (k, v) in items:
+            self[k] = v
+
+    def __getitem__(self, k):
+        print "GET", k
+        h = self.h(k)
+        if dict.__contains__(self, h):
+            return dict.__getitem__(self, self.h(k))
+        else:
+            v = self.missing(k)
+            dict.__setitem__(self, h, v)
+            return v
+
+    def __setitem__(self, k, v):
+        print "SET", k, v
+        return dict.__setitem__(self, self.h(k), v)
+
+    def __contains__(self, k):
+        return dict.__contains__(self, self.h(k))
 
 class Buckets(dict):
 
@@ -942,8 +980,8 @@ class AppGraphGenerator(object):
                     absreq.reqresps.append(rr)
                     absrequests.add(absreq)
 
-        del reqmap
         del mappedrequests
+        del reqmap
 
         for r in sorted(absrequests):
             print output.turquoise("%s" % r)
@@ -1001,10 +1039,39 @@ class AppGraphGenerator(object):
             currabsreq = nextabsreq
             cnt += 1
 
+        self.fillMissingRequests()
+
         self.maxstate = laststate
         self.logger.debug("application graph generated in %d steps", cnt)
 
         return laststate
+
+    def fillMissingRequests(self):
+
+        reqmap = CustomDict([(rr.request, ar) for ar in self.absrequests for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
+        print "REQMAP", reqmap
+
+        for ap in self.abspages:
+            allstates = set(s for l in ap.abslinks for s in l.targets)
+            for l in ap.abslinks:
+                newrequest = None
+                newrequestbuilt = False
+                for s in allstates:
+                    if s not in l.targets:
+                        if not newrequestbuilt:
+                            newwebrequest = ap.reqresps[0].response.page.getNewRequest(l)
+                            print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
+                            if newwebrequest:
+                                request = Request(newwebrequest)
+                                print "NEWR %s %s" % (request, (request.method, request.path, request.query))
+                                newrequest = reqmap[request]
+                                newrequest.reqresps.append(RequestResponse(request, None))
+                            newrequestbuilt = True
+                        if newrequest:
+                            l.targets[s] = Target(newrequest, transition=s, nvisits=0)
+                            print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
+
+        self.allabsrequests = set(reqmap.itervalues())
 
     def getMinMappedState(self, state, statemap):
         prev = state
@@ -1621,7 +1688,13 @@ class Engine(object):
 
         return dist
 
-
+    def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates):
+        unvlink = unvlinks[0]
+        self.logger.debug("found unvisited link %s in page %s (%d) dist %s", unvlink,
+                head, state, dist)
+        mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)
+        path = list(reversed([(head, mincost[1], state)] + headpath))
+        heapq.heappush(candidates, (dist + mincost[0], path))
 
     def findPathToUnvisited(self, startpage, startstate):
         heads = [(Dist(), startpage, startstate, [])]
@@ -1635,12 +1708,7 @@ class Engine(object):
             seen.add((head, state))
             unvlinks = head.abslinks.getUnvisited(state)
             if unvlinks:
-                unvlink = unvlinks[0]
-                self.logger.debug("found unvisited link %s in page %s (%d) dist %s", unvlink,
-                        head, state, dist)
-                mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)
-                path = list(reversed([(head, mincost[1], state)] + headpath))
-                heapq.heappush(candidates, (dist + mincost[0], path))
+                self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates)
                 continue
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
@@ -1649,6 +1717,9 @@ class Engine(object):
                 #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
                     nextabsreq = link.targets[state].target
+                    if state not in nextabsreq.targets:
+                        self.addUnvisisted(dist, head, state, headpath, [(idx, link)], candidates)
+                        continue
                     # do not put request in the heap, but just go for the next abstract page
                     tgt = nextabsreq.targets[state]
                     assert tgt.target
@@ -1798,7 +1869,7 @@ class Engine(object):
             node = pydot.Node(name)
             nodes[p] = node
 
-        for p in self.ag.absrequests:
+        for p in self.ag.allabsrequests:
             name = str('\\n'.join(p.requestset))
             node = pydot.Node(name)
             nodes[p] = node
