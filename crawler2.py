@@ -322,7 +322,7 @@ class Form(Link):
 
     @lazyproperty
     def linkvector(self):
-        return formvector(self.method, self.actionurl)
+        return formvector(self.method, self.actionurl, self.inputs, self.hiddens)
 
     @lazyproperty
     def keys(self):
@@ -749,8 +749,7 @@ def urlvector(request):
         urltoks.append(tuple(values))
     return tuple(urltoks)
 
-def formvector(method, action):
-    # TODO params & values
+def formvector(method, action, inputs, hiddens):
     urltoks = [method] + [i if i  else '/' for i in action.path.split('/')]
     query = action.query
     if query:
@@ -758,6 +757,11 @@ def formvector(method, action):
         keys, values = zip(*(i.split('=') for i in querytoks))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
+    if inputs:
+        urltoks.append(tuple(inputs))
+    if hiddens:
+        # TODO hiddens values
+        urltoks.append(tuple(hiddens))
     return tuple(urltoks)
 
 def linkstree(page):
