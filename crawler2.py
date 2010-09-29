@@ -838,9 +838,10 @@ class PageClusterer(object):
             nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
             #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
             if hasattr(v, "nleaves"):
+                # XXX remove magic number
                 # requrire more than 5 pages in a cluster
                 # require some diversity in the dom path in order to create a link
-                if nleaves > 5 and nleaves >= med and (n > 0 or len(k) > 5):
+                if nleaves > 10 and nleaves >= med and (n > 0 or len(k) > 10):
                     v.clusterable = True
                     level.clusterable = False
                 else:
@@ -1027,6 +1028,7 @@ class AppGraphGenerator(object):
                 #print output.green("A %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
                 #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
                 # XXX we cannot just use the index for more complex clustering
+                print "%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage)
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate, nvisits=1)
                 assert not laststate in currabspage.statelinkmap
@@ -1038,8 +1040,6 @@ class AppGraphGenerator(object):
             curr = curr.next
             currabsreq = nextabsreq
             cnt += 1
-
-        self.fillMissingRequests()
 
         self.maxstate = laststate
         self.logger.debug("application graph generated in %d steps", cnt)
@@ -1211,6 +1211,7 @@ class AppGraphGenerator(object):
         nstates = len(set(statemap))
 
         self.logger.debug("reduced states %d", nstates)
+        print statemap
 
         self.collapseGraph(statemap)
 
@@ -1388,6 +1389,7 @@ class AppGraphGenerator(object):
 
         # merge states that were reduced to the same one
         for ap in self.abspages:
+            print "===", ap
             self.collapseNode(ap.abslinks.itervalues(), statemap)
 
         self.collapseNode(self.absrequests, statemap)
@@ -1846,6 +1848,7 @@ class Engine(object):
                 maxstate = ag.generateAppGraph()
                 self.state = ag.reduceStates()
                 self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
+                ag.fillMissingRequests()
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
 
@@ -1886,7 +1889,11 @@ class Engine(object):
                     assert s == t.transition
                     linksequal[t.target].append(s)
                 for t, ss in linksequal.iteritems():
-                    edge = pydot.Edge(nodes[p], nodes[t])
+                    try:
+                        edge = pydot.Edge(nodes[p], nodes[t])
+                    except KeyError, e:
+                        self.logger.warn("Cannot find node %s", e.args[0])
+                        continue
                     ss.sort()
                     edge.set_label(",".join(str(i) for i in ss))
                     dot.add_edge(edge)
@@ -1903,7 +1910,11 @@ class Engine(object):
                 else:
                     linksequal[t.target].append(s)
             for t, ss in linksequal.iteritems():
-                edge = pydot.Edge(nodes[p], nodes[t])
+                try:
+                    edge = pydot.Edge(nodes[p], nodes[t])
+                except KeyError, e:
+                    self.logger.warn("Cannot find node %s", e.args[0])
+                    continue
                 ss.sort()
                 edge.set_label(",".join(str(i) for i in ss))
                 dot.add_edge(edge)
