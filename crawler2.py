@@ -558,10 +558,19 @@ class Links(object):
         return self.itervalues()
 
     def getUnvisited(self, state):
+        self.printInfo()
         # unvisited if we never did the request for that state
         return [(i, l) for i, l in self.iteritems() if not l.skip \
                 and (state not in l.targets
-                    or not l.targets[state].target.targets)]
+                    or not state in l.targets[state].target.targets)]
+
+    def printInfo(self):
+        print "UNV"
+        for i, l in self.iteritems():
+            if not l.skip:
+                for s, t in l.targets.iteritems():
+                    print " \t %d %s" % (s, t)
+        print "DONE"
 
     def __len__(self):
         return self.nAnchors() + self.nForms() + self.nRedirects()
@@ -596,6 +605,7 @@ class AbstractPage(object):
         self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in reqresps))]
         self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
         self.statelinkmap = {}
+        self.seenstates = set()
         self.instance = AbstractPage.InstanceCounter
         AbstractPage.InstanceCounter += 1
 
@@ -685,7 +695,7 @@ class CustomDict(dict):
             self[k] = v
 
     def __getitem__(self, k):
-        print "GET", k
+        #print "GET", k
         h = self.h(k)
         if dict.__contains__(self, h):
             return dict.__getitem__(self, self.h(k))
@@ -695,7 +705,6 @@ class CustomDict(dict):
             return v
 
     def __setitem__(self, k, v):
-        print "SET", k, v
         return dict.__setitem__(self, self.h(k), v)
 
     def __contains__(self, k):
@@ -1039,7 +1048,7 @@ class AppGraphGenerator(object):
                 #print output.green("A %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
                 #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
                 # XXX we cannot just use the index for more complex clustering
-                print "%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage)
+                #print "%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage)
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate, nvisits=1)
                 assert not laststate in currabspage.statelinkmap
@@ -1057,13 +1066,24 @@ class AppGraphGenerator(object):
 
         return laststate
 
-    def fillMissingRequests(self):
-
-        reqmap = CustomDict([(rr.request, ar) for ar in self.absrequests for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
-        print "REQMAP", reqmap
+    def updateSeenStates(self):
+        for ar in self.absrequests:
+            for t in ar.targets.itervalues():
+                t.target.seenstates.add(t.transition)
 
         for ap in self.abspages:
             allstates = set(s for l in ap.abslinks for s in l.targets)
+            assert not allstates or ap.seenstates == allstates
+
+
+    def fillMissingRequests(self):
+
+        self.updateSeenStates()
+
+        reqmap = CustomDict([(rr.request, ar) for ar in self.absrequests for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
+
+        for ap in self.abspages:
+            allstates = ap.seenstates
             for l in ap.abslinks:
                 newrequest = None
                 newrequestbuilt = False
@@ -1071,16 +1091,18 @@ class AppGraphGenerator(object):
                     if s not in l.targets:
                         if not newrequestbuilt:
                             newwebrequest = ap.reqresps[0].response.page.getNewRequest(l)
-                            print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
+                            #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
                             if newwebrequest:
                                 request = Request(newwebrequest)
-                                print "NEWR %s %s" % (request, (request.method, request.path, request.query))
+                                #print "NEWR %s %s" % (request, (request.method, request.path, request.query))
                                 newrequest = reqmap[request]
                                 newrequest.reqresps.append(RequestResponse(request, None))
                             newrequestbuilt = True
                         if newrequest:
                             l.targets[s] = Target(newrequest, transition=s, nvisits=0)
                             print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
+                            #for ss, tt in newrequest.targets.iteritems():
+                            #    print output.purple("\t %s %s" % (ss, tt))
 
         self.allabsrequests = set(reqmap.itervalues())
 
@@ -1223,7 +1245,7 @@ class AppGraphGenerator(object):
         nstates = lenstatemap
 
         self.logger.debug("reduced states %d", nstates)
-        print statemap
+        #print statemap
 
         self.collapseGraph(statemap)
 
@@ -1339,7 +1361,7 @@ class AppGraphGenerator(object):
                     bestset = max((score, s) for score, s in zip(containingsetscores, containingsets))[1]
 
                     self.logger.debug("keep state %s in stateset %s" % (m, bestset))
-                    print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
+                    #print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
 
                     for (cs, rcs) in zip(containingsets, reducedcontainingsets):
                         if cs != bestset:
@@ -1401,7 +1423,6 @@ class AppGraphGenerator(object):
 
         # merge states that were reduced to the same one
         for ap in self.abspages:
-            print "===", ap
             self.collapseNode(ap.abslinks.itervalues(), statemap)
 
         self.collapseNode(self.absrequests, statemap)
@@ -1684,7 +1705,11 @@ class Engine(object):
 
     def linkcost(self, abspage, linkidx, link, state):
         if state in link.targets:
-            nvisits = link.targets[state].nvisits + 1
+            tgt = link.targets[state]
+            nvisits = tgt.nvisits + 1
+            # also add visit count for the subsequent request
+            if tgt.target and state in tgt.target.targets:
+                nvisits += tgt.target.targets[state].nvisits
         else:
             # never visited, but it must be > 0
             nvisits = 1
