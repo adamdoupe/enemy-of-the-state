@@ -461,6 +461,7 @@ class AbstractAnchor(AbstractLink):
     def __init__(self, anchors):
         AbstractLink.__init__(self, anchors)
         self.hrefs = set(i.href for i in anchors)
+        self.type = Links.Type.ANCHOR
 
     @property
     def _str(self):
@@ -480,6 +481,7 @@ class AbstractForm(AbstractLink):
         AbstractLink.__init__(self, forms)
         self.methods = set(i.method for i in forms)
         self.actions = set(i.action for i in forms)
+        self.type = Links.Type.FORM
 
     @property
     def _str(self):
@@ -498,6 +500,7 @@ class AbstractRedirect(AbstractLink):
     def __init__(self, redirects):
         AbstractLink.__init__(self, redirects)
         self.locations = set(i.location for i in redirects)
+        self.type = Links.Type.REDIRECT
 
     @property
     def _str(self):
@@ -953,6 +956,8 @@ class PairCounter(object):
     def __repr__(self):
         return repr(self._dict)
 
+PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
+
 class AppGraphGenerator(object):
 
     def __init__(self, reqrespshead, abspages):
@@ -1073,7 +1078,11 @@ class AppGraphGenerator(object):
 
         for ap in self.abspages:
             allstates = set(s for l in ap.abslinks for s in l.targets)
-            assert not allstates or ap.seenstates == allstates
+            # allstates empty when we step back from a page
+            # allstates has one element less than seenstates when it is the last page seen
+            assert not allstates or (len(ap.seenstates - allstates) <= 1 \
+                    and not allstates - ap.seenstates), \
+                    "%s\n\t%s\n\t%s" % (ap, sorted(ap.seenstates), sorted(allstates))
 
 
     def fillMissingRequests(self):
@@ -1155,6 +1164,7 @@ class AppGraphGenerator(object):
         # need history to handle navigatin back; pair of (absrequest,absresponse)
         history = []
         currstate = 0
+        chosenlink = None
 
         while True:
             #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
@@ -1186,14 +1196,25 @@ class AppGraphGenerator(object):
                             # mark this request as givin hints for state change detection
                             currreq.statehints += 1
                             stateoff = 1
-                            for (j, (req, page)) in enumerate(reversed(history)):
-                                laststate = currstate-j-stateoff
-                                if laststate not in req.targets:
-                                    # happening due to browser back(), adjust offset
-                                    laststate = max(i for i in req.targets if i <= laststate)
-                                    stateoff = currstate-j-laststate
-                                    #print "stetoff", stateoff
-                                #print laststate, j, req.targets.keys(), req
+                            pastpages = []
+                            for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
+                                if req == currreq:
+                                    self.logger.debug("loop detected on %s", req)
+                                    print "PASTPAGES", pastpages
+                                    minnvisits = min(i.nvisits for i in pastpages)
+                                    candidates = [i for i in pastpages if i.nvisits == minnvisits]
+                                    assert len(candidates) > 0
+                                    if len(candidates):
+                                        bestcand = min((reversed(linkweigh(i.chlink, i.nvisits)), i) for i in candidates)[1]
+                                        print "BESTCAND", bestcand
+                                        target = bestcand.req.targets[bestcand.cstate]
+                                        self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
+                                        assert statemap[target.transition] == bestcand.cstate
+                                        statemap[target.transition] = target.transition
+                                        break
+
+
+
                                 target = req.targets[laststate]
                                 assert target.target == page, "%s != %s" % (target.target, page)
                                 # the Target.nvisit has not been updated yet, because we have not finalized state assignment
@@ -1206,6 +1227,8 @@ class AppGraphGenerator(object):
                                 visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
                                         self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
                                 nvisits = len(visits)
+                                #print "SSS %s %s" % (req, req.targets)
+                                print "SSS %s" % req
                                 assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
                                 if nvisits == 1:
                                     self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
@@ -1214,6 +1237,8 @@ class AppGraphGenerator(object):
                                     #if laststate >= 100:
                                     #    gracefulexit()
                                     break
+                                else:
+                                    pastpages.append(PastPage(req, page, chlink, laststate, nvisits))
                             else:
                                 # if we get hear, we need a better heuristic for splitting state
                                 raise RuntimeError()
@@ -1225,14 +1250,15 @@ class AppGraphGenerator(object):
 
             respage = currtarget.target
 
-            history.append((currreq, respage))
+            history.append((currreq, respage, chosenlink, currstate-1))
             if currstate not in respage.statelinkmap:
                 if currstate == self.maxstate:
                     # end reached
                     break
+                off = 0
                 while currstate not in respage.statelinkmap:
-                    history.pop()
-                    respage = history[-1][1]
+                    off -= 1
+                    respage = history[off][1]
 
             chosenlink = respage.statelinkmap[currstate]
             chosentarget = chosenlink.targets[currstate].target
@@ -1639,6 +1665,23 @@ class Crawler(object):
         self.currreqresp = self.currreqresp.prev
         return self.currreqresp
 
+def linkweigh(link, nvisits):
+        if link.type == Links.Type.ANCHOR:
+            if link.hasquery:
+                dist = Dist((0, 0, nvisits, 0, 0))
+            else:
+                dist = Dist((0, 0, 0, nvisits, 0))
+        elif link.type == Links.Type.FORM:
+            if link.isPOST:
+                dist = Dist((nvisits, 0, 0, 0, 0))
+            else:
+                dist = Dist((0, nvisits, 0, 0, 0))
+        elif link.type == Links.Type.REDIRECT:
+            dist = Dist((0, 0, 0, 0, nvisits))
+        else:
+            assert False, link
+        return dist
+
 class Dist(object):
     LEN = 5
 
@@ -1659,6 +1702,9 @@ class Dist(object):
     def __str__(self):
         return str(self.val)
 
+    def __reversed__(self):
+        return reversed(self.val)
+
 class FormFiller:
     def __init__(self):
         self.forms = {}
@@ -1668,6 +1714,15 @@ class FormFiller:
 
     def __getitem__(self, k):
         return self.forms[tuple(sorted([i for i in k if i]))]
+
+class ParamDefaultDict(defaultdict):
+
+    def __init__(self, factory):
+        defaultdict.__init__(self)
+        self._factory = factory
+
+    def __missing__(self, key):
+        return self._factory(key)
 
 Candidate = namedtuple("Candidate", "priority dist path")
 PathStep = namedtuple("PathStep", "abspage idx state")
@@ -1713,20 +1768,9 @@ class Engine(object):
         else:
             # never visited, but it must be > 0
             nvisits = 1
-        if linkidx[0] == Links.Type.ANCHOR:
-            if link.hasquery:
-                dist = Dist((0, 0, nvisits, 0, 0))
-            else:
-                dist = Dist((0, 0, 0, nvisits, 0))
-        elif linkidx[0] == Links.Type.FORM:
-            if link.isPOST:
-                dist = Dist((nvisits, 0, 0, 0, 0))
-            else:
-                dist = Dist((0, nvisits, 0, 0, 0))
-        elif linkidx[0] == Links.Type.REDIRECT:
-            dist = Dist((0, 0, 0, 0, nvisits))
-        else:
-            assert False, linkidx
+
+        assert link.type == linkidx[0]
+        dist = linkweigh(link, nvisits)
 
         return dist
 
