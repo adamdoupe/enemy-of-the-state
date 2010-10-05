@@ -2001,6 +2001,34 @@ class Engine(object):
             f.write(dot.to_string())
         self.logger.debug("DOT graph written")
 
+    def writeStateDot(self):
+        if not self.ag:
+            self.logger.debug("not creating state DOT graph")
+            return
+
+        self.logger.info("creating state DOT graph")
+        dot = pydot.Dot()
+        nodes = ParamDefaultDict(lambda x: pydot.Node(str(x)))
+
+        for p in self.ag.allabsrequests:
+            for s, t in p.targets.iteritems():
+                if s != t.transition:
+                    name = str('\\n'.join(p.requestset))
+                    edge = pydot.Edge(nodes[s], nodes[t.transition])
+                    edge.set_label(name)
+                    dot.add_edge(edge)
+
+        self.logger.debug("%d DOT nodes", len(nodes))
+
+        for n in nodes.itervalues():
+            dot.add_node(n)
+
+        dot.write_ps('stategraph.ps')
+        #dot.write_pdf('graph.pdf')
+        with open('stategraph.dot', 'w') as f:
+            f.write(dot.to_string())
+        self.logger.debug("DOT state graph written")
+
 
 if __name__ == "__main__":
     import sys
@@ -2018,7 +2046,10 @@ if __name__ == "__main__":
     except:
         import traceback
         traceback.print_exc()
+        import pdb
+        pdb.post_mortem()
     finally:
+        e.writeStateDot()
         e.writeDot()
 
 
