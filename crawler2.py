@@ -1152,6 +1152,18 @@ class AppGraphGenerator(object):
                 if not uniqueelems:
                     equalstates -= frozenset((esset,))
 
+    def dropRedundantStateGroupsMild(self, equalstates):
+        # removes sets that are subsets of others
+        goodequalstates = []
+        for es in equalstates:
+            for es2 in equalstates:
+                if es != es2 and es.issubset(es2):
+                    break
+            else:
+                goodequalstates.append(es)
+        return set(goodequalstates)
+
+
     def reduceStates(self):
         self.logger.debug("reducing state number from %d", self.maxstate)
 
@@ -1170,13 +1182,13 @@ class AppGraphGenerator(object):
             #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
             currtarget = currreq.targets[currstate]
 
-            # if all the previous states leading to the same target caused a state transition,
+            # if any of the previous states leading to the same target caused a state transition,
             # directly guess that this request will cause a state transition
             # this behavior is needed because it might happen that the state transition is not detected,
             # and the state assignment fails
             smallerstates = [(s, t) for s, t in currreq.targets.iteritems()
                     if s < currstate and t.target == currtarget.target]
-            if smallerstates and all(statemap[t.transition] != s for s, t in smallerstates):
+            if smallerstates and any(statemap[t.transition] != s for s, t in smallerstates):
                 #print output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets)
                 currstate += 1
             else:
@@ -1205,12 +1217,16 @@ class AppGraphGenerator(object):
                                     candidates = [i for i in pastpages if i.nvisits == minnvisits]
                                     assert len(candidates) > 0
                                     if len(candidates):
-                                        bestcand = min((reversed(linkweigh(i.chlink, i.nvisits)), i) for i in candidates)[1]
+                                        bestcand = min(((tuple(reversed(linkweigh(i.chlink, i.nvisits))), i) for i in candidates), key=lambda x: x[0])[1]
                                         print "BESTCAND", bestcand
                                         target = bestcand.req.targets[bestcand.cstate]
                                         self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                                         assert statemap[target.transition] == bestcand.cstate
-                                        statemap[target.transition] = target.transition
+                                        # this request will always change state
+                                        for t in bestcand.req.targets.itervalues():
+                                            if t.transition <= currstate:
+                                                statemap[t.transition] = t.transition
+#                                        import pdb; pdb.set_trace()
                                         break
 
 
@@ -1233,7 +1249,10 @@ class AppGraphGenerator(object):
                                 if nvisits == 1:
                                     self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
                                     assert statemap[target.transition] == laststate
-                                    statemap[target.transition] = target.transition
+                                    # this request will always change state
+                                    for t in req.targets.itervalues():
+                                        if t.transition <= currstate:
+                                            statemap[t.transition] = t.transition
                                     #if laststate >= 100:
                                     #    gracefulexit()
                                     break
@@ -1343,8 +1362,9 @@ class AppGraphGenerator(object):
                                         print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
                                         differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
                                         targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
-                                        self.dropRedundantStateGroups(targetequalstates)
+                                        targetequalstates = self.dropRedundantStateGroupsMild(targetequalstates)
 
+                            self.dropRedundantStateGroups(targetequalstates)
                             print "TES", targetequalstates, ar, t
 
                             startstatebins = set(reduce(lambda a, b: StateSet(a | b), (StateSet(targetstatebins[(t, ts)]) for ts in esb)) for esb in targetequalstates)
