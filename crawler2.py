@@ -1250,7 +1250,7 @@ class AppGraphGenerator(object):
                 edges[b].add(a)
 
             degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
-            heapdegrees = [(-cn.coloredneighbors, -cn.degree, cn.node) for cn in degrees.itervalues()]
+            heapdegrees = [cn.node for cn in degrees.itervalues()]
             heapq.heapify(heapdegrees)
 
             assignments = {}
@@ -1258,7 +1258,7 @@ class AppGraphGenerator(object):
             maxused = 0
 
             while heapdegrees:
-                coloredneighbors, degree, node = heapq.heappop(heapdegrees)
+                node = heapq.heappop(heapdegrees)
                 if node in assignments:
                     continue
                 neighcolors = frozenset(assignments[n] for n in edges[node] if n in assignments)
@@ -1275,7 +1275,7 @@ class AppGraphGenerator(object):
                 for n in edges[node]:
                     if n not in assignments:
                         cn = degrees[n]
-                        heapq.heappush(heapdegrees, (-cn.coloredneighbors-1, -cn.degree, cn.node))
+                        heapq.heappush(heapdegrees, cn.node)
 
             bins = [[] for i in range(lenallstates)]
             for n, c in assignments.iteritems():
@@ -1964,10 +1964,6 @@ class Engine(object):
             if (head, state) in seen:
                 continue
             seen.add((head, state))
-            unvlinks = head.abslinks.getUnvisited(state)
-            if unvlinks:
-                self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
-                continue
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
                     continue
@@ -1991,8 +1987,13 @@ class Engine(object):
                     #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
                     heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
-                    # TODO handle state changes
-                    raise NotImplementedError
+                    unvlinks = head.abslinks.getUnvisited(state)
+                    if unvlinks:
+                        self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
+                        continue
+                    else:
+                        # TODO handle state changes
+                        raise NotImplementedError
         nvisited = len(set(i[0] for i in seen))
         if candidates:
             return candidates[0].path, nvisited
