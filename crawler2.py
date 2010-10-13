@@ -956,6 +956,9 @@ class PairCounter(object):
     def __repr__(self):
         return repr(self._dict)
 
+    def __iter__(self):
+        return iter(self._dict)
+
 PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
 
 class AppGraphGenerator(object):
@@ -1164,136 +1167,134 @@ class AppGraphGenerator(object):
         return set(goodequalstates)
 
 
-    def reduceStates(self):
-        self.logger.debug("reducing state number from %d", self.maxstate)
+    def mergeStatesGreedyColoring(self, statemap):
 
-        # map each state to its equivalent one
-        statemap = range(self.maxstate+1)
-        lenstatemap = len(statemap)
+        seentogether = PairCounter()
+        differentpairs = PairCounter()
 
-        currreq = self.headabsreq
+        for ar in sorted(self.absrequests):
+            diffbins = defaultdict(set)
+            equalbins = defaultdict(set)
+            for s, t in ar.targets.iteritems():
+                diffbins[t.target].add(s)
+                # these quality-only bins are usful in the case the last examined pages caused a state transition:
+                # we need the latest state to appear in at least one bin!
+                equalbins[t.target].add(t.transition)
+            statebins = [StateSet(i) for i in diffbins.itervalues()]
+            equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-        # need history to handle navigatin back; pair of (absrequest,absresponse)
-        history = []
-        currstate = 0
-        chosenlink = None
+            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
+            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in equalstatebins))
+
+            for sb in statebins:
+                seentogether.addset(sb)
+            for esb in equalstatebins:
+                seentogether.addset(esb)
+
+            differentpairs.addallcombinations(statebins)
+
+        allstatesset = frozenset(statemap)
+        allstates = sorted(allstatesset)
+        lenallstates = len(allstates)
+
+        for i, a in enumerate(allstates):
+            for b in allstates[i+1:]:
+                if (a, b) not in seentogether:
+                    print output.darkred("NEVER %s" % ((a, b), ))
+                    differentpairs.add(a, b)
+
+
+        olddifferentpairslen = -1
 
         while True:
-            #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
-            currtarget = currreq.targets[currstate]
 
-            # if any of the previous states leading to the same target caused a state transition,
-            # directly guess that this request will cause a state transition
-            # this behavior is needed because it might happen that the state transition is not detected,
-            # and the state assignment fails
-            smallerstates = [(s, t) for s, t in currreq.targets.iteritems()
-                    if s < currstate and t.target == currtarget.target]
-            if smallerstates and any(statemap[t.transition] != s for s, t in smallerstates):
-                #print output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets)
-                currstate += 1
+            for ar in self.absrequests:
+                targetbins = defaultdict(set)
+                targetstatebins = defaultdict(set)
+                for s, t in ar.targets.iteritems():
+                    targetbins[t.target].add(t.transition)
+                    targetstatebins[(t.target, t.transition)].add(s)
+
+                for t, states in targetbins.iteritems():
+                    if len(states) > 1:
+                        targetequalstates = set([StateSet(states)])
+                        print "preTES", targetequalstates, ar, t
+
+                        statelist = sorted(states)
+
+                        for i, a in enumerate(statelist):
+                            for b in statelist[i+1:]:
+                                if differentpairs.get(a, b):
+                                    print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
+                                    differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
+
+            differentpairslen = len(differentpairs)
+            assert differentpairslen >= olddifferentpairslen
+            if differentpairslen == olddifferentpairslen:
+                break
             else:
-                # find if there are other states that we have already processed that lead to a different target
-                smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate and t.target != currtarget.target], reverse=True)
-                if smallerstates:
-                    currmapsto = self.getMinMappedState(currstate, statemap)
-                    for ss in smallerstates:
-                        ssmapsto = self.getMinMappedState(ss, statemap)
-                        if ssmapsto == currmapsto:
-                            self.logger.debug(output.teal("need to split state for request %s")
-                                    % currtarget)
-                            self.logger.debug("\t%d(%d)->%s"
-                                    % (currstate, currmapsto, currtarget))
-                            self.logger.debug("\t%d(%d)->%s"
-                                    % (ss, ssmapsto, currreq.targets[ss]))
-                            # mark this request as givin hints for state change detection
-                            currreq.statehints += 1
-                            stateoff = 1
-                            pastpages = []
-                            for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
-                                if req == currreq:
-                                    self.logger.debug("loop detected on %s", req)
-                                    print "PASTPAGES", pastpages
-                                    minnvisits = min(i.nvisits for i in pastpages)
-                                    candidates = [i for i in pastpages if i.nvisits == minnvisits]
-                                    assert len(candidates) > 0
-                                    if len(candidates):
-                                        bestcand = min(((tuple(reversed(linkweigh(i.chlink, i.nvisits))), i) for i in candidates), key=lambda x: x[0])[1]
-                                        print "BESTCAND", bestcand
-                                        target = bestcand.req.targets[bestcand.cstate]
-                                        self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
-                                        assert statemap[target.transition] == bestcand.cstate
-                                        # this request will always change state
-                                        for t in bestcand.req.targets.itervalues():
-                                            if t.transition <= currstate:
-                                                statemap[t.transition] = t.transition
-#                                        import pdb; pdb.set_trace()
-                                        break
+                olddifferentpairslen = differentpairslen
+
+            writeColorableStateGraph(allstates, differentpairs)
+
+            ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
+
+            edges = defaultdict(set)
+            for a, b in differentpairs:
+                assert a != b
+                edges[a].add(b)
+                edges[b].add(a)
+
+            degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
+            heapdegrees = [(-cn.coloredneighbors, -cn.degree, cn.node) for cn in degrees.itervalues()]
+            heapq.heapify(heapdegrees)
+
+            assignments = {}
+
+            maxused = 0
+
+            while heapdegrees:
+                coloredneighbors, degree, node = heapq.heappop(heapdegrees)
+                if node in assignments:
+                    continue
+                neighcolors = frozenset(assignments[n] for n in edges[node] if n in assignments)
+                for i in range(maxused, -1, -1) + [maxused+1]:
+                    if i not in neighcolors:
+                        print "ASSIGN %d %d" % (node, i)
+                        assignments[node] = i
+                        maxused = max(maxused, i)
+                        break
+                    else:
+                        print "NEIGH %d %s" % (i, node)
+                else:
+                    assert False
+                for n in edges[node]:
+                    if n not in assignments:
+                        cn = degrees[n]
+                        heapq.heappush(heapdegrees, (-cn.coloredneighbors-1, -cn.degree, cn.node))
+
+            bins = [[] for i in range(lenallstates)]
+            for n, c in assignments.iteritems():
+                bins[c].append(n)
+            bins = [StateSet(i) for i in bins if i]
+
+            colormap = [min(nn) for nn in bins]
+
+            for n, c in assignments.iteritems():
+                statemap[n] = colormap[c]
+
+            for i in range(len(statemap)):
+                statemap[i] = statemap[statemap[i]]
+
+            nstates = len(set(statemap))
+            self.logger.debug(output.darkred("almost final states %d %s"), nstates, sorted(bins))
+
+            differentpairs.addallcombinations(bins)
 
 
 
-                                target = req.targets[laststate]
-                                assert target.target == page, "%s != %s" % (target.target, page)
-                                # the Target.nvisit has not been updated yet, because we have not finalized state assignment
-                                # let's compute the number of simits by counting the states that
-                                # map to the same one and share the target abstract page
-                                assert target.nvisits == 1, target.nvisits
-                                mappedlaststate = self.getMinMappedState(laststate, statemap)
-                                #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
-                                # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
-                                visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
-                                        self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
-                                nvisits = len(visits)
-                                #print "SSS %s %s" % (req, req.targets)
-                                print "SSS %s" % req
-                                assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
-                                if nvisits == 1:
-                                    self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
-                                    assert statemap[target.transition] == laststate
-                                    # this request will always change state
-                                    for t in req.targets.itervalues():
-                                        if t.transition <= currstate:
-                                            statemap[t.transition] = t.transition
-                                    #if laststate >= 100:
-                                    #    gracefulexit()
-                                    break
-                                else:
-                                    pastpages.append(PastPage(req, page, chlink, laststate, nvisits))
-                            else:
-                                # if we get hear, we need a better heuristic for splitting state
-                                raise RuntimeError()
-                            currmapsto = self.getMinMappedState(currstate, statemap)
-                            assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
 
-                currstate += 1
-                statemap[currstate] = currstate-1
-
-            respage = currtarget.target
-
-            history.append((currreq, respage, chosenlink, currstate-1))
-            if currstate not in respage.statelinkmap:
-                if currstate == self.maxstate:
-                    # end reached
-                    break
-                off = 0
-                while currstate not in respage.statelinkmap:
-                    off -= 1
-                    respage = history[off][1]
-
-            chosenlink = respage.statelinkmap[currstate]
-            chosentarget = chosenlink.targets[currstate].target
-
-            currreq = chosentarget
-
-        for i in range(lenstatemap):
-            statemap[i] = self.getMinMappedState(i, statemap)
-
-        nstates = lenstatemap
-
-        self.logger.debug("reduced states %d", nstates)
-        #print statemap
-
-        self.collapseGraph(statemap)
-
+    def mergeStates(self, statemap):
         equalstates = set((StateSet(statemap), ))
         seentogether = PairCounter()
         differentpairs = PairCounter()
@@ -1431,11 +1432,145 @@ class AppGraphGenerator(object):
                 equalstatemap[s] = mins
 
 
-        for i in range(lenstatemap):
+        for i in range(len(statemap)):
             statemap[i] = equalstatemap[statemap[i]]
 
         nstates = len(set(statemap))
         self.logger.debug("final states %d", nstates)
+
+
+    def reduceStates(self):
+        self.logger.debug("reducing state number from %d", self.maxstate)
+
+        # map each state to its equivalent one
+        statemap = range(self.maxstate+1)
+        lenstatemap = len(statemap)
+
+        currreq = self.headabsreq
+
+        # need history to handle navigatin back; pair of (absrequest,absresponse)
+        history = []
+        currstate = 0
+        chosenlink = None
+
+        while True:
+            #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
+            currtarget = currreq.targets[currstate]
+
+            # if any of the previous states leading to the same target caused a state transition,
+            # directly guess that this request will cause a state transition
+            # this behavior is needed because it might happen that the state transition is not detected,
+            # and the state assignment fails
+            smallerstates = [(s, t) for s, t in currreq.targets.iteritems()
+                    if s < currstate and t.target == currtarget.target]
+            if smallerstates and any(statemap[t.transition] != s for s, t in smallerstates):
+                #print output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets)
+                currstate += 1
+            else:
+                # find if there are other states that we have already processed that lead to a different target
+                smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate and t.target != currtarget.target], reverse=True)
+                if smallerstates:
+                    currmapsto = self.getMinMappedState(currstate, statemap)
+                    for ss in smallerstates:
+                        ssmapsto = self.getMinMappedState(ss, statemap)
+                        if ssmapsto == currmapsto:
+                            self.logger.debug(output.teal("need to split state for request %s")
+                                    % currtarget)
+                            self.logger.debug("\t%d(%d)->%s"
+                                    % (currstate, currmapsto, currtarget))
+                            self.logger.debug("\t%d(%d)->%s"
+                                    % (ss, ssmapsto, currreq.targets[ss]))
+                            # mark this request as givin hints for state change detection
+                            currreq.statehints += 1
+                            stateoff = 1
+                            pastpages = []
+                            for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
+                                if req == currreq:
+                                    self.logger.debug("loop detected on %s", req)
+                                    print "PASTPAGES", pastpages
+                                    minnvisits = min(i.nvisits for i in pastpages)
+                                    candidates = [i for i in pastpages if i.nvisits == minnvisits]
+                                    assert len(candidates) > 0
+                                    if len(candidates):
+                                        bestcand = min(((tuple(reversed(linkweigh(i.chlink, i.nvisits))), i) for i in candidates), key=lambda x: x[0])[1]
+                                        print "BESTCAND", bestcand
+                                        target = bestcand.req.targets[bestcand.cstate]
+                                        self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
+                                        assert statemap[target.transition] == bestcand.cstate
+                                        # this request will always change state
+                                        for t in bestcand.req.targets.itervalues():
+                                            if t.transition <= currstate:
+                                                statemap[t.transition] = t.transition
+#                                        import pdb; pdb.set_trace()
+                                        break
+
+
+
+                                target = req.targets[laststate]
+                                assert target.target == page, "%s != %s" % (target.target, page)
+                                # the Target.nvisit has not been updated yet, because we have not finalized state assignment
+                                # let's compute the number of simits by counting the states that
+                                # map to the same one and share the target abstract page
+                                assert target.nvisits == 1, target.nvisits
+                                mappedlaststate = self.getMinMappedState(laststate, statemap)
+                                #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
+                                # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
+                                visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
+                                        self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
+                                nvisits = len(visits)
+                                #print "SSS %s %s" % (req, req.targets)
+                                print "SSS %s" % req
+                                assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
+                                if nvisits == 1:
+                                    self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
+                                    assert statemap[target.transition] == laststate
+                                    # this request will always change state
+                                    for t in req.targets.itervalues():
+                                        if t.transition <= currstate:
+                                            statemap[t.transition] = t.transition
+                                    #if laststate >= 100:
+                                    #    gracefulexit()
+                                    break
+                                else:
+                                    pastpages.append(PastPage(req, page, chlink, laststate, nvisits))
+                            else:
+                                # if we get hear, we need a better heuristic for splitting state
+                                raise RuntimeError()
+                            currmapsto = self.getMinMappedState(currstate, statemap)
+                            assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
+
+                currstate += 1
+                statemap[currstate] = currstate-1
+
+            respage = currtarget.target
+
+            history.append((currreq, respage, chosenlink, currstate-1))
+            if currstate not in respage.statelinkmap:
+                if currstate == self.maxstate:
+                    # end reached
+                    break
+                off = 0
+                while currstate not in respage.statelinkmap:
+                    off -= 1
+                    respage = history[off][1]
+
+            chosenlink = respage.statelinkmap[currstate]
+            chosentarget = chosenlink.targets[currstate].target
+
+            currreq = chosentarget
+
+        for i in range(lenstatemap):
+            statemap[i] = self.getMinMappedState(i, statemap)
+
+        nstates = lenstatemap
+
+        self.logger.debug("statemap states %d", nstates)
+        #print statemap
+
+        self.collapseGraph(statemap)
+
+        self.mergeStatesGreedyColoring(statemap)
+        #self.mergeStates(statemap)
 
         self.collapseGraph(statemap)
 
@@ -1996,6 +2131,7 @@ class Engine(object):
 
                 if wanttoexit:
                     return
+                self.writeStateDot()
 
     def writeDot(self):
         if not self.ag:
@@ -2092,6 +2228,26 @@ class Engine(object):
         with open('stategraph.dot', 'w') as f:
             f.write(dot.to_string())
         self.logger.debug("DOT state graph written")
+
+
+def writeColorableStateGraph(allstates, differentpairs):
+
+    dot = pydot.Dot(graph_type='graph')
+    nodes = {}
+    for s in allstates:
+        node = pydot.Node(str(s))
+        nodes[s] = node
+        dot.add_node(node)
+
+
+    for s, t in differentpairs:
+        edge = pydot.Edge(nodes[s], nodes[t])
+        dot.add_edge(edge)
+
+    dot.write_ps('colorablestategraph.ps')
+    #dot.write_pdf('graph.pdf')
+    with open('colorablestategraph.dot', 'w') as f:
+        f.write(dot.to_string())
 
 
 if __name__ == "__main__":
