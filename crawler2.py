@@ -1222,14 +1222,14 @@ class AppGraphGenerator(object):
                 for t, states in targetbins.iteritems():
                     if len(states) > 1:
                         targetequalstates = set([StateSet(states)])
-                        print "preTES", targetequalstates, ar, t
+                        #print "preTES", targetequalstates, ar, t
 
                         statelist = sorted(states)
 
                         for i, a in enumerate(statelist):
                             for b in statelist[i+1:]:
                                 if differentpairs.get(a, b):
-                                    print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
+                                    #print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
                                     differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
 
             differentpairslen = len(differentpairs)
@@ -1269,7 +1269,7 @@ class AppGraphGenerator(object):
                         maxused = max(maxused, i)
                         break
                     else:
-                        print "NEIGH %d %s" % (i, node)
+                        print "NEIGH %s %d" % (node, i)
                 else:
                     assert False
                 for n in edges[node]:
@@ -1284,16 +1284,24 @@ class AppGraphGenerator(object):
 
             colormap = [min(nn) for nn in bins]
 
+            print "CMAP", colormap
+
             for n, c in assignments.iteritems():
                 statemap[n] = colormap[c]
 
-            for i in range(len(statemap)):
-                statemap[i] = statemap[statemap[i]]
+            print "SMAP", statemap
 
-            nstates = len(set(statemap))
-            self.logger.debug(output.darkred("almost final states %d %s"), nstates, sorted(bins))
+            self.logger.debug(output.darkred("almost final states %s"), sorted(bins))
 
             differentpairs.addallcombinations(bins)
+
+        for i in range(len(statemap)):
+            statemap[i] = statemap[statemap[i]]
+
+        print "SMAP", statemap
+
+        nstates = len(set(statemap))
+        self.logger.debug(output.darkred("final states %d %s"), nstates, sorted(bins))
 
 
 
@@ -1573,8 +1581,12 @@ class AppGraphGenerator(object):
 
         self.collapseGraph(statemap)
 
+        print statemap
+
         self.mergeStatesGreedyColoring(statemap)
         #self.mergeStates(statemap)
+
+        print statemap
 
         self.collapseGraph(statemap)
 
