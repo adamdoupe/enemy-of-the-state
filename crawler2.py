@@ -561,7 +561,7 @@ class Links(object):
         return self.itervalues()
 
     def getUnvisited(self, state):
-        self.printInfo()
+        #self.printInfo()
         # unvisited if we never did the request for that state
         return [(i, l) for i, l in self.iteritems() if not l.skip \
                 and (state not in l.targets
@@ -1092,14 +1092,18 @@ class AppGraphGenerator(object):
 
         self.updateSeenStates()
 
-        reqmap = CustomDict([(rr.request, ar) for ar in self.absrequests for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
+        # XXX using the following hash function, requests may overlap
+        # we should actually have an heuristic to choose the good one...
+        reqmap = CustomDict([(rr.request, ar) for ar in sorted(self.absrequests) for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
 
         for ap in self.abspages:
             allstates = ap.seenstates
+            #print "AP", ap, ap.seenstates
             for l in ap.abslinks:
+                #print "LINK", l
                 newrequest = None
                 newrequestbuilt = False
-                for s in allstates:
+                for s in sorted(allstates):
                     if s not in l.targets:
                         if not newrequestbuilt:
                             newwebrequest = ap.reqresps[0].response.page.getNewRequest(l)
@@ -1112,7 +1116,7 @@ class AppGraphGenerator(object):
                             newrequestbuilt = True
                         if newrequest:
                             l.targets[s] = Target(newrequest, transition=s, nvisits=0)
-                            print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
+                            #print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
                             #for ss, tt in newrequest.targets.iteritems():
                             #    print output.purple("\t %s %s" % (ss, tt))
 
@@ -1929,10 +1933,10 @@ class Engine(object):
 
         return dist
 
-    def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority):
+    def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         unvlink = unvlinks[0]
-        self.logger.debug("found unvisited link %s in page %s (%d) dist %s", unvlink,
-                head, state, dist)
+        self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s (pri %d, new=%s)",
+                unvlink, len(unvlinks), head, state, dist, priority, new)
         mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         heapq.heappush(candidates, Candidate(priority, dist + mincost[0], path))
@@ -1950,7 +1954,7 @@ class Engine(object):
             seen.add((head, state))
             unvlinks = head.abslinks.getUnvisited(state)
             if unvlinks:
-                self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0)
+                self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
                 continue
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
@@ -2047,7 +2051,7 @@ class Engine(object):
                 rr = rr.prev
                 print "RRRR", rr
             self.logger.debug("last changing request %s", rr)
-            print "recentlyseen", recentlyseen
+            #print "recentlyseen", recentlyseen
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
             if self.ag:
                 self.logger.debug("visited %d/%d abstract pages", nvisited, len(self.ag.abspages))
