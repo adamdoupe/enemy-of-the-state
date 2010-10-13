@@ -1187,8 +1187,8 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
-            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in equalstatebins))
+            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
+            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
 
             for sb in statebins:
                 seentogether.addset(sb)
