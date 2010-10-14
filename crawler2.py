@@ -1836,25 +1836,25 @@ class Crawler(object):
         self.currreqresp = self.currreqresp.prev
         return self.currreqresp
 
-def linkweigh(link, nvisits):
+def linkweigh(link, nvisits, othernvisits=0):
         if link.type == Links.Type.ANCHOR:
             if link.hasquery:
-                dist = Dist((0, 0, nvisits, 0, 0))
+                dist = Dist((0, 0, 0, 0, nvisits, othernvisits, 0, 0, 0, 0))
             else:
-                dist = Dist((0, 0, 0, nvisits, 0))
+                dist = Dist((0, 0, 0, 0, 0, 0, nvisits, othernvisits, 0, 0))
         elif link.type == Links.Type.FORM:
             if link.isPOST:
-                dist = Dist((nvisits, 0, 0, 0, 0))
+                dist = Dist((nvisits, othernvisits, 0, 0, 0, 0, 0, 0, 0, 0))
             else:
-                dist = Dist((0, nvisits, 0, 0, 0))
+                dist = Dist((0, 0, nvisits, othernvisits, 0, 0, 0, 0, 0, 0))
         elif link.type == Links.Type.REDIRECT:
-            dist = Dist((0, 0, 0, 0, nvisits))
+            dist = Dist((0, 0, 0, 0, 0, 0, 0, 0, nvisits, othernvisits))
         else:
             assert False, link
         return dist
 
 class Dist(object):
-    LEN = 5
+    LEN = 10
 
     def __init__(self, v=None):
         """ The content of the vector is as follow:
@@ -1940,18 +1940,27 @@ class Engine(object):
             # never visited, but it must be > 0
             nvisits = 1
 
+        othernvisits = 0
+        for t in link.targets.itervalues():
+            othernvisits += t.nvisits
+            if t.target:
+                for tt in t.target.targets.itervalues():
+                    othernvisits += tt.nvisits
+
+
         assert link.type == linkidx[0]
-        dist = linkweigh(link, nvisits)
+        dist = linkweigh(link, nvisits, othernvisits)
 
         return dist
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         unvlink = unvlinks[0]
-        self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s (pri %d, new=%s)",
-                unvlink, len(unvlinks), head, state, dist, priority, new)
         mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
-        heapq.heappush(candidates, Candidate(priority, dist + mincost[0], path))
+        newdist = dist + mincost[0]
+        self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
+                unvlink, len(unvlinks), head, state, dist, newdist, priority, new)
+        heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
         # recentlyseen is the set of requests done since last state change
