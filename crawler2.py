@@ -1941,11 +1941,10 @@ class Engine(object):
             nvisits = 1
 
         othernvisits = 0
-        for t in link.targets.itervalues():
-            othernvisits += t.nvisits
-            if t.target:
-                for tt in t.target.targets.itervalues():
-                    othernvisits += tt.nvisits
+        if state in link.targets:
+            for t in link.targets.itervalues():
+                if t.target == tgt.target:
+                    othernvisits += t.nvisits
 
 
         assert link.type == linkidx[0]
