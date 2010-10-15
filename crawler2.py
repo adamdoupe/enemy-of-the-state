@@ -5,6 +5,10 @@ import urlparse
 import re
 import heapq
 import itertools
+import random
+
+rng = random.Random()
+rng.seed(1)
 
 import pydot
 
@@ -329,22 +333,56 @@ class Form(Link):
 
     @lazyproperty
     def linkvector(self):
-        return formvector(self.method, self.actionurl, self.inputs, self.hiddens)
+        return formvector(self.method, self.actionurl, self.inputnames, self.hiddennames)
 
     @lazyproperty
-    def keys(self):
+    def elemnames(self):
+        return [i.name for i in self.elems]
+
+    @lazyproperty
+    def elems(self):
         return self.inputs + self.textareas + self.selects
+
+    def buildFormField(self, e):
+        etype = e.getAttribute('type').lower()
+        name = e.getAttribute('name')
+        value = e.getAttribute('value')
+        if etype == "hidden":
+            type = FormField.Type.HIDDEN
+        elif etype == "text":
+            type = FormField.Type.TEXT
+        elif etype == "checkbox":
+            type = FormField.Type.CHECKBOX
+        else:
+            type = FormField.Type.OTHER
+        return FormField(type, name, value)
+
+    @lazyproperty
+    def inputnames(self):
+        return [i.name for i in self.inputs]
+
+    @lazyproperty
+    def hiddennames(self):
+        return [i.name for i in self.hiddens]
+
+    @lazyproperty
+    def textareanames(self):
+        return [i.name for i in self.textareas]
+
+    @lazyproperty
+    def selectnames(self):
+        return [i.name for i in self.selectnames]
 
     @lazyproperty
     def inputs(self):
-        return [e.getAttribute('name')
+        return [self.buildFormField(e)
                 for e in (htmlunit.HtmlElement.cast_(i)
                     for i in self.internal.getHtmlElementsByTagName('input'))
                 if e.getAttribute('type').lower() != "hidden"]
 
     @lazyproperty
     def hiddens(self):
-        return [e.getAttribute('name')
+        return [self.buildFormField(e)
                 for e in (htmlunit.HtmlElement.cast_(i)
                     for i in self.internal.getHtmlElementsByTagName('input'))
                 if e.getAttribute('type').lower() == "hidden"]
@@ -1791,8 +1829,9 @@ class Crawler(object):
 
         iform = form.internal
 
-        for k,v in params.iteritems():
-            iform.getInputByName(k).setValueAttribute(v)
+        for k, vv in params.iteritems():
+            for i, v in zip(iform.getInputsByName(k), vv):
+                i.setValueAttribute(v)
 
         try:
             # find an element to click in order to submit the form
@@ -1876,15 +1915,39 @@ class Dist(object):
     def __reversed__(self):
         return reversed(self.val)
 
-class FormFiller:
+class FormField(object):
+
+    Type = Constants("CHECKBOX", "TEXT", "HIDDEN", "OTHER")
+
+    def __init__(self, type, name, value=None):
+        self.type = type
+        self.name = name
+        self.value = value
+
+
+
+class FormFiller(object):
     def __init__(self):
         self.forms = {}
 
     def add(self, k):
-        self.forms[tuple(sorted(k.keys()))] = k
+        self.forms[tuple(sorted(i for i in k.iterkeys()))] = k
 
     def __getitem__(self, k):
-        return self.forms[tuple(sorted([i for i in k if i]))]
+        return self.forms[tuple(sorted([i.name for i in k if i.name]))]
+
+    def randfill(self, keys):
+        res = defaultdict(list)
+        for f in sorted(keys):
+            if f.type == FormField.Type.CHECKBOX:
+                value = rng.choice([f.value, ''])
+            if f.type == FormField.Type.HIDDEN:
+                value = f.value
+            else:
+                value = ''
+            res[f.name].append(value)
+        return res
+
 
 class ParamDefaultDict(defaultdict):
 
@@ -2102,13 +2165,12 @@ class Engine(object):
         return (Engine.Actions.BACK, )
 
     def submitForm(self, form):
+        formkeys = form.elems
+        self.logger.debug("form keys %r", formkeys)
         try:
-            formkeys = form.keys
-            self.logger.debug("form keys %r", formkeys)
             params = self.formfiller[formkeys]
         except KeyError:
-            # we do not have parameters for the form
-            params = {}
+            params = self.formfiller.randfill(formkeys)
         return self.cr.submitForm(form, params)
 
 
@@ -2279,11 +2341,11 @@ if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.DEBUG)
     ff = FormFiller()
-    login = {'username': 'ludo', 'password': 'duuwhe782osjs'}
+    login = {'username': ['ludo'], 'password': ['duuwhe782osjs']}
     ff.add(login)
-    login = {'user': 'ludo', 'pass': 'ludo'}
+    login = {'user': ['ludo'], 'pass': ['ludo']}
     ff.add(login)
-    login = {'userId': 'temp01', 'password': 'Temp@67A%', 'newURL': "", "datasource": "myyardi", 'form_submit': ""}
+    login = {'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]}
     ff.add(login)
     e = Engine(ff)
     try:
