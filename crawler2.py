@@ -6,6 +6,7 @@ import re
 import heapq
 import itertools
 import random
+import math
 
 rng = random.Random()
 rng.seed(1)
@@ -311,6 +312,10 @@ class Anchor(Link):
 
 
 class Form(Link):
+    SUBMITTABLES = [("input", "type", "submit"),
+                    ("input", "type", "image"),
+                    ("input", "type", "button"),
+                    ("button", "type", "submit")]
     GET, POST = ("GET", "POST")
 
     @lazyproperty
@@ -467,13 +472,49 @@ class Page(object):
     def links(self):
         return Links(self.anchors, self.forms, self.redirects)
 
-    def getNewRequest(self, link):
+    def getNewRequest(self, idx, link):
         if isinstance(link, AbstractAnchor):
             if len(link.hrefs) == 1:
                 href = iter(link.hrefs).next()
                 if not href.strip().lower().startswith("javascript:"):
                     url = self.internal.getFullyQualifiedUrl(href)
                     return htmlunit.WebRequest(url)
+        elif isinstance(link, AbstractForm):
+            if len(link.methods) == 1:
+                submitter = None
+                iform = self.links[idx].internal
+                for submittable in Form.SUBMITTABLES:
+                    try:
+                        submitter = iform.getOneHtmlElementByAttribute(*submittable)
+                        print "SUBMITTER", submitter, submitter.getPage()
+                        break
+                    except htmlunit.JavaError, e:
+                        javaex = e.getJavaException()
+                        if not htmlunit.ElementNotFoundException.instance_(javaex):
+                            raise
+                        continue
+                if submitter:
+                    print "CASTING?"
+                    newreq = iform.getWebRequest(submitter)
+                    if htmlunit.HtmlImageInput.instance_(submitter):
+                        #import pdb; pdb.set_trace()
+                        url = newreq.getUrl()
+                        print "CASTING!", url.getQuery(), url.getPath()
+                        urlstr = url.getPath()
+                        if urlstr.find('?') == -1:
+                            urlstr += "?"
+                        query = url.getQuery()
+                        if query:
+                            urlstr += query
+                            if query.endswith('&='):
+                                # htmlunits generate a spurios &= at the end...
+                                urlstr = urlstr[:-2]
+                            urlstr += '&'
+                        urlstr += "x=0&y=0"
+                        newurl = htmlunit.URL(url, urlstr)
+                        newreq.setUrl(newurl)
+                    print "NEWFORMREQ %s %s" % (newreq, self)
+                    return newreq
         return None
 
 
@@ -608,9 +649,8 @@ class Links(object):
     def printInfo(self):
         print "UNV"
         for i, l in self.iteritems():
-            if not l.skip:
-                for s, t in l.targets.iteritems():
-                    print " \t %d %s" % (s, t)
+            for s, t in l.targets.iteritems():
+                print " \t %s %d %s" % (("*" if l.skip else ""), s, t)
         print "DONE"
 
     def __len__(self):
@@ -899,10 +939,10 @@ class PageClusterer(object):
             nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
             #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
             if hasattr(v, "nleaves"):
-                # XXX remove magic number
-                # requrire more than 5 pages in a cluster
+                # XXX magic number
+                # requrire more than X pages in a cluster
                 # require some diversity in the dom path in order to create a link
-                if nleaves > 10 and nleaves >= med and (n > 0 or len(k) > 10):
+                if nleaves >= med and nleaves > 20*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n):
                     v.clusterable = True
                     level.clusterable = False
                 else:
@@ -1137,19 +1177,21 @@ class AppGraphGenerator(object):
         for ap in self.abspages:
             allstates = ap.seenstates
             #print "AP", ap, ap.seenstates
-            for l in ap.abslinks:
+            for idx, l in ap.abslinks.iteritems():
                 #print "LINK", l
                 newrequest = None
                 newrequestbuilt = False
                 for s in sorted(allstates):
                     if s not in l.targets:
                         if not newrequestbuilt:
-                            newwebrequest = ap.reqresps[0].response.page.getNewRequest(l)
+                            newwebrequest = ap.reqresps[0].response.page.getNewRequest(idx, l)
                             #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
                             if newwebrequest:
                                 request = Request(newwebrequest)
-                                #print "NEWR %s %s" % (request, (request.method, request.path, request.query))
+                                #if cond and str(request).find("search") != -1:
+                                #    import pdb; pdb.set_trace()
                                 newrequest = reqmap[request]
+                                print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
                                 newrequest.reqresps.append(RequestResponse(request, None))
                             newrequestbuilt = True
                         if newrequest:
@@ -1836,12 +1878,10 @@ class Crawler(object):
         try:
             # find an element to click in order to submit the form
             # TODO: explore clickable regions in input type=image
-            for submittable in [("input", "type", "submit"),
-                    ("input", "type", "image"),
-                    ("input", "type", "button"),
-                    ("button", "type", "submit")]:
+            for submittable in Form.SUBMITTABLES:
                 try:
                     submitter = iform.getOneHtmlElementByAttribute(*submittable)
+                    print "SUBMITTER", submitter
                     htmlpage = submitter.click()
                     break
                 except htmlunit.JavaError, e:
@@ -1869,36 +1909,41 @@ class Crawler(object):
 
     def back(self):
         self.logger.debug(output.purple("stepping back"))
-        # htmlunit has not "back" functrion
+        # htmlunit has not "back" function
         if self.currreqresp.prev is None:
             raise Crawler.EmptyHistory()
         self.currreqresp = self.currreqresp.prev
         return self.currreqresp
 
-def linkweigh(link, nvisits, othernvisits=0):
+def linkweigh(link, nvisits, othernvisits=0, statechange=0):
         if link.type == Links.Type.ANCHOR:
             if link.hasquery:
-                dist = Dist((0, 0, 0, 0, nvisits, othernvisits, 0, 0, 0, 0))
+                dist = Dist((statechange, 0, 0, 0, 0, nvisits, othernvisits, 0, 0, 0, 0))
             else:
-                dist = Dist((0, 0, 0, 0, 0, 0, nvisits, othernvisits, 0, 0))
+                dist = Dist((statechange, 0, 0, 0, 0, 0, 0, nvisits, othernvisits, 0, 0))
         elif link.type == Links.Type.FORM:
             if link.isPOST:
-                dist = Dist((nvisits, othernvisits, 0, 0, 0, 0, 0, 0, 0, 0))
+                dist = Dist((statechange, nvisits, othernvisits, 0, 0, 0, 0, 0, 0, 0, 0))
             else:
-                dist = Dist((0, 0, nvisits, othernvisits, 0, 0, 0, 0, 0, 0))
+                dist = Dist((statechange, 0, 0, nvisits, othernvisits, 0, 0, 0, 0, 0, 0))
         elif link.type == Links.Type.REDIRECT:
-            dist = Dist((0, 0, 0, 0, 0, 0, 0, 0, nvisits, othernvisits))
+            dist = Dist((statechange, 0, 0, 0, 0, 0, 0, 0, 0, nvisits, othernvisits))
         else:
             assert False, link
         return dist
 
 class Dist(object):
-    LEN = 10
+    LEN = 11
 
     def __init__(self, v=None):
         """ The content of the vector is as follow:
-        (POST form, GET form, anchor w/ params, anchor w/o params, redirect)
-        only one element can be != 0, and contains the numb er of times that link has been visited
+        (state changing,
+         POST form, GET form, anchor w/ params, anchor w/o params, redirect
+         )
+        the first elelement can be wither 0 or 1, whether the request proved to trigger a state change or not
+        the other elements are actually doubled: one value for the number of visits in the current state, and
+        one value for the number of visits in the other states
+        only one pair of element can be != 0
         """
         self.val = tuple(v) if v else tuple([0]*Dist.LEN)
         assert len(self.val) == Dist.LEN
@@ -1907,13 +1952,24 @@ class Dist(object):
         return Dist(a+b for a, b in zip(self.val, d.val))
 
     def __cmp__(self, d):
-        return cmp(self.val, d.val)
+        return cmp(self.normalized, d.normalized)
 
     def __str__(self):
         return str(self.val)
 
+    def __repr__(self):
+        return repr(self.val)
+
     def __reversed__(self):
         return reversed(self.val)
+
+    @lazyproperty
+    def normalized(self):
+        #n = (self.val[0], reduce(lambda a, b: a*10 + b, self.val[1:]))
+        penalty = sum(self.val)/5
+        ret = (self.val[0], penalty, self.val[1:])
+        print "NORM %s %s" % (self.val, ret)
+        return ret
 
 class FormField(object):
 
@@ -1924,10 +1980,21 @@ class FormField(object):
         self.name = name
         self.value = value
 
+    def __str__(self):
+        return self._str
+
+    def __repr__(self):
+        return self._str
+
+    @lazyproperty
+    def _str(self):
+        return "FormField(%s %s=%s)" % (self.type, self.name, self.value)
+
 
 
 class FormFiller(object):
     def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.forms = {}
 
     def add(self, k):
@@ -1937,11 +2004,12 @@ class FormFiller(object):
         return self.forms[tuple(sorted([i.name for i in k if i.name]))]
 
     def randfill(self, keys):
+        self.logger.debug("random filling from")
         res = defaultdict(list)
         for f in sorted(keys):
             if f.type == FormField.Type.CHECKBOX:
                 value = rng.choice([f.value, ''])
-            if f.type == FormField.Type.HIDDEN:
+            elif f.type == FormField.Type.HIDDEN:
                 value = f.value
             else:
                 value = ''
@@ -1993,31 +2061,43 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
+        #if state > 100 and str(abspage).find("review") != -1:
+        #    import pdb; pdb.set_trace()
+        statechange = 0
+        tgt = None
         if state in link.targets:
             tgt = link.targets[state]
             nvisits = tgt.nvisits + 1
             # also add visit count for the subsequent request
             if tgt.target and state in tgt.target.targets:
                 nvisits += tgt.target.targets[state].nvisits
+                if tgt.target.statehints:
+                    statechange = 1
         else:
             # never visited, but it must be > 0
             nvisits = 1
 
         othernvisits = 0
-        if state in link.targets:
-            for t in link.targets.itervalues():
+        for t in link.targets.itervalues():
+            if t.target.statehints:
+                statechange = 1
+            if tgt:
+                # we need to sum only the visits to requests that have the same target
+                # otherwise we might skip exploring them for some states
                 if t.target == tgt.target:
                     othernvisits += t.nvisits
 
-
         assert link.type == linkidx[0]
-        dist = linkweigh(link, nvisits, othernvisits)
+        dist = linkweigh(link, nvisits, othernvisits, statechange)
 
         return dist
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         unvlink = unvlinks[0]
-        mincost = min((self.linkcost(head, i, j, state), i) for (i, j) in unvlinks)
+        costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
+        print "COSTS", costs
+        print "NCOST", [i[0].normalized for i in costs]
+        mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         newdist = dist + mincost[0]
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
@@ -2166,7 +2246,7 @@ class Engine(object):
 
     def submitForm(self, form):
         formkeys = form.elems
-        self.logger.debug("form keys %r", formkeys)
+        self.logger.debug("form keys %s", formkeys)
         try:
             params = self.formfiller[formkeys]
         except KeyError:
