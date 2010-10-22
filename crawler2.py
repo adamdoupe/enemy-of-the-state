@@ -446,6 +446,7 @@ class Page(object):
         self.abspage = None
         self.redirect = redirect
         self.error = error
+        self.state = -1
         assert not self.redirect or len(self.redirects) == 1, self.redirects
 
     @lazyproperty
@@ -685,7 +686,10 @@ class AbstractPage(object):
         self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in reqresps))]
         self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in reqresps))]
         self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
+        # maps a state to the corresponding abstract link chosen for that state
         self.statelinkmap = {}
+        # maps a state to the corresponding requestresponse objects for that state
+        self.statereqrespsmap = defaultdict(list)
         self.seenstates = set()
         self.instance = AbstractPage.InstanceCounter
         AbstractPage.InstanceCounter += 1
@@ -1124,6 +1128,9 @@ class AppGraphGenerator(object):
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             laststate += 1
 
+            assert currpage.state == -1 or currpage.state == laststate
+            currpage.state = laststate
+
             if curr.next:
                 if curr.next.backto is not None:
                     currpage = curr.next.backto.response.page
@@ -1188,8 +1195,6 @@ class AppGraphGenerator(object):
                             #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
                             if newwebrequest:
                                 request = Request(newwebrequest)
-                                #if cond and str(request).find("search") != -1:
-                                #    import pdb; pdb.set_trace()
                                 newrequest = reqmap[request]
                                 print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
                                 newrequest.reqresps.append(RequestResponse(request, None))
@@ -2112,9 +2117,12 @@ class Engine(object):
         while heads:
             dist, head, state, headpath = heapq.heappop(heads)
             print output.yellow("H %s %s %s %s" % (dist, head, state, headpath))
+#            if str(head).find("review.php") != -1:
+#                import pdb; pdb.set_trace()
             if (head, state) in seen:
                 continue
             seen.add((head, state))
+            head.abslinks.printInfo()
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
                     continue
@@ -2122,6 +2130,7 @@ class Engine(object):
                 #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
                     nextabsreq = link.targets[state].target
+                    print "NEXTABSREQ", nextabsreq
                     if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
                         # this is a page known to be revelaing of possible state change
                         # go there first, priority=-1 !
@@ -2139,6 +2148,7 @@ class Engine(object):
                     heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     unvlinks = head.abslinks.getUnvisited(state)
+                    print "UNVLINKS", "\n\t".join(str(i) for i in unvlinks)
                     if unvlinks:
                         self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
                         continue
