@@ -21,6 +21,8 @@ from collections import defaultdict, deque, namedtuple
 
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
+cond = 0
+
 # running htmlunit via JCC will override the signal halders
 
 import signal
@@ -594,6 +596,7 @@ class AbstractRedirect(AbstractLink):
         return any(i.find('?') != -1 for i in self.locations)
 
 
+
 class Links(object):
     Type = Constants("ANCHOR", "FORM", "REDIRECT")
 
@@ -727,16 +730,27 @@ class AbstractRequest(object):
 
     InstanceCounter = 0
 
+    class ReqRespsWrapper(list):
+
+        def __init__(self, outer):
+            self.outer = outer
+
+        def append(self, rr):
+            if self.outer._requestset is not None:
+                self.outer._requestset.add(rr.request.shortstr)
+            return list.append(self, rr)
+
     def __init__(self, request):
         # map from state to AbstractPage
         self.targets = {}
         self.method = request.method
         self.path = request.path
-        self.reqresps = []
+        self.reqresps = AbstractRequest.ReqRespsWrapper(self)
         self.instance = AbstractRequest.InstanceCounter
         AbstractRequest.InstanceCounter += 1
         # counter of how often this page gave hints for detecting a state change
         self.statehints = 0
+        self._requestset = None
 
     def __str__(self):
         return "AbstractRequest(%s)%d" % (self.requestset, self.instance)
@@ -746,7 +760,9 @@ class AbstractRequest(object):
 
     @property
     def requestset(self):
-        return set(rr.request.shortstr for rr in self.reqresps)
+        if self._requestset is None:
+            self._requestset = set(rr.request.shortstr for rr in self.reqresps)
+        return self._requestset
 
     def __cmp__(self, o):
         return cmp(self.instance, o.instance)
@@ -945,8 +961,9 @@ class PageClusterer(object):
             if hasattr(v, "nleaves"):
                 # XXX magic number
                 # requrire more than X pages in a cluster
+
                 # require some diversity in the dom path in order to create a link
-                if nleaves >= med and nleaves > 20*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n):
+                if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n):
                     v.clusterable = True
                     level.clusterable = False
                 else:
@@ -994,15 +1011,22 @@ class PageClusterer(object):
 
 class PairCounter(object):
 
-    def __init__(self):
+    def __init__(self, debug=False):
         self._dict = defaultdict(int)
+        self.debug = debug
 
     def add(self, a, b):
+        #if self.debug and cond  > 4 and ((a in [0, 20] and b in [0, 29]) or (a in [22, 58] and b in [22, 58])):
+        #    import pdb; pdb.set_trace()
         assert a != b
         if a < b:
             self._dict[(a, b)] += 1
         else:
             self._dict[(b, a)] += 1
+
+    def addSorted(self, a, b):
+        assert a < b
+        self._dict[(a, b)] += 1
 
     def addset(self, s):
         ss = sorted(s)
@@ -1011,13 +1035,13 @@ class PairCounter(object):
                 self._dict[(a, b)] += 1
 
     def addallcombinations(self, bins):
-        for bin in bins:
+        # XXX HOTSPOT
+        for i, bin in enumerate(bins):
             for a in bin:
-                for bin2 in bins:
-                    if bin2 != bin:
-                        for b in bin2:
-                            if a != b:
-                                self.add(a, b)
+                for bin2 in bins[i+1:]:
+                    for b in bin2:
+                        if a != b:
+                            self.add(a, b)
 
     def get(self, a, b):
         assert a != b
@@ -1040,6 +1064,13 @@ class PairCounter(object):
 
     def __iter__(self):
         return iter(self._dict)
+
+    def __contains__(self, o):
+        assert False
+
+    def containsSorted(self, a, b):
+        return (a, b) in self._dict
+
 
 PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
 
@@ -1149,6 +1180,7 @@ class AppGraphGenerator(object):
                 currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate, nvisits=1)
                 assert not laststate in currabspage.statelinkmap
                 currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink]
+                # keep track of the RequestResponse object per state
 
             #print output.green("B %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
@@ -1258,12 +1290,7 @@ class AppGraphGenerator(object):
                 goodequalstates.append(es)
         return set(goodequalstates)
 
-
-    def mergeStatesGreedyColoring(self, statemap):
-
-        seentogether = PairCounter()
-        differentpairs = PairCounter()
-
+    def markDifferentStates(self, seentogether, differentpairs):
         for ar in sorted(self.absrequests):
             diffbins = defaultdict(set)
             equalbins = defaultdict(set)
@@ -1275,8 +1302,8 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
-            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
+            #print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
+            #print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
 
             for sb in statebins:
                 seentogether.addset(sb)
@@ -1295,43 +1322,135 @@ class AppGraphGenerator(object):
             if len(statelist) > 1:
                 print "DIFFSTATESABSTRACT", ap, statelist
                 print output.yellow(str(statelist.values()))
-                differentpairs.addallcombinations(statelist.itervalues())
+                differentpairs.addallcombinations(statelist.values())
 
 
+    def propagateDifferestTargetStates(self, differentpairs):
+        # XXX HOTSPOT
+        for ar in self.absrequests:
+            targetbins = defaultdict(set)
+            targetstatebins = defaultdict(set)
+            for s, t in ar.targets.iteritems():
+                targetbins[t.target].add(t.transition)
+                targetstatebins[(t.target, t.transition)].add(s)
+
+            for t, states in targetbins.iteritems():
+                if len(states) > 1:
+                    #targetequalstates = set([StateSet(states)])
+                    #print "preTES", targetequalstates, ar, t
+
+                    statelist = sorted(states)
+
+                    for i, a in enumerate(statelist):
+                        for b in statelist[i+1:]:
+                            if differentpairs.get(a, b):
+                                #print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
+                                differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
+
+    def colorStateGraph(self, differentpairs, allstates):
+        # XXX HOTSPOT
+        ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
+
+        edges = defaultdict(set)
+        for a, b in differentpairs:
+            assert a != b
+            edges[a].add(b)
+            edges[b].add(a)
+
+        degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
+        heapdegrees = [cn.node for cn in degrees.itervalues()]
+        heapq.heapify(heapdegrees)
+
+        assignments = {}
+
+        maxused = 0
+
+        while heapdegrees:
+            node = heapq.heappop(heapdegrees)
+            if node in assignments:
+                continue
+            neighs = [(n, assignments[n]) for n in edges[node] if n in assignments]
+            neighcolors = frozenset(n[1] for n in neighs)
+            for i in range(maxused, -1, -1) + [maxused+1]:
+                if i not in neighcolors:
+                    print "ASSIGN %d %d <%s>" % (node, i, neighs)
+                    assignments[node] = i
+                    maxused = max(maxused, i)
+                    break
+                else:
+                    print "NEIGH %s %d" % (node, i)
+            else:
+                assert False
+            for n in edges[node]:
+                if n not in assignments:
+                    cn = degrees[n]
+                    heapq.heappush(heapdegrees, cn.node)
+
+        return assignments
+
+    def makeset(self, statemap):
         allstatesset = frozenset(statemap)
         allstates = sorted(allstatesset)
-        lenallstates = len(allstates)
+        return allstates
 
+    def addtodiffparis(self, allstates, seentogether, differentpairs):
         for i, a in enumerate(allstates):
             for b in allstates[i+1:]:
-                if (a, b) not in seentogether:
-                    print output.darkred("NEVER %s" % ((a, b), ))
-                    differentpairs.add(a, b)
+                if not seentogether.containsSorted(a, b):
+                    #print output.darkred("NEVER %s" % ((a, b), ))
+                    differentpairs.addSorted(a, b)
 
+    def markNeverSeenTogether(self, statemap, seentogether, differentpairs):
+
+        allstates = self.makeset(statemap)
+
+        self.addtodiffparis(allstates, seentogether, differentpairs)
+
+        return allstates
+
+    def createColorBins(self, lenallstates, assignments):
+            bins = [[] for i in range(lenallstates)]
+            for n, c in assignments.iteritems():
+                bins[c].append(n)
+            bins = [StateSet(i) for i in bins if i]
+
+            return bins
+
+    def updateStatemapFromColorBins(self, bins, assignments, statemap):
+            colormap = [min(nn) for nn in bins]
+
+            #print "CMAP", colormap
+
+            for n, c in assignments.iteritems():
+                statemap[n] = colormap[c]
+
+            #print "SMAP", statemap
+
+    def refreshStatemap(self, statemap):
+        for i in range(len(statemap)):
+            statemap[i] = statemap[statemap[i]]
+
+        #print "SMAP", statemap
+
+        nstates = len(set(statemap))
+        return nstates
+
+    def mergeStatesGreedyColoring(self, statemap):
+
+        seentogether = PairCounter()
+        differentpairs = PairCounter(False)
+
+        self.markDifferentStates(seentogether, differentpairs)
+
+        allstates = self.markNeverSeenTogether(statemap, seentogether, differentpairs)
+        lenallstates = len(allstates)
 
         olddifferentpairslen = -1
 
         while True:
 
-            for ar in self.absrequests:
-                targetbins = defaultdict(set)
-                targetstatebins = defaultdict(set)
-                for s, t in ar.targets.iteritems():
-                    targetbins[t.target].add(t.transition)
-                    targetstatebins[(t.target, t.transition)].add(s)
+            self.propagateDifferestTargetStates(differentpairs)
 
-                for t, states in targetbins.iteritems():
-                    if len(states) > 1:
-                        targetequalstates = set([StateSet(states)])
-                        #print "preTES", targetequalstates, ar, t
-
-                        statelist = sorted(states)
-
-                        for i, a in enumerate(statelist):
-                            for b in statelist[i+1:]:
-                                if differentpairs.get(a, b):
-                                    #print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
-                                    differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
 
             differentpairslen = len(differentpairs)
             assert differentpairslen >= olddifferentpairslen
@@ -1340,70 +1459,22 @@ class AppGraphGenerator(object):
             else:
                 olddifferentpairslen = differentpairslen
 
-            writeColorableStateGraph(allstates, differentpairs)
+            #writeColorableStateGraph(allstates, differentpairs)
 
-            ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
+            assignments = self.colorStateGraph(differentpairs, allstates)
 
-            edges = defaultdict(set)
-            for a, b in differentpairs:
-                assert a != b
-                edges[a].add(b)
-                edges[b].add(a)
+            bins = self.createColorBins(lenallstates, assignments)
 
-            degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
-            heapdegrees = [cn.node for cn in degrees.itervalues()]
-            heapq.heapify(heapdegrees)
+            self.updateStatemapFromColorBins(bins, assignments, statemap)
 
-            assignments = {}
-
-            maxused = 0
-
-            while heapdegrees:
-                node = heapq.heappop(heapdegrees)
-                if node in assignments:
-                    continue
-                neighs = [(n, assignments[n]) for n in edges[node] if n in assignments]
-                neighcolors = frozenset(n[1] for n in neighs)
-                for i in range(maxused, -1, -1) + [maxused+1]:
-                    if i not in neighcolors:
-                        print "ASSIGN %d %d <%s>" % (node, i, neighs)
-                        assignments[node] = i
-                        maxused = max(maxused, i)
-                        break
-                    else:
-                        print "NEIGH %s %d" % (node, i)
-                else:
-                    assert False
-                for n in edges[node]:
-                    if n not in assignments:
-                        cn = degrees[n]
-                        heapq.heappush(heapdegrees, cn.node)
-
-            bins = [[] for i in range(lenallstates)]
-            for n, c in assignments.iteritems():
-                bins[c].append(n)
-            bins = [StateSet(i) for i in bins if i]
-
-            colormap = [min(nn) for nn in bins]
-
-            print "CMAP", colormap
-
-            for n, c in assignments.iteritems():
-                statemap[n] = colormap[c]
-
-            print "SMAP", statemap
-
-            self.logger.debug(output.darkred("almost final states %s"), sorted(bins))
+            #self.logger.debug(output.darkred("almost final states %s"), sorted(bins))
 
             differentpairs.addallcombinations(bins)
 
-        for i in range(len(statemap)):
-            statemap[i] = statemap[statemap[i]]
 
-        print "SMAP", statemap
+        nstates = self.refreshStatemap(statemap)
 
-        nstates = len(set(statemap))
-        self.logger.debug(output.darkred("final states %d %s"), nstates, sorted(bins))
+        #self.logger.debug(output.darkred("final states %d %s"), nstates, sorted(bins))
 
 
 
@@ -1552,6 +1623,85 @@ class AppGraphGenerator(object):
         nstates = len(set(statemap))
         self.logger.debug("final states %d", nstates)
 
+    def splitStatesIfNeeded(self, smallerstates, currreq, currstate, currtarget, statemap, history):
+        currmapsto = self.getMinMappedState(currstate, statemap)
+        cttransition = self.getMinMappedState(currtarget.transition, statemap)
+        for ss in smallerstates:
+            ssmapsto = self.getMinMappedState(ss, statemap)
+            if ssmapsto == currmapsto:
+                sstarget = currreq.targets[ss]
+                ssttransition = self.getMinMappedState(sstarget.transition, statemap)
+                if sstarget.target == currtarget.target:
+                    assert len(sstarget.target.statereqrespsmap[sstarget.transition]) == 1
+                    assert len(currtarget.target.statereqrespsmap[currtarget.transition]) == 1
+                    if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
+                        continue
+                    else:
+                        print "DIFFSTATES"
+                self.logger.debug(output.teal("need to split state for request %s")
+                        % currtarget)
+                self.logger.debug("\t%d(%d)->%s %d(%d)"
+                        % (currstate, currmapsto, currtarget, currtarget.transition, cttransition))
+                self.logger.debug("\t%d(%d)->%s %d(%d)"
+                        % (ss, ssmapsto, sstarget, sstarget.transition, ssttransition))
+                # mark this request as givin hints for state change detection
+                currreq.statehints += 1
+                pastpages = []
+                for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
+                    if req == currreq:
+                        self.logger.debug("loop detected on %s", req)
+                        print "PASTPAGES", pastpages
+                        minnvisits = min(i.nvisits for i in pastpages)
+                        candidates = [i for i in pastpages if i.nvisits == minnvisits]
+                        assert len(candidates) > 0
+                        if len(candidates):
+                            bestcand = min(((tuple(reversed(linkweigh(i.chlink, i.nvisits))), i) for i in candidates), key=lambda x: x[0])[1]
+                            print "BESTCAND", bestcand
+                            target = bestcand.req.targets[bestcand.cstate]
+                            self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
+                            assert statemap[target.transition] == bestcand.cstate
+                            # this request will always change state
+                            for t in bestcand.req.targets.itervalues():
+                                if t.transition <= currstate:
+                                    statemap[t.transition] = t.transition
+#                                        import pdb; pdb.set_trace()
+                            break
+
+
+
+                    target = req.targets[laststate]
+                    assert target.target == page, "%s != %s" % (target.target, page)
+                    # the Target.nvisit has not been updated yet, because we have not finalized state assignment
+                    # let's compute the number of simits by counting the states that
+                    # map to the same one and share the target abstract page
+                    assert target.nvisits == 1, target.nvisits
+                    mappedlaststate = self.getMinMappedState(laststate, statemap)
+                    #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
+                    # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
+                    visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
+                            self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
+                    nvisits = len(visits)
+                    #print "SSS %s %s" % (req, req.targets)
+                    print "SSS %s" % req
+                    assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
+                    if nvisits == 1:
+                        self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
+                        assert statemap[target.transition] == laststate
+                        # this request will always change state
+                        for t in req.targets.itervalues():
+                            if t.transition <= currstate:
+                                statemap[t.transition] = t.transition
+                        #if laststate >= 100:
+                        #    gracefulexit()
+                        break
+                    else:
+                        pastpages.append(PastPage(req, page, chlink, laststate, nvisits))
+                else:
+                    # if we get hear, we need a better heuristic for splitting state
+                    raise RuntimeError()
+                currmapsto = self.getMinMappedState(currstate, statemap)
+                assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
+
 
     def reduceStates(self):
         self.logger.debug("reducing state number from %d", self.maxstate)
@@ -1584,85 +1734,7 @@ class AppGraphGenerator(object):
                 # find if there are other states that we have already processed that lead to a different target
                 smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate], reverse=True)
                 if smallerstates:
-                    currmapsto = self.getMinMappedState(currstate, statemap)
-                    cttransition = self.getMinMappedState(currtarget.transition, statemap)
-                    for ss in smallerstates:
-                        ssmapsto = self.getMinMappedState(ss, statemap)
-                        if ssmapsto == currmapsto:
-                            sstarget = currreq.targets[ss]
-                            if sstarget.target == currtarget.target:
-                                ssttransition = self.getMinMappedState(sstarget.transition, statemap)
-                                assert len(sstarget.target.statereqrespsmap[sstarget.transition]) == 1
-                                assert len(currtarget.target.statereqrespsmap[currtarget.transition]) == 1
-                                if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
-                                    continue
-                                else:
-                                    print "DIFFSTATES"
-                            self.logger.debug(output.teal("need to split state for request %s")
-                                    % currtarget)
-                            self.logger.debug("\t%d(%d)->%s %d(%d)"
-                                    % (currstate, currmapsto, currtarget, currtarget.transition, cttransition))
-                            self.logger.debug("\t%d(%d)->%s %d(%d)"
-                                    % (ss, ssmapsto, sstarget, sstarget.transition, ssttransition))
-                            # mark this request as givin hints for state change detection
-                            currreq.statehints += 1
-                            stateoff = 1
-                            pastpages = []
-                            for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
-                                if req == currreq:
-                                    self.logger.debug("loop detected on %s", req)
-                                    print "PASTPAGES", pastpages
-                                    minnvisits = min(i.nvisits for i in pastpages)
-                                    candidates = [i for i in pastpages if i.nvisits == minnvisits]
-                                    assert len(candidates) > 0
-                                    if len(candidates):
-                                        bestcand = min(((tuple(reversed(linkweigh(i.chlink, i.nvisits))), i) for i in candidates), key=lambda x: x[0])[1]
-                                        print "BESTCAND", bestcand
-                                        target = bestcand.req.targets[bestcand.cstate]
-                                        self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
-                                        assert statemap[target.transition] == bestcand.cstate
-                                        # this request will always change state
-                                        for t in bestcand.req.targets.itervalues():
-                                            if t.transition <= currstate:
-                                                statemap[t.transition] = t.transition
-#                                        import pdb; pdb.set_trace()
-                                        break
-
-
-
-                                target = req.targets[laststate]
-                                assert target.target == page, "%s != %s" % (target.target, page)
-                                # the Target.nvisit has not been updated yet, because we have not finalized state assignment
-                                # let's compute the number of simits by counting the states that
-                                # map to the same one and share the target abstract page
-                                assert target.nvisits == 1, target.nvisits
-                                mappedlaststate = self.getMinMappedState(laststate, statemap)
-                                #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
-                                # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
-                                visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
-                                        self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
-                                nvisits = len(visits)
-                                #print "SSS %s %s" % (req, req.targets)
-                                print "SSS %s" % req
-                                assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
-                                if nvisits == 1:
-                                    self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
-                                    assert statemap[target.transition] == laststate
-                                    # this request will always change state
-                                    for t in req.targets.itervalues():
-                                        if t.transition <= currstate:
-                                            statemap[t.transition] = t.transition
-                                    #if laststate >= 100:
-                                    #    gracefulexit()
-                                    break
-                                else:
-                                    pastpages.append(PastPage(req, page, chlink, laststate, nvisits))
-                            else:
-                                # if we get hear, we need a better heuristic for splitting state
-                                raise RuntimeError()
-                            currmapsto = self.getMinMappedState(currstate, statemap)
-                            assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
-
+                    self.splitStatesIfNeeded(smallerstates, currreq, currstate, currtarget, statemap, history)
                 currstate += 1
                 statemap[currstate] = currstate-1
 
@@ -1894,6 +1966,9 @@ class Crawler(object):
 
     def click(self, anchor):
         self.logger.debug(output.purple("clicking on %s"), anchor)
+        if str(anchor).find("action=add&picid=4") != -1:
+            global cond
+            cond += 1
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
@@ -2012,7 +2087,7 @@ class Dist(object):
         #n = (self.val[0], reduce(lambda a, b: a*10 + b, self.val[1:]))
         penalty = sum(self.val)/5
         ret = (self.val[0], penalty, self.val[1:])
-        print "NORM %s %s" % (self.val, ret)
+        #print "NORM %s %s" % (self.val, ret)
         return ret
 
 class FormField(object):
@@ -2139,13 +2214,13 @@ class Engine(object):
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         unvlink = unvlinks[0]
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
-        print "COSTS", costs
-        print "NCOST", [i[0].normalized for i in costs]
+        #print "COSTS", costs
+        #print "NCOST", [i[0].normalized for i in costs]
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         newdist = dist + mincost[0]
-        self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
-                unvlink, len(unvlinks), head, state, dist, newdist, priority, new)
+        #self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
+        #        unvlink, len(unvlinks), head, state, dist, newdist, priority, new)
         heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
@@ -2161,7 +2236,7 @@ class Engine(object):
             if (head, state) in seen:
                 continue
             seen.add((head, state))
-            head.abslinks.printInfo()
+            #head.abslinks.printInfo()
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
                     continue
@@ -2169,7 +2244,7 @@ class Engine(object):
                 #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
                     nextabsreq = link.targets[state].target
-                    print "NEXTABSREQ", nextabsreq
+                    #print "NEXTABSREQ", nextabsreq
                     if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
                         # this is a page known to be revelaing of possible state change
                         # go there first, priority=-1 !
@@ -2338,7 +2413,10 @@ class Engine(object):
                 maxstate = ag.generateAppGraph()
                 self.state = ag.reduceStates()
                 self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
+                global cond
+                if cond >= 2: cond += 1
                 ag.fillMissingRequests()
+                print output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages()))
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
 
@@ -2347,7 +2425,7 @@ class Engine(object):
 
                 if wanttoexit:
                     return
-                self.writeStateDot()
+                #self.writeStateDot()
 
     def writeDot(self):
         if not self.ag:
@@ -2485,8 +2563,9 @@ if __name__ == "__main__":
         import pdb
         pdb.post_mortem()
     finally:
-        e.writeStateDot()
-        e.writeDot()
+        #e.writeStateDot()
+        #e.writeDot()
+        pass
 
 
 # vim:sw=4:et:
