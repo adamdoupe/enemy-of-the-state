@@ -487,7 +487,7 @@ class Page(object):
                 for submittable in Form.SUBMITTABLES:
                     try:
                         submitter = iform.getOneHtmlElementByAttribute(*submittable)
-                        print "SUBMITTER", submitter, submitter.getPage()
+                        #print "SUBMITTER", submitter, submitter.getPage()
                         break
                     except htmlunit.JavaError, e:
                         javaex = e.getJavaException()
@@ -514,7 +514,7 @@ class Page(object):
                         urlstr += "x=0&y=0"
                         newurl = htmlunit.URL(url, urlstr)
                         newreq.setUrl(newurl)
-                    print "NEWFORMREQ %s %s" % (newreq, self)
+                    #print "NEWFORMREQ %s %s" % (newreq, self)
                     return newreq
         return None
 
@@ -1131,6 +1131,9 @@ class AppGraphGenerator(object):
             assert currpage.state == -1 or currpage.state == laststate
             currpage.state = laststate
 
+            assert not currabspage.statereqrespsmap[laststate]
+            currabspage.statereqrespsmap[laststate] = [curr]
+
             if curr.next:
                 if curr.next.backto is not None:
                     currpage = curr.next.backto.response.page
@@ -1196,7 +1199,7 @@ class AppGraphGenerator(object):
                             if newwebrequest:
                                 request = Request(newwebrequest)
                                 newrequest = reqmap[request]
-                                print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
+                                #print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
                                 newrequest.reqresps.append(RequestResponse(request, None))
                             newrequestbuilt = True
                         if newrequest:
@@ -1282,6 +1285,19 @@ class AppGraphGenerator(object):
 
             differentpairs.addallcombinations(statebins)
 
+        # mark as different states that have seen different concreate pages in the same abstract page
+        for ap in self.abspages:
+            statelist = defaultdict(list)
+            for s, rrs in ap.statereqrespsmap.iteritems():
+                for rr in rrs:
+                    statelist[rr.response.page.linksvector].append(s)
+
+            if len(statelist) > 1:
+                print "DIFFSTATESABSTRACT", ap, statelist
+                print output.yellow(str(statelist.values()))
+                differentpairs.addallcombinations(statelist.itervalues())
+
+
         allstatesset = frozenset(statemap)
         allstates = sorted(allstatesset)
         lenallstates = len(allstates)
@@ -1346,10 +1362,11 @@ class AppGraphGenerator(object):
                 node = heapq.heappop(heapdegrees)
                 if node in assignments:
                     continue
-                neighcolors = frozenset(assignments[n] for n in edges[node] if n in assignments)
+                neighs = [(n, assignments[n]) for n in edges[node] if n in assignments]
+                neighcolors = frozenset(n[1] for n in neighs)
                 for i in range(maxused, -1, -1) + [maxused+1]:
                     if i not in neighcolors:
-                        print "ASSIGN %d %d" % (node, i)
+                        print "ASSIGN %d %d <%s>" % (node, i, neighs)
                         assignments[node] = i
                         maxused = max(maxused, i)
                         break
@@ -1410,8 +1427,8 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in statebins), ar))
-            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in equalstatebins))
+            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
+            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
 
             for sb in statebins:
                 seentogether.addset(sb)
@@ -1565,18 +1582,28 @@ class AppGraphGenerator(object):
                 currstate += 1
             else:
                 # find if there are other states that we have already processed that lead to a different target
-                smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate and t.target != currtarget.target], reverse=True)
+                smallerstates = sorted([i for i, t in currreq.targets.iteritems() if i < currstate], reverse=True)
                 if smallerstates:
                     currmapsto = self.getMinMappedState(currstate, statemap)
+                    cttransition = self.getMinMappedState(currtarget.transition, statemap)
                     for ss in smallerstates:
                         ssmapsto = self.getMinMappedState(ss, statemap)
                         if ssmapsto == currmapsto:
+                            sstarget = currreq.targets[ss]
+                            if sstarget.target == currtarget.target:
+                                ssttransition = self.getMinMappedState(sstarget.transition, statemap)
+                                assert len(sstarget.target.statereqrespsmap[sstarget.transition]) == 1
+                                assert len(currtarget.target.statereqrespsmap[currtarget.transition]) == 1
+                                if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
+                                    continue
+                                else:
+                                    print "DIFFSTATES"
                             self.logger.debug(output.teal("need to split state for request %s")
                                     % currtarget)
-                            self.logger.debug("\t%d(%d)->%s"
-                                    % (currstate, currmapsto, currtarget))
-                            self.logger.debug("\t%d(%d)->%s"
-                                    % (ss, ssmapsto, currreq.targets[ss]))
+                            self.logger.debug("\t%d(%d)->%s %d(%d)"
+                                    % (currstate, currmapsto, currtarget, currtarget.transition, cttransition))
+                            self.logger.debug("\t%d(%d)->%s %d(%d)"
+                                    % (ss, ssmapsto, sstarget, sstarget.transition, ssttransition))
                             # mark this request as givin hints for state change detection
                             currreq.statehints += 1
                             stateoff = 1
@@ -1668,6 +1695,8 @@ class AppGraphGenerator(object):
 
         print statemap
 
+        self.mergeStateReqRespMaps(statemap)
+
         self.mergeStatesGreedyColoring(statemap)
         #self.mergeStates(statemap)
 
@@ -1675,9 +1704,19 @@ class AppGraphGenerator(object):
 
         self.collapseGraph(statemap)
 
+        self.mergeStateReqRespMaps(statemap)
+
         # return last current state
         return statemap[-1]
 
+
+    def mergeStateReqRespMaps(self, statemap):
+        for ap in self.abspages:
+            newstatereqrespmap = defaultdict(list)
+            for s, p in ap.statereqrespsmap.iteritems():
+                # warning: unsorted
+                newstatereqrespmap[statemap[s]].extend(p)
+            ap.statereqrespsmap = newstatereqrespmap
 
     def collapseNode(self, nodes, statemap):
         for aa in nodes:
@@ -1886,7 +1925,7 @@ class Crawler(object):
             for submittable in Form.SUBMITTABLES:
                 try:
                     submitter = iform.getOneHtmlElementByAttribute(*submittable)
-                    print "SUBMITTER", submitter
+                    #print "SUBMITTER", submitter
                     htmlpage = submitter.click()
                     break
                 except htmlunit.JavaError, e:
