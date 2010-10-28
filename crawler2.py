@@ -1347,9 +1347,28 @@ class AppGraphGenerator(object):
                                 #print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
                                 differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
 
+    def assignColor(self, assignments, edges, node, maxused):
+        neighs = [(n, assignments[n]) for n in edges[node] if n in assignments]
+        neighcolors = frozenset(n[1] for n in neighs)
+        for i in range(maxused, -1, -1) + [maxused+1]:
+            if i not in neighcolors:
+                print "ASSIGN %d %d <%s>" % (node, i, neighs)
+                assignments[node] = i
+                maxused = max(maxused, i)
+                break
+            else:
+                print "NEIGH %s %d" % (node, i)
+        else:
+            assert False
+        return maxused
+
+
     def colorStateGraph(self, differentpairs, allstates):
         # XXX HOTSPOT
         ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
+
+        # allstates should be sorted
+        assert allstates[0] == 0
 
         edges = defaultdict(set)
         for a, b in differentpairs:
@@ -1358,33 +1377,14 @@ class AppGraphGenerator(object):
             edges[b].add(a)
 
         degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
-        heapdegrees = [cn.node for cn in degrees.itervalues()]
-        heapq.heapify(heapdegrees)
 
         assignments = {}
 
         maxused = 0
 
-        while heapdegrees:
-            node = heapq.heappop(heapdegrees)
-            if node in assignments:
-                continue
-            neighs = [(n, assignments[n]) for n in edges[node] if n in assignments]
-            neighcolors = frozenset(n[1] for n in neighs)
-            for i in range(maxused, -1, -1) + [maxused+1]:
-                if i not in neighcolors:
-                    print "ASSIGN %d %d <%s>" % (node, i, neighs)
-                    assignments[node] = i
-                    maxused = max(maxused, i)
-                    break
-                else:
-                    print "NEIGH %s %d" % (node, i)
-            else:
-                assert False
-            for n in edges[node]:
-                if n not in assignments:
-                    cn = degrees[n]
-                    heapq.heappush(heapdegrees, cn.node)
+        for node in allstates:
+            assert node not in assignments
+            maxused = self.assignColor(assignments, edges, node, maxused)
 
         return assignments
 
@@ -1702,6 +1702,9 @@ class AppGraphGenerator(object):
                 currmapsto = self.getMinMappedState(currstate, statemap)
                 assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
 
+    def minimizeStatemap(self, statemap):
+        for i in range(len(statemap)):
+            statemap[i] = self.getMinMappedState(i, statemap)
 
     def reduceStates(self):
         self.logger.debug("reducing state number from %d", self.maxstate)
@@ -1755,8 +1758,7 @@ class AppGraphGenerator(object):
 
             currreq = chosentarget
 
-        for i in range(lenstatemap):
-            statemap[i] = self.getMinMappedState(i, statemap)
+        self.minimizeStatemap(statemap)
 
         nstates = lenstatemap
 
@@ -1765,14 +1767,14 @@ class AppGraphGenerator(object):
 
         self.collapseGraph(statemap)
 
-        print statemap
+        #print statemap
 
         self.mergeStateReqRespMaps(statemap)
 
         self.mergeStatesGreedyColoring(statemap)
         #self.mergeStates(statemap)
 
-        print statemap
+        #print statemap
 
         self.collapseGraph(statemap)
 
