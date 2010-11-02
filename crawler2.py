@@ -74,14 +74,16 @@ class RecursiveDict(defaultdict):
         self.default_factory = RecursiveDict
         # when counting leaves, apply this function to non RecursiveDict objects
         self.nleavesfunc = nleavesfunc
+        self._nleaves = None
+        # XXX no more general :(
+        self.abspages = {}
 
-    @lazyproperty
+    @property
     def nleaves(self):
-        """ number of objects in the tis subtree of the nested dictionay
-        NOTE: this is a lazy property, will get stale if tree is updated!
-        """
-        return sum(i.nleaves if isinstance(i, self.default_factory) else self.nleavesfunc(i)
-                for i in self.itervalues())
+        if self._nleaves is None:
+            self._nleaves = sum(i.nleaves if isinstance(i, self.default_factory) else self.nleavesfunc(i)
+                    for i in self.itervalues())
+        return self._nleaves
 
     def getpath(self, path):
         i = self
@@ -91,20 +93,32 @@ class RecursiveDict(defaultdict):
 
     def setpath(self, path, value):
         i = self
+        # invalidate leaves count
+        i._nleaves = None
         for p in path[:-1]:
             i = i[p]
+            # invalidate leaves count
+            i._nleaves = None
         i[path[-1]] = value
 
     def applypath(self, path, func):
         i = self
+        # invalidate leaves count
+        i._nleaves = None
         for p in path[:-1]:
             i = i[p]
+            # invalidate leaves count
+            i._nleaves = None
         i[path[-1]] = func(i[path[-1]])
 
     def setapplypath(self, path, value, func):
         i = self
+        # invalidate leaves count
+        i._nleaves = None
         for p in path[:-1]:
             i = i[p]
+            # invalidate leaves count
+            i._nleaves = None
         if path[-1] in i:
             i[path[-1]] = func(i[path[-1]])
         else:
@@ -497,12 +511,12 @@ class Page(object):
                             raise
                         continue
                 if submitter:
-                    print "CASTING?"
+                    #print "CASTING?"
                     newreq = iform.getWebRequest(submitter)
                     if htmlunit.HtmlImageInput.instance_(submitter):
                         #import pdb; pdb.set_trace()
                         url = newreq.getUrl()
-                        print "CASTING!", url.getQuery(), url.getPath()
+                        #print "CASTING!", url.getQuery(), url.getPath()
                         urlstr = url.getPath()
                         if urlstr.find('?') == -1:
                             urlstr += "?"
@@ -545,6 +559,9 @@ class AbstractAnchor(AbstractLink):
         self.hrefs = set(i.href for i in anchors)
         self.type = Links.Type.ANCHOR
 
+    def update(self, anchors):
+        self.hrefs = set(i.href for i in anchors)
+
     @property
     def _str(self):
         return "AbstractAnchor(%s, targets=%s)" % (self.hrefs, self.targets)
@@ -565,6 +582,10 @@ class AbstractForm(AbstractLink):
         self.actions = set(i.action for i in forms)
         self.type = Links.Type.FORM
 
+    def update(self, forms):
+        self.methods = set(i.method for i in forms)
+        self.actions = set(i.action for i in forms)
+
     @property
     def _str(self):
         return "AbstractForm(targets=%s)" % (self.targets)
@@ -583,6 +604,9 @@ class AbstractRedirect(AbstractLink):
         AbstractLink.__init__(self, redirects)
         self.locations = set(i.location for i in redirects)
         self.type = Links.Type.REDIRECT
+
+    def update(self, redirects):
+        self.locations = set(i.location for i in redirects)
 
     @property
     def _str(self):
@@ -683,26 +707,42 @@ class AbstractPage(object):
     InstanceCounter = 0
 
     def __init__(self, reqresps):
-        self.reqresps = reqresps
-        # TODO: number of links might not be the same in some more complex clustering
-        self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in reqresps))]
-        self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in reqresps))]
-        self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in reqresps))]
-        self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
+        self.instance = AbstractPage.InstanceCounter
+        AbstractPage.InstanceCounter += 1
+        self.reqresps = reqresps[:]
         # maps a state to the corresponding abstract link chosen for that state
         self.statelinkmap = {}
         # maps a state to the corresponding requestresponse objects for that state
         self.statereqrespsmap = defaultdict(list)
         self.seenstates = set()
-        self.instance = AbstractPage.InstanceCounter
-        AbstractPage.InstanceCounter += 1
+        self._str = None
+        self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in self.reqresps))]
+        self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in self.reqresps))]
+        self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in self.reqresps))]
+        self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
 
-    @lazyproperty
-    def _str(self):
-        return "AbstractPage(#%d, %s)" % (len(self.reqresps),
-                set("%s %s" % (i.request.method, i.request.fullpath) for i in self.reqresps))
+
+    def addPage(self, reqresp):
+        self.reqresps.append(reqresp)
+        self.regenerateLinks()
+        self._str = None
+
+    def regenerateLinks(self):
+        # TODO: number of links might not be the same in some more complex clustering
+        if self.instance == 3297:
+            import pdb; pdb.set_trace()
+        for l, i in zip(self.absanchors, zip(*(rr.response.page.anchors for rr in self.reqresps))):
+            l.update(i)
+        for l, i in zip(self.absforms, zip(*(rr.response.page.forms for rr in self.reqresps))):
+            l.update(i)
+        for l, i in zip(self.absredirects, zip(*(rr.response.page.redirects for rr in self.reqresps))):
+            l.update(i)
+        self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
 
     def __str__(self):
+        if self._str is None:
+            self._str =  "AbstractPage(#%d, %s)%s" % (len(self.reqresps),
+                    set("%s %s" % (i.request.method, i.request.fullpath) for i in self.reqresps), self.instance)
         return self._str
 
     def __repr__(self):
@@ -921,8 +961,19 @@ class Classfier(RecursiveDict):
         for i in it:
             self.add(i)
 
+class PageMergeException(Exception):
+    def __init__(self, msg=None):
+        Exception.__init__(self, msg)
 
 class PageClusterer(object):
+
+    class AddToClusterException(PageMergeException):
+        def __init__(self, msg=None):
+            PageMergeException.__init__(self, msg)
+
+    class AddToAbstractPageException(PageMergeException):
+        def __init__(self, msg=None):
+            PageMergeException.__init__(self, msg)
 
     def simplehash(self, reqresp):
         page = reqresp.response.page
@@ -970,6 +1021,27 @@ class PageClusterer(object):
                     v.clusterable = False
                 self.scanlevels(v, n+1)
 
+    def scanlevelspath(self, level, path, n=0):
+        med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
+        #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
+        v = level[path[0]]
+        nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
+        #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
+        if hasattr(v, "nleaves"):
+            # XXX magic number
+            # requrire more than X pages in a cluster
+
+            # require some diversity in the dom path in order to create a link
+            if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n):
+                v.newclusterable = True
+                level.newclusterable = False
+            else:
+                v.newclusterable = False
+            self.scanlevelspath(v, path[1:], n+1)
+        if not hasattr(level, "clusterable"):
+            level.clusterable = False
+
+
     def printlevelstat(self, level, n=0):
         med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
         self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
@@ -991,11 +1063,34 @@ class PageClusterer(object):
         for k, v in level.iteritems():
             if hasattr(v, "nleaves"):
                 if v.clusterable:
-                    self.abspages.append(AbstractPage(reduce(lambda a, b: a + b, level.iterleaves())))
+                    abspage = AbstractPage(reduce(lambda a, b: a + b, v.iterleaves()))
+                    self.abspages.append(abspage)
+                    level.abspages[k] = abspage
                 else:
                     self.makeabspagesrecursive(v)
             else:
-                self.abspages.append(AbstractPage(v))
+                abspage = AbstractPage(v)
+                self.abspages.append(abspage)
+                level.abspages[k] = abspage
+
+    def addabstractpagepath(self, level, reqresp, path):
+        v = level[path[0]]
+        if hasattr(v, "nleaves"):
+            if v.clusterable:
+                abspage = level.abspages[path[0]]
+                abspage.addPage(reqresp)
+                reqresp.response.page.abspage = abspage
+            else:
+                self.addabstractpagepath(v, reqresp, path[1:])
+        else:
+            if path[0] not in level.abspages:
+                abspage = AbstractPage(v)
+                level.abspages[path[0]] = abspage
+                self.abspages.append(abspage)
+            else:
+                abspage = level.abspages[path[0]]
+                abspage.addPage(reqresp)
+            reqresp.response.page.abspage = abspage
 
     def levelclustering(self, reqresps):
         classif = Classfier(lambda rr: rr.response.page.linksvector)
@@ -1003,6 +1098,15 @@ class PageClusterer(object):
         self.scanlevels(classif)
         self.printlevelstat(classif)
         self.makeabspages(classif)
+        self.classif = classif
+
+    def addtolevelclustering(self, reqresp):
+        classif = self.classif
+        classif.add(reqresp)
+        path = classif.featuresextractor(reqresp)
+        self.scanlevelspath(classif, path)
+        self.printlevelstat(classif)
+        self.addabstractpagepath(classif, reqresp, path)
 
 
 
@@ -1076,12 +1180,23 @@ PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
 
 class AppGraphGenerator(object):
 
+    class AddToAbstractRequestException(PageMergeException):
+        def __init__(self, msg=None):
+            PageMergeException.__init__(self, msg)
+        pass
+
+    class AddToAppGraphException(PageMergeException):
+        def __init__(self, msg=None):
+            PageMergeException.__init__(self, msg)
+
     def __init__(self, reqrespshead, abspages):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.reqrespshead = reqrespshead
         self.abspages = abspages
         self.absrequests = None
 
+    def updatepageclusters(self, abspages):
+        self.abspages = abspages
 
     def clusterRequests(self):
         # clustering requests on the abstrct pages is a bad idea, because we do not want
@@ -1099,7 +1214,7 @@ class AppGraphGenerator(object):
         for rr in self.reqrespshead:
             mappedrequests[contextreqmap.getAbstract(rr.request)].append(rr)
 
-        del contextreqmap
+        self.contextreqmap =  contextreqmap
 
         # if there are multiple requests that were assigned to the same abstractrequest
         # in the preious mapping, consider assignment final, otherwise do mapping
@@ -1122,13 +1237,26 @@ class AppGraphGenerator(object):
                     absreq.reqresps.append(rr)
                     absrequests.add(absreq)
 
-        del mappedrequests
-        del reqmap
+        self.mappedrequests = mappedrequests
+        self.reqmap = reqmap
 
         for r in sorted(absrequests):
             print output.turquoise("%s" % r)
 
         self.absrequests = absrequests
+
+    def addtorequestclusters(self, rr):
+        mappedreq = self.contextreqmap.getAbstract(rr.request)
+        if len(self.mappedrequests[mappedreq]) >= 1:
+            # failing, because we would need to break another cluster
+            raise AppGraphGenerator.AddToAbstractRequestException()
+
+        absreq = self.reqmap.getAbstract(rr.request)
+        rr.request.absrequest = absreq
+        absreq.reqresps.append(rr)
+        self.absrequests.add(absreq)
+        print output.turquoise("%s" % absreq)
+
 
     def generateAppGraph(self):
         self.logger.debug("generating application graph")
@@ -1162,6 +1290,7 @@ class AppGraphGenerator(object):
             assert currpage.state == -1 or currpage.state == laststate
             currpage.state = laststate
 
+            # keep track of the RequestResponse object per state
             assert not currabspage.statereqrespsmap[laststate]
             currabspage.statereqrespsmap[laststate] = [curr]
 
@@ -1180,7 +1309,6 @@ class AppGraphGenerator(object):
                 currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate, nvisits=1)
                 assert not laststate in currabspage.statelinkmap
                 currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink]
-                # keep track of the RequestResponse object per state
 
             #print output.green("B %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
@@ -1194,9 +1322,63 @@ class AppGraphGenerator(object):
 
         return laststate
 
+    def addtoAppGraph(self, reqresp, state):
+        self.addtorequestclusters(reqresp)
+
+        curr = reqresp.prev
+        currpage = curr.response.page
+        currabspage = currpage.abspage
+
+        if curr.next.backto is not None:
+            currpage = curr.next.backto.response.page
+            currabspage = currpage.abspage
+
+        # find which link goes to the next request in the history
+        chosenlinkidx = (i for i, l in currpage.links.iteritems() if curr.next in l.to).next()
+        chosenlink = currabspage.abslinks[chosenlinkidx]
+        nextabsreq = curr.next.request.absrequest
+
+        if state in chosenlink.targets:
+            tgt = chosenlink.targets[state]
+            if tgt.nvisits:
+                if tgt.target != nextabsreq:
+                    # cannot map the page to the current state, need to redo clustering
+                    raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, nextabsreq))
+                tgt.nvisits += 1
+            else:
+                chosenlink.targets[state] = Target(nextabsreq, state, nvisits=1)
+        else:
+            chosenlink.targets[state] = Target(nextabsreq, state, nvisits=1)
+
+
+        curr = curr.next
+
+        currabsreq = nextabsreq
+        currpage = curr.response.page
+        assert currpage == reqresp.response.page
+        currabspage = currpage.abspage
+
+        if state in currabsreq.targets:
+            tgt = currabsreq.targets[state]
+            if tgt.target != currabspage:
+                # cannot map the page to the current state, need to redo clustering
+                raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, currabspage))
+            tgt.nvisits += 1
+        else:
+            currabsreq.targets[state] = Target(currabspage, state, nvisits=1)
+
+        currabspage.statereqrespsmap[state].append(curr)
+
+        self.logger.debug("page merged into application graph")
+
+        return state
+
+
     def updateSeenStates(self):
         for ar in self.absrequests:
             for t in ar.targets.itervalues():
+                if t.target.instance == 3297:
+                    import pdb; pdb.set_trace()
                 t.target.seenstates.add(t.transition)
 
         for ap in self.abspages:
@@ -1207,6 +1389,21 @@ class AppGraphGenerator(object):
                     and not allstates - ap.seenstates), \
                     "%s\n\t%s\n\t%s" % (ap, sorted(ap.seenstates), sorted(allstates))
 
+    def updateSeenStatesForPage(self, reqresp):
+        ar = reqresp.request.absrequest
+        for t in ar.targets.itervalues():
+            if t.target.instance == 3297:
+                import pdb; pdb.set_trace()
+            #if t.nvisits > 0:
+            #    t.target.seenstates.add(t.transition)
+
+        ap = reqresp.response.page.abspage
+        allstates = set(s for l in ap.abslinks for s in l.targets)
+        # allstates empty when we step back from a page
+        # allstates has one element less than seenstates when it is the last page seen
+        assert not allstates or (len(ap.seenstates - allstates) <= 1 \
+                and not allstates - ap.seenstates), \
+                "%s\n\t%s\n\t%s" % (ap, sorted(ap.seenstates), sorted(allstates))
 
     def fillMissingRequests(self):
 
@@ -1214,33 +1411,47 @@ class AppGraphGenerator(object):
 
         # XXX using the following hash function, requests may overlap
         # we should actually have an heuristic to choose the good one...
-        reqmap = CustomDict([(rr.request, ar) for ar in sorted(self.absrequests) for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
+        self.fillreqmap = CustomDict([(rr.request, ar) for ar in sorted(self.absrequests) for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
 
         for ap in self.abspages:
-            allstates = ap.seenstates
-            #print "AP", ap, ap.seenstates
-            for idx, l in ap.abslinks.iteritems():
-                #print "LINK", l
-                newrequest = None
-                newrequestbuilt = False
-                for s in sorted(allstates):
-                    if s not in l.targets:
-                        if not newrequestbuilt:
-                            newwebrequest = ap.reqresps[0].response.page.getNewRequest(idx, l)
-                            #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
-                            if newwebrequest:
-                                request = Request(newwebrequest)
-                                newrequest = reqmap[request]
-                                #print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
-                                newrequest.reqresps.append(RequestResponse(request, None))
-                            newrequestbuilt = True
-                        if newrequest:
-                            l.targets[s] = Target(newrequest, transition=s, nvisits=0)
-                            #print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
-                            #for ss, tt in newrequest.targets.iteritems():
-                            #    print output.purple("\t %s %s" % (ss, tt))
+            self.fillPageMissingRequests(ap)
 
-        self.allabsrequests = set(reqmap.itervalues())
+        self.allabsrequests = set(self.fillreqmap.itervalues())
+
+
+    def fillMissingRequestsForPage(self, reqresp):
+
+        self.updateSeenStatesForPage(reqresp)
+
+        #self.fillPageMissingRequests(reqresp.response.page.abspage)
+        self.fillMissingRequests()
+
+        self.allabsrequests = set(self.fillreqmap.itervalues())
+
+
+    def fillPageMissingRequests(self, ap):
+        allstates = ap.seenstates
+        #print "AP", ap, ap.seenstates
+        for idx, l in ap.abslinks.iteritems():
+            #print "LINK", l, "TTTT", l.targets
+            newrequest = None
+            newrequestbuilt = False
+            for s in sorted(allstates):
+                if s not in l.targets or l.targets[s].nvisits == 0:
+                    if not newrequestbuilt:
+                        newwebrequest = ap.reqresps[0].response.page.getNewRequest(idx, l)
+                        #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
+                        if newwebrequest:
+                            request = Request(newwebrequest)
+                            newrequest = self.fillreqmap[request]
+                            #print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
+                            newrequest.reqresps.append(RequestResponse(request, None))
+                        newrequestbuilt = True
+                    if newrequest:
+                        l.targets[s] = Target(newrequest, transition=s, nvisits=0)
+                        #print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
+                        #for ss, tt in newrequest.targets.iteritems():
+                        #    print output.purple("\t %s %s" % (ss, tt))
 
     def getMinMappedState(self, state, statemap):
         prev = state
@@ -2334,7 +2545,7 @@ class Engine(object):
                             found = True
                             break
                 else:
-                    # we should always be able to find the destination page in ta target object
+                    # we should always be able to find the destination page in the target object
                     assert False
                 if found:
                     break
@@ -2379,6 +2590,34 @@ class Engine(object):
             params = self.formfiller.randfill(formkeys)
         return self.cr.submitForm(form, params)
 
+    def tryMergeInGraph(self, reqresp):
+        if self.pc:
+            self.logger.info(output.red("try to merge page into current state graph"))
+            try:
+                pc = self.pc
+                ag = self.ag
+                pc.addtolevelclustering(reqresp)
+                ag.updatepageclusters(pc.getAbstractPages())
+                ag.addtoAppGraph(reqresp, self.state)
+                ag.fillMissingRequestsForPage(reqresp)
+            except PageClusterer.AddToClusterException:
+                self.logger.info(output.red("Level clustering changed, reclustering"))
+                raise
+            except PageClusterer.AddToAbstractPageException:
+               self.logger.info(output.red("Unable to add page to current abstract page, reclustering"))
+               raise
+            except AppGraphGenerator.AddToAbstractRequestException:
+               self.logger.info(output.red("Unable to add page to current abstract request, reclustering"))
+               raise
+            except AppGraphGenerator.AddToAppGraphException, e:
+               self.logger.info(output.red("Unable to add page to current application graph, reclustering. %s" % e))
+               raise
+            except PageMergeException, e:
+                raise RuntimeError("uncaught PageMergeException %s" % e)
+        else:
+            self.logger.info(output.red("first execution, start clustering"))
+            raise PageMergeException()
+
 
     def main(self, urls):
         self.pc = None
@@ -2409,25 +2648,29 @@ class Engine(object):
                     assert False, nextAction
                 print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
-                pc = PageClusterer(cr.headreqresp)
-                print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
-                ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
-                maxstate = ag.generateAppGraph()
-                self.state = ag.reduceStates()
-                self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
-                global cond
-                if cond >= 2: cond += 1
-                ag.fillMissingRequests()
-                print output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages()))
+                try:
+                    self.tryMergeInGraph(reqresp)
+                except PageMergeException:
+                    self.logger.info("need to recompute graph")
+                    pc = PageClusterer(cr.headreqresp)
+                    print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
+                    ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
+                    maxstate = ag.generateAppGraph()
+                    self.state = ag.reduceStates()
+                    self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
+                    global cond
+                    if cond >= 2: cond += 1
+                    ag.fillMissingRequests()
+                    print output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages()))
+                    self.pc = pc
+                    self.ag = ag
+
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
 
-                self.pc = pc
-                self.ag = ag
-
                 if wanttoexit:
                     return
-                #self.writeStateDot()
+                self.writeStateDot()
 
     def writeDot(self):
         if not self.ag:
@@ -2565,7 +2808,7 @@ if __name__ == "__main__":
         import pdb
         pdb.post_mortem()
     finally:
-        #e.writeStateDot()
+        e.writeStateDot()
         #e.writeDot()
         pass
 
