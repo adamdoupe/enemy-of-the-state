@@ -729,8 +729,8 @@ class AbstractPage(object):
 
     def regenerateLinks(self):
         # TODO: number of links might not be the same in some more complex clustering
-        if self.instance == 3297:
-            import pdb; pdb.set_trace()
+        #if self.instance == 3297:
+        #    import pdb; pdb.set_trace()
         for l, i in zip(self.absanchors, zip(*(rr.response.page.anchors for rr in self.reqresps))):
             l.update(i)
         for l, i in zip(self.absforms, zip(*(rr.response.page.forms for rr in self.reqresps))):
@@ -883,6 +883,16 @@ class AbstractMap(dict):
             v = self.absobj(obj)
             self[h] = v
         #print output.yellow("%s (%s) -> %s" % (h, obj, v))
+        return v
+
+    def getAbstractOrDefault(self, obj, default):
+        h = self.h(obj)
+        if h in self:
+            v = self[h]
+        else:
+            v = default
+            if v:
+                self[h] = v
         return v
 
     def __iter__(self):
@@ -1225,6 +1235,8 @@ class AppGraphGenerator(object):
         absrequests = set()
 
         for ar, rrs in sorted(mappedrequests.iteritems()):
+            #if ar.instance == 481:
+            #    import pdb; pdb.set_trace()
             if len(rrs) > 1 and len(set(rr.request.query for rr in rrs)) > 1:
                 for rr in rrs:
                     rr.request.absrequest = ar
@@ -1232,7 +1244,7 @@ class AppGraphGenerator(object):
                     absrequests.add(ar)
             else:
                 for rr in rrs:
-                    absreq = reqmap.getAbstract(rr.request)
+                    absreq = reqmap.getAbstractOrDefault(rr.request, ar)
                     rr.request.absrequest = absreq
                     absreq.reqresps.append(rr)
                     absrequests.add(absreq)
@@ -1247,8 +1259,11 @@ class AppGraphGenerator(object):
 
     def addtorequestclusters(self, rr):
         mappedreq = self.contextreqmap.getAbstract(rr.request)
-        if len(self.mappedrequests[mappedreq]) >= 1:
+        reqs = self.mappedrequests[mappedreq]
+        if len(reqs) >= 1 and mappedreq not in self.absrequests \
+                and len(frozenset(self.reqmap.getAbstractOrDefault(i.request, None) for i in reqs)) > 1 :
             # failing, because we would need to break another cluster
+            #import pdb; pdb.set_trace()
             raise AppGraphGenerator.AddToAbstractRequestException()
 
         absreq = self.reqmap.getAbstract(rr.request)
@@ -1365,20 +1380,21 @@ class AppGraphGenerator(object):
                 raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, currabspage))
             tgt.nvisits += 1
         else:
-            currabsreq.targets[state] = Target(currabspage, state, nvisits=1)
+            tgt = Target(currabspage, state, nvisits=1)
+            currabsreq.targets[state] = tgt
 
         currabspage.statereqrespsmap[state].append(curr)
 
         self.logger.debug("page merged into application graph")
 
-        return state
+        return tgt.transition
 
 
     def updateSeenStates(self):
         for ar in self.absrequests:
             for t in ar.targets.itervalues():
-                if t.target.instance == 3297:
-                    import pdb; pdb.set_trace()
+                #if t.target.instance == 3297:
+                #    import pdb; pdb.set_trace()
                 t.target.seenstates.add(t.transition)
 
         for ap in self.abspages:
@@ -1392,10 +1408,10 @@ class AppGraphGenerator(object):
     def updateSeenStatesForPage(self, reqresp):
         ar = reqresp.request.absrequest
         for t in ar.targets.itervalues():
-            if t.target.instance == 3297:
-                import pdb; pdb.set_trace()
-            #if t.nvisits > 0:
-            #    t.target.seenstates.add(t.transition)
+            #if t.target.instance == 3297:
+            #    import pdb; pdb.set_trace()
+            if t.nvisits > 0:
+                t.target.seenstates.add(t.transition)
 
         ap = reqresp.response.page.abspage
         allstates = set(s for l in ap.abslinks for s in l.targets)
@@ -2598,7 +2614,7 @@ class Engine(object):
                 ag = self.ag
                 pc.addtolevelclustering(reqresp)
                 ag.updatepageclusters(pc.getAbstractPages())
-                ag.addtoAppGraph(reqresp, self.state)
+                newstate = ag.addtoAppGraph(reqresp, self.state)
                 ag.fillMissingRequestsForPage(reqresp)
             except PageClusterer.AddToClusterException:
                 self.logger.info(output.red("Level clustering changed, reclustering"))
@@ -2617,6 +2633,8 @@ class Engine(object):
         else:
             self.logger.info(output.red("first execution, start clustering"))
             raise PageMergeException()
+
+        return newstate
 
 
     def main(self, urls):
@@ -2649,7 +2667,7 @@ class Engine(object):
                 print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 try:
-                    self.tryMergeInGraph(reqresp)
+                    self.state = self.tryMergeInGraph(reqresp)
                 except PageMergeException:
                     self.logger.info("need to recompute graph")
                     pc = PageClusterer(cr.headreqresp)
