@@ -1380,6 +1380,10 @@ class AppGraphGenerator(object):
                 raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, currabspage))
             tgt.nvisits += 1
         else:
+            smallerstates = [(s, t) for s, t in currabsreq.targets.iteritems()
+                    if s < state]
+            if smallerstates and any(t.transition != s for s, t in smallerstates):
+                raise AppGraphGenerator.AddToAppGraphException("new state from %d %s" % (state, currabspage))
             tgt = Target(currabspage, state, nvisits=1)
             currabsreq.targets[state] = tgt
 
@@ -2645,6 +2649,7 @@ class Engine(object):
 
         for cnt, url in enumerate(urls):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
+            maxstate = -1
             reqresp = cr.open(url)
             print output.red("TREE %s" % (reqresp.response.page.linkstree,))
             print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
@@ -2668,6 +2673,7 @@ class Engine(object):
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 try:
                     self.state = self.tryMergeInGraph(reqresp)
+                    self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
                 except PageMergeException:
                     self.logger.info("need to recompute graph")
                     pc = PageClusterer(cr.headreqresp)
