@@ -1132,6 +1132,8 @@ class PairCounter(object):
     def add(self, a, b):
         #if self.debug and cond  > 4 and ((a in [0, 20] and b in [0, 29]) or (a in [22, 58] and b in [22, 58])):
         #    import pdb; pdb.set_trace()
+        if a in [684, 672] and b in [684, 672]:
+            import pdb; pdb.set_trace()
         assert a != b
         if a < b:
             self._dict[(a, b)] += 1
@@ -1140,12 +1142,16 @@ class PairCounter(object):
 
     def addSorted(self, a, b):
         assert a < b
+        if a == 672 and b == 684:
+            import pdb; pdb.set_trace()
         self._dict[(a, b)] += 1
 
     def addset(self, s):
         ss = sorted(s)
         for i, a in enumerate(ss):
             for b in ss[i+1:]:
+                if a == 672 and b == 684:
+                    import pdb; pdb.set_trace()
                 self._dict[(a, b)] += 1
 
     def addallcombinations(self, bins):
@@ -1380,6 +1386,7 @@ class AppGraphGenerator(object):
                 raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, currabspage))
             tgt.nvisits += 1
         else:
+            # if this request is know to change state changes, do not propagate the current state, but recluster
             smallerstates = [(s, t) for s, t in currabsreq.targets.iteritems()
                     if s < state]
             if smallerstates and any(t.transition != s for s, t in smallerstates):
@@ -1558,14 +1565,14 @@ class AppGraphGenerator(object):
 
     def propagateDifferestTargetStates(self, differentpairs):
         # XXX HOTSPOT
-        for ar in self.absrequests:
+        for ar in sorted(self.absrequests):
             targetbins = defaultdict(set)
             targetstatebins = defaultdict(set)
             for s, t in ar.targets.iteritems():
                 targetbins[t.target].add(t.transition)
                 targetstatebins[(t.target, t.transition)].add(s)
 
-            for t, states in targetbins.iteritems():
+            for t, states in sorted(targetbins.items()):
                 if len(states) > 1:
                     #targetequalstates = set([StateSet(states)])
                     #print "preTES", targetequalstates, ar, t
@@ -1583,12 +1590,13 @@ class AppGraphGenerator(object):
         neighcolors = frozenset(n[1] for n in neighs)
         for i in range(maxused, -1, -1) + [maxused+1]:
             if i not in neighcolors:
-                print "ASSIGN %d %d <%s>" % (node, i, neighs)
+                #print "ASSIGN %d %d <%s>" % (node, i, sorted(neighs))
                 assignments[node] = i
                 maxused = max(maxused, i)
                 break
             else:
-                print "NEIGH %s %d" % (node, i)
+                #print "NEIGH %s %d" % (node, i)
+                pass
         else:
             assert False
         return maxused
@@ -1624,18 +1632,18 @@ class AppGraphGenerator(object):
         allstates = sorted(allstatesset)
         return allstates
 
-    def addtodiffparis(self, allstates, seentogether, differentpairs):
+    def addtodiffparis(self, allstates, seentogether, differentpairs, exceptions=frozenset()):
         for i, a in enumerate(allstates):
             for b in allstates[i+1:]:
-                if not seentogether.containsSorted(a, b):
+                if a not in exceptions and b not in exceptions and not seentogether.containsSorted(a, b):
                     #print output.darkred("NEVER %s" % ((a, b), ))
                     differentpairs.addSorted(a, b)
 
-    def markNeverSeenTogether(self, statemap, seentogether, differentpairs):
+    def markNeverSeenTogether(self, statemap, seentogether, differentpairs, exceptions=frozenset()):
 
         allstates = self.makeset(statemap)
 
-        self.addtodiffparis(allstates, seentogether, differentpairs)
+        self.addtodiffparis(allstates, seentogether, differentpairs, exceptions)
 
         return allstates
 
@@ -1673,7 +1681,7 @@ class AppGraphGenerator(object):
 
         self.markDifferentStates(seentogether, differentpairs)
 
-        allstates = self.markNeverSeenTogether(statemap, seentogether, differentpairs)
+        allstates = self.markNeverSeenTogether(statemap, seentogether, differentpairs, exceptions=frozenset([statemap[-1]]))
         lenallstates = len(allstates)
 
         olddifferentpairslen = -1
@@ -1698,14 +1706,14 @@ class AppGraphGenerator(object):
 
             self.updateStatemapFromColorBins(bins, assignments, statemap)
 
-            #self.logger.debug(output.darkred("almost final states %s"), sorted(bins))
+            self.logger.debug(output.darkred("almost final states %s"), sorted(bins))
 
             differentpairs.addallcombinations(bins)
 
 
         nstates = self.refreshStatemap(statemap)
 
-        #self.logger.debug(output.darkred("final states %d %s"), nstates, sorted(bins))
+        self.logger.debug(output.darkred("final states %d %s"), nstates, sorted(bins))
 
 
 
@@ -1729,8 +1737,8 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-            print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
-            print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
+            #print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
+            #print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
 
             for sb in statebins:
                 seentogether.addset(sb)
@@ -1743,7 +1751,7 @@ class AppGraphGenerator(object):
             equalstates = self.addStateBins(statebins, equalstates)
             self.dropRedundantStateGroups(equalstates)
 
-            print output.darkred("ES %s" % sorted(equalstates))
+            #print output.darkred("ES %s" % sorted(equalstates))
 
 
         # in the previous step, we marked as different states that were leading to different target pages,
@@ -1766,34 +1774,34 @@ class AppGraphGenerator(object):
                         targetbins[t.target].add(t.transition)
                         targetstatebins[(t.target, t.transition)].add(s)
 
-                    for t, states in targetbins.iteritems():
+                    for t, states in sorted(targetbins.items()):
                         if len(states) > 1:
                             targetequalstates = set([StateSet(states)])
-                            print "preTES", targetequalstates, ar, t
+                            #print "preTES", targetequalstates, ar, t
 
                             statelist = sorted(states)
 
                             for i, a in enumerate(statelist):
                                 for b in statelist[i+1:]:
                                     if currentdifferentpairs.get(a, b):
-                                        print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
+                                        #print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
                                         differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
                                         targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
                                         targetequalstates = self.dropRedundantStateGroupsMild(targetequalstates)
 
                             self.dropRedundantStateGroups(targetequalstates)
-                            print "TES", targetequalstates, ar, t
+                            #print "TES", targetequalstates, ar, t
 
                             startstatebins = set(reduce(lambda a, b: StateSet(a | b), (StateSet(targetstatebins[(t, ts)]) for ts in esb)) for esb in targetequalstates)
 
-                            print "SSB", startstatebins, ar, t
+                            #print "SSB", startstatebins, ar, t
 
                             newequalstates = self.addStateBins(startstatebins, equalstates)
                             self.dropRedundantStateGroups(newequalstates)
                             if newequalstates != equalstates:
                                 equalstates = newequalstates
                                 again2 = True
-                                print output.darkred("ES %s" % sorted(equalstates))
+                                #print output.darkred("ES %s" % sorted(equalstates))
 
                 assert len(differentpairs) > 0 or not again2, "%s %s %s" % (again2, differentpairs, (len(differentpairs) > 0))
 
@@ -1868,7 +1876,8 @@ class AppGraphGenerator(object):
                     if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
                         continue
                     else:
-                        print "DIFFSTATES"
+                        #print "DIFFSTATES"
+                        pass
                 self.logger.debug(output.teal("need to split state for request %s")
                         % currtarget)
                 self.logger.debug("\t%d(%d)->%s %d(%d)"
@@ -1881,13 +1890,13 @@ class AppGraphGenerator(object):
                 for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
                     if req == currreq:
                         self.logger.debug("loop detected on %s", req)
-                        print "PASTPAGES", pastpages
+                        #print "PASTPAGES", pastpages
                         minnvisits = min(i.nvisits for i in pastpages)
                         candidates = [i for i in pastpages if i.nvisits == minnvisits]
                         assert len(candidates) > 0
                         if len(candidates):
                             bestcand = min(((tuple(reversed(linkweigh(i.chlink, i.nvisits))), i) for i in candidates), key=lambda x: x[0])[1]
-                            print "BESTCAND", bestcand
+                            #print "BESTCAND", bestcand
                             target = bestcand.req.targets[bestcand.cstate]
                             self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                             assert statemap[target.transition] == bestcand.cstate
@@ -1913,7 +1922,7 @@ class AppGraphGenerator(object):
                             self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
                     nvisits = len(visits)
                     #print "SSS %s %s" % (req, req.targets)
-                    print "SSS %s" % req
+                    #print "SSS %s" % req
                     assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
                     if nvisits == 1:
                         self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
@@ -2570,7 +2579,7 @@ class Engine(object):
                 if found:
                     break
                 rr = rr.prev
-                print "RRRR", rr
+                #print "RRRR", rr
             self.logger.debug("last changing request %s", rr)
             #print "recentlyseen", recentlyseen
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
@@ -2589,7 +2598,7 @@ class Engine(object):
                 assert not self.pathtofollow
                 self.pathtofollow = path
                 nexthop = self.pathtofollow.pop(0)
-                print nexthop
+                #print nexthop
                 assert nexthop.abspage == reqresp.response.page.abspage
                 assert nexthop.state == self.state
                 return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx])
