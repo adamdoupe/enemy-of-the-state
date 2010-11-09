@@ -1132,8 +1132,6 @@ class PairCounter(object):
     def add(self, a, b):
         #if self.debug and cond  > 4 and ((a in [0, 20] and b in [0, 29]) or (a in [22, 58] and b in [22, 58])):
         #    import pdb; pdb.set_trace()
-        if a in [684, 672] and b in [684, 672]:
-            import pdb; pdb.set_trace()
         assert a != b
         if a < b:
             self._dict[(a, b)] += 1
@@ -1142,16 +1140,12 @@ class PairCounter(object):
 
     def addSorted(self, a, b):
         assert a < b
-        if a == 672 and b == 684:
-            import pdb; pdb.set_trace()
         self._dict[(a, b)] += 1
 
     def addset(self, s):
         ss = sorted(s)
         for i, a in enumerate(ss):
             for b in ss[i+1:]:
-                if a == 672 and b == 684:
-                    import pdb; pdb.set_trace()
                 self._dict[(a, b)] += 1
 
     def addallcombinations(self, bins):
@@ -2234,7 +2228,15 @@ class Crawler(object):
 
         for k, vv in params.iteritems():
             for i, v in zip(iform.getInputsByName(k), vv):
-                i.setValueAttribute(v)
+                if htmlunit.HtmlCheckBoxInput.instance_(i):
+                    if v:
+                        assert i.getValueAttribute() == v
+                        i.setChecked(True)
+                    else:
+                        i.setChecked(False)
+                else:
+                    i.setValueAttribute(v)
+                print "VALUE %s %s %s" % (i, i.getValueAttribute(), v)
 
         try:
             # find an element to click in order to submit the form
@@ -2242,7 +2244,7 @@ class Crawler(object):
             for submittable in Form.SUBMITTABLES:
                 try:
                     submitter = iform.getOneHtmlElementByAttribute(*submittable)
-                    #print "SUBMITTER", submitter
+                    print "SUBMITTER", submitter
                     htmlpage = submitter.click()
                     break
                 except htmlunit.JavaError, e:
@@ -2316,10 +2318,10 @@ class Dist(object):
         return cmp(self.normalized, d.normalized)
 
     def __str__(self):
-        return str(self.val)
+        return "%s[%s]" % (self.val, self.normalized)
 
     def __repr__(self):
-        return repr(self.val)
+        return str(self)
 
     def __reversed__(self):
         return reversed(self.val)
@@ -2367,7 +2369,7 @@ class FormFiller(object):
     def randfill(self, keys):
         self.logger.debug("random filling from")
         res = defaultdict(list)
-        for f in sorted(keys):
+        for f in keys:
             if f.type == FormField.Type.CHECKBOX:
                 value = rng.choice([f.value, ''])
             elif f.type == FormField.Type.HIDDEN:
@@ -2422,8 +2424,6 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
-        #if state > 100 and str(abspage).find("review") != -1:
-        #    import pdb; pdb.set_trace()
         statechange = 0
         tgt = None
         if state in link.targets:
@@ -2432,15 +2432,13 @@ class Engine(object):
             # also add visit count for the subsequent request
             if tgt.target and state in tgt.target.targets:
                 nvisits += tgt.target.targets[state].nvisits
-                if tgt.target.statehints:
-                    statechange = 1
         else:
             # never visited, but it must be > 0
             nvisits = 1
 
         othernvisits = 0
-        for t in link.targets.itervalues():
-            if t.target.statehints:
+        for s, t in link.targets.iteritems():
+            if t.transition != s:
                 statechange = 1
             if tgt:
                 # we need to sum only the visits to requests that have the same target
@@ -2449,6 +2447,7 @@ class Engine(object):
                     othernvisits += t.nvisits
 
         assert link.type == linkidx[0]
+        # XXX statechange is not set correctly
         dist = linkweigh(link, nvisits, othernvisits, statechange)
 
         return dist
@@ -2461,8 +2460,8 @@ class Engine(object):
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         newdist = dist + mincost[0]
-        #self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
-        #        unvlink, len(unvlinks), head, state, dist, newdist, priority, new)
+        self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
+                unvlink, len(unvlinks), head, state, dist, newdist, priority, new)
         heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
@@ -2488,7 +2487,7 @@ class Engine(object):
                     nextabsreq = link.targets[state].target
                     #print "NEXTABSREQ", nextabsreq
                     if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
-                        # this is a page known to be revelaing of possible state change
+                        # this is a page known to be revealing of possible state change
                         # go there first, priority=-1 !
                         self.addUnvisisted(dist, head, state, headpath, [(idx, link)], candidates, -1)
                     if state not in nextabsreq.targets:
