@@ -168,6 +168,7 @@ class Request(object):
         self.webrequest = webrequest
         self.reqresp = None
         self.absrequest = None
+        self.formparams = FormFiller.Params({})
 
     @lazyproperty
     def method(self):
@@ -650,11 +651,11 @@ class Links(object):
 
     def iteritems(self):
         for i, v in enumerate(self.anchors):
-            yield ((Links.Type.ANCHOR, i), v)
+            yield (LinkIdx(Links.Type.ANCHOR, i, None), v)
         for i, v in enumerate(self.forms):
-            yield ((Links.Type.FORM, i), v)
+            yield (LinkIdx(Links.Type.FORM, i, None), v)
         for i, v in enumerate(self.redirects):
-            yield ((Links.Type.REDIRECT, i), v)
+            yield (LinkIdx(Links.Type.REDIRECT, i, None), v)
 
     def itervalues(self):
         for v in self.anchors:
@@ -670,7 +671,8 @@ class Links(object):
     def getUnvisited(self, state):
         #self.printInfo()
         # unvisited if we never did the request for that state
-        return [(i, l) for i, l in self.iteritems() if not l.skip \
+        # third element of the tuple are the form parameters
+        return [(i, l, None) for i, l in self.iteritems() if not l.skip \
                 and (state not in l.targets
                     or not state in l.targets[state].target.targets)]
 
@@ -817,13 +819,56 @@ class Target(object):
         self.target = target
         self.transition = transition
         self.nvisits = nvisits
+        # Target class should never be instanciated, use derived classes
+        assert self.__class__ != Target
 
     def __str__(self):
-        return "Target(%r, transition=%d, nvisits=%d)" % \
-                (self.target, self.transition, self.nvisits)
+        return "%s(%r, transition=%d, nvisits=%d)" % \
+                (self.__class__.__name__, self.target, self.transition, self.nvisits)
 
     def __repr__(self):
         return str(self)
+
+class PageTarget(Target):
+    def __init__(self, target, transition, nvisits=0):
+        assert target is None or isinstance(target, AbstractPage)
+        Target.__init__(self, target, transition, nvisits)
+
+class ReqTarget(Target):
+    def __init__(self, target, transition, nvisits=0):
+        assert target is None or isinstance(target, AbstractRequest)
+        Target.__init__(self, target, transition, nvisits)
+
+class FormTarget(Target):
+
+    class MultiDict(object):
+
+        def __init__(self, outer):
+            self.outer = outer
+
+        def __contains__(self, k):
+            return any(k in i.target.targets for i in self.outer.target.itervalues())
+
+    class Dict(dict):
+
+        def __init__(self, outer, d):
+            self.targets = FormTarget.MultiDict(outer)
+            dict.__init__(self, d)
+
+
+    def __init__(self, target, transition, nvisits=0):
+        assert isinstance(target, dict)
+        Target.__init__(self, target, transition, nvisits)
+        self._target = FormTarget.Dict(self, target)
+
+    @property
+    def target(self):
+        return self._target
+
+    @target.setter
+    def target(self, target):
+        assert isinstance(target, dict)
+        self._target = FormTarget.Dict(self, target)
 
 
 class CustomDict(dict):
@@ -1187,6 +1232,7 @@ class PairCounter(object):
 
 
 PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
+LinkIdx = namedtuple("LinkIdx", "type idx params")
 
 class AppGraphGenerator(object):
 
@@ -1297,7 +1343,7 @@ class AppGraphGenerator(object):
             assert not laststate in currabsreq.targets
             #print output.red("A %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
-            currabsreq.targets[laststate] = Target(currabspage, laststate+1, nvisits=1)
+            currabsreq.targets[laststate] = PageTarget(currabspage, laststate+1, nvisits=1)
             #print output.red("B %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             laststate += 1
@@ -1321,9 +1367,21 @@ class AppGraphGenerator(object):
                 # XXX we cannot just use the index for more complex clustering
                 #print "%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage)
                 assert not laststate in currabspage.abslinks[chosenlink].targets
-                currabspage.abslinks[chosenlink].targets[laststate] = Target(nextabsreq, laststate, nvisits=1)
+                newtgt = ReqTarget(nextabsreq, laststate, nvisits=1)
+                newtgtreq = newtgt
+                if chosenlink.type == Links.Type.FORM:
+                    chosenlink = LinkIdx(chosenlink.type, chosenlink.idx, curr.next.request.formparams)
+                    # TODO: for now assume that different FORM requests are not clustered
+                    assert len(set(tuple(sorted((j[0], tuple(j[1])) for j in i.request.formparams.iteritems())) for i in nextabsreq.reqresps)) == 1
+                    tgtdict = {nextabsreq.reqresps[0].request.formparams: newtgt}
+                    newtgt = FormTarget(tgtdict, laststate, nvisits=1)
+                currabspage.abslinks[chosenlink].targets[laststate] = newtgt
                 assert not laststate in currabspage.statelinkmap
-                currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink]
+                tgt = currabspage.abslinks[chosenlink].targets[laststate]
+                if isinstance(tgt, FormTarget):
+                    currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate].target[nextabsreq.reqresps[0].request.formparams]
+                else:
+                    currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate]
 
             #print output.green("B %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
@@ -1361,9 +1419,9 @@ class AppGraphGenerator(object):
                     raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, nextabsreq))
                 tgt.nvisits += 1
             else:
-                chosenlink.targets[state] = Target(nextabsreq, state, nvisits=1)
+                chosenlink.targets[state] = ReqTarget(nextabsreq, state, nvisits=1)
         else:
-            chosenlink.targets[state] = Target(nextabsreq, state, nvisits=1)
+            chosenlink.targets[state] = ReqTarget(nextabsreq, state, nvisits=1)
 
 
         curr = curr.next
@@ -1385,7 +1443,7 @@ class AppGraphGenerator(object):
                     if s < state]
             if smallerstates and any(t.transition != s for s, t in smallerstates):
                 raise AppGraphGenerator.AddToAppGraphException("new state from %d %s" % (state, currabspage))
-            tgt = Target(currabspage, state, nvisits=1)
+            tgt = PageTarget(currabspage, state, nvisits=1)
             currabsreq.targets[state] = tgt
 
         currabspage.statereqrespsmap[state].append(curr)
@@ -1458,7 +1516,8 @@ class AppGraphGenerator(object):
             newrequest = None
             newrequestbuilt = False
             for s in sorted(allstates):
-                if s not in l.targets or l.targets[s].nvisits == 0:
+                #if s not in l.targets or l.targets[s].nvisits == 0:
+                if s not in l.targets:
                     if not newrequestbuilt:
                         newwebrequest = ap.reqresps[0].response.page.getNewRequest(idx, l)
                         #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
@@ -1469,10 +1528,17 @@ class AppGraphGenerator(object):
                             newrequest.reqresps.append(RequestResponse(request, None))
                         newrequestbuilt = True
                     if newrequest:
-                        l.targets[s] = Target(newrequest, transition=s, nvisits=0)
+                        newtgt = ReqTarget(newrequest, transition=s, nvisits=0)
+                        if isinstance(l, AbstractForm):
+                            # TODO: for now assume that different FORM requests are not clustered
+                            tgtdict = {"": newtgt}
+                            newtgt = FormTarget(tgtdict, s, nvisits=0)
+                        l.targets[s] = newtgt
                         #print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
                         #for ss, tt in newrequest.targets.iteritems():
                         #    print output.purple("\t %s %s" % (ss, tt))
+                else:
+                    assert l.targets[s].target is not None
 
     def getMinMappedState(self, state, statemap):
         prev = state
@@ -1952,7 +2018,7 @@ class AppGraphGenerator(object):
         # need history to handle navigatin back; pair of (absrequest,absresponse)
         history = []
         currstate = 0
-        chosenlink = None
+        tgtchosenlink = None
 
         while True:
             #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
@@ -1977,7 +2043,7 @@ class AppGraphGenerator(object):
 
             respage = currtarget.target
 
-            history.append((currreq, respage, chosenlink, currstate-1))
+            history.append((currreq, respage, tgtchosenlink, currstate-1))
             if currstate not in respage.statelinkmap:
                 if currstate == self.maxstate:
                     # end reached
@@ -1987,8 +2053,8 @@ class AppGraphGenerator(object):
                     off -= 1
                     respage = history[off][1]
 
-            chosenlink = respage.statelinkmap[currstate]
-            chosentarget = chosenlink.targets[currstate].target
+            tgtchosenlink = respage.statelinkmap[currstate]
+            chosentarget = tgtchosenlink.target
 
             currreq = chosentarget
 
@@ -2034,13 +2100,25 @@ class AppGraphGenerator(object):
                     aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
                 else:
                     if goodst in aa.targets:
-                        assert aa.targets[st].target == aa.targets[goodst].target, \
-                                "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
-                        assert st == goodst or statemap[aa.targets[goodst].transition] == statemap[aa.targets[st].transition], \
-                                "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
-                                % (aa, st, aa.targets[st], statemap[aa.targets[st].transition],
-                                        goodst, aa.targets[goodst], statemap[aa.targets[goodst].transition])
-                        aa.targets[goodst].nvisits += aa.targets[st].nvisits
+                        if isinstance(aa, AbstractForm):
+                            common = frozenset(aa.targets[st].target.keys()) & frozenset(aa.targets[goodst].target.keys())
+                            for c in common:
+                                assert aa.targets[st].target[c].target == aa.targets[goodst].target[c].target, \
+                                        "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
+                                assert st == goodst or statemap[aa.targets[goodst].target[c].transition] == statemap[aa.targets[st].target[c].transition], \
+                                        "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
+                                        % (aa, st, aa.targets[st], statemap[aa.targets[st].transition],
+                                                goodst, aa.targets[goodst], statemap[aa.targets[goodst].transition])
+                            aa.targets[goodst].nvisits += aa.targets[st].nvisits
+                            aa.targets[goodst].target.update(aa.targets[st].target)
+                        else:
+                            assert aa.targets[st].target == aa.targets[goodst].target, \
+                                    "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
+                            assert st == goodst or statemap[aa.targets[goodst].transition] == statemap[aa.targets[st].transition], \
+                                    "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
+                                    % (aa, st, aa.targets[st], statemap[aa.targets[st].transition],
+                                            goodst, aa.targets[goodst], statemap[aa.targets[goodst].transition])
+                            aa.targets[goodst].nvisits += aa.targets[st].nvisits
                     else:
                         aa.targets[goodst] = aa.targets[st]
                         # also map transition state to the reduced one
@@ -2261,6 +2339,8 @@ class Crawler(object):
 
             htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
             reqresp = self.newPage(htmlpage)
+            assert params
+            reqresp.request.formparams = FormFiller.Params(params)
 
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
@@ -2356,6 +2436,16 @@ class FormField(object):
 
 
 class FormFiller(object):
+
+    class Params(defaultdict):
+
+        def __init__(self, init={}):
+            defaultdict.__init__(self)
+            self.update(init)
+
+        def __hash__(self):
+            return hash(tuple(sorted((i[0], tuple(i[1])) for i in self.iteritems())))
+
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.forms = {}
@@ -2430,8 +2520,12 @@ class Engine(object):
             tgt = link.targets[state]
             nvisits = tgt.nvisits + 1
             # also add visit count for the subsequent request
-            if tgt.target and state in tgt.target.targets:
-                nvisits += tgt.target.targets[state].nvisits
+            if linkidx[2] != None:
+                targets = tgt.target[linkidx[2]].target.targets
+            else:
+                targets = tgt.target.targets
+            if tgt.target and state in targets:
+                nvisits += targets[state].nvisits
         else:
             # never visited, but it must be > 0
             nvisits = 1
@@ -2439,6 +2533,8 @@ class Engine(object):
         othernvisits = 0
         for s, t in link.targets.iteritems():
             if t.transition != s:
+                # XXX a link should never change state, it is the request that does it!
+                assert False
                 statechange = 1
             if tgt:
                 # we need to sum only the visits to requests that have the same target
@@ -2454,7 +2550,7 @@ class Engine(object):
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         unvlink = unvlinks[0]
-        costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
+        costs = [(self.linkcost(head, i, j, state), i) for (i, j, k) in unvlinks]
         #print "COSTS", costs
         #print "NCOST", [i[0].normalized for i in costs]
         mincost = min(costs)
@@ -2484,23 +2580,29 @@ class Engine(object):
                 newpath = [PathStep(head, idx, state)] + headpath
                 #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
-                    nextabsreq = link.targets[state].target
-                    #print "NEXTABSREQ", nextabsreq
-                    if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
-                        # this is a page known to be revealing of possible state change
-                        # go there first, priority=-1 !
-                        self.addUnvisisted(dist, head, state, headpath, [(idx, link)], candidates, -1)
-                    if state not in nextabsreq.targets:
-                        self.addUnvisisted(dist, head, state, headpath, [(idx, link)], candidates, 0)
-                        continue
-                    # do not put request in the heap, but just go for the next abstract page
-                    tgt = nextabsreq.targets[state]
-                    assert tgt.target
-                    if (tgt.target, tgt.transition) in seen:
-                        continue
-                    newdist = dist + self.linkcost(head, idx, link, state)
-                    #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
-                    heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
+                    linktgt = link.targets[state]
+                    if isinstance(linktgt, FormTarget):
+                        nextabsrequests = [(p, i.target) for p, i in linktgt.target.iteritems()]
+                    else:
+                        nextabsrequests = [(None, linktgt.target)]
+                    for formparams, nextabsreq in nextabsrequests:
+                        #print "NEXTABSREQ", nextabsreq
+                        if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
+                            # this is a page known to be revealing of possible state change
+                            # go there first, priority=-1 !
+                            self.addUnvisisted(dist, head, state, headpath, [(idx, link, formparams)], candidates, -1)
+                        if state not in nextabsreq.targets:
+                            self.addUnvisisted(dist, head, state, headpath, [(idx, link, formparams)], candidates, 0)
+                            continue
+                        # do not put request in the heap, but just go for the next abstract page
+                        tgt = nextabsreq.targets[state]
+                        assert tgt.target
+                        if (tgt.target, tgt.transition) in seen:
+                            continue
+                        formidx = (idx[0], idx[1], formparams)
+                        newdist = dist + self.linkcost(head, formidx, link, state)
+                        #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
+                        heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     unvlinks = head.abslinks.getUnvisited(state)
                     print "UNVLINKS", "\n\t".join(str(i) for i in unvlinks)
@@ -2680,6 +2782,9 @@ class Engine(object):
                 print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
                 try:
+                    if nextAction[0] == Engine.Actions.FORM:
+                        # do not even try to merge forms
+                        raise PageMergeException()
                     self.state = self.tryMergeInGraph(reqresp)
                     self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
                 except PageMergeException:
