@@ -70,10 +70,11 @@ class Constants(object):
             setattr(self, a, a)
 
 class RecursiveDict(defaultdict):
-    def __init__(self, nleavesfunc=lambda x: 1):
+    def __init__(self, nleavesfunc=lambda x: 1, nleavesaggregator=sum):
         self.default_factory = RecursiveDict
         # when counting leaves, apply this function to non RecursiveDict objects
         self.nleavesfunc = nleavesfunc
+        self.nleavesaggregator = nleavesaggregator
         self._nleaves = None
         # XXX no more general :(
         self.abspages = {}
@@ -81,7 +82,7 @@ class RecursiveDict(defaultdict):
     @property
     def nleaves(self):
         if self._nleaves is None:
-            self._nleaves = sum(i.nleaves if isinstance(i, self.default_factory) else self.nleavesfunc(i)
+            self._nleaves = self.nleavesaggregator(i.nleaves if isinstance(i, self.default_factory) else self.nleavesfunc(i)
                     for i in self.itervalues())
         return self._nleaves
 
