@@ -2782,26 +2782,28 @@ class Engine(object):
                     assert False, nextAction
                 print output.red("TREE %s" % (reqresp.response.page.linkstree,))
                 print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
-                try:
-                    if nextAction[0] == Engine.Actions.FORM:
-                        # do not even try to merge forms
-                        raise PageMergeException()
-                    self.state = self.tryMergeInGraph(reqresp)
-                    self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
-                except PageMergeException:
-                    self.logger.info("need to recompute graph")
-                    pc = PageClusterer(cr.headreqresp)
-                    print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
-                    ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
-                    maxstate = ag.generateAppGraph()
-                    self.state = ag.reduceStates()
-                    self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
-                    global cond
-                    if cond >= 2: cond += 1
-                    ag.fillMissingRequests()
-                    print output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages()))
-                    self.pc = pc
-                    self.ag = ag
+                if not nextAction[0] == Engine.Actions.BACK:
+                    try:
+                        if nextAction[0] == Engine.Actions.FORM:
+                            # do not even try to merge forms
+                            raise PageMergeException()
+                        self.state = self.tryMergeInGraph(reqresp)
+                        self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
+                    except PageMergeException:
+                        self.logger.info("need to recompute graph")
+                        pc = PageClusterer(cr.headreqresp)
+                        print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
+                        ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
+                        maxstate = ag.generateAppGraph()
+                        self.state = ag.reduceStates()
+                        #statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=lambda x: 
+                        self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
+                        #global cond
+                        #if cond >= 2: cond += 1
+                        ag.fillMissingRequests()
+                        print output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages()))
+                        self.pc = pc
+                        self.ag = ag
 
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
