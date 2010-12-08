@@ -7,6 +7,7 @@ import heapq
 import itertools
 import random
 import math
+from numpy import mean
 
 rng = random.Random()
 rng.seed(1)
@@ -71,7 +72,6 @@ class Constants(object):
 
 class RecursiveDict(defaultdict):
     def __init__(self, nleavesfunc=lambda x: 1, nleavesaggregator=sum):
-        self.default_factory = RecursiveDict
         # when counting leaves, apply this function to non RecursiveDict objects
         self.nleavesfunc = nleavesfunc
         self.nleavesaggregator = nleavesaggregator
@@ -79,10 +79,15 @@ class RecursiveDict(defaultdict):
         # XXX no more general :(
         self.abspages = {}
 
+    def __missing__(self, key):
+        v = RecursiveDict(nleavesfunc=self.nleavesfunc, nleavesaggregator=self.nleavesaggregator)
+        self.__setitem__(key, v)
+        return v
+
     @property
     def nleaves(self):
         if self._nleaves is None:
-            self._nleaves = self.nleavesaggregator(i.nleaves if isinstance(i, self.default_factory) else self.nleavesfunc(i)
+            self._nleaves = self.nleavesaggregator(i.nleaves if isinstance(i, RecursiveDict) else self.nleavesfunc(i)
                     for i in self.itervalues())
         return self._nleaves
 
@@ -133,7 +138,7 @@ class RecursiveDict(defaultdict):
                 levelkeys = []
                 children = []
                 for c in l:
-                    if isinstance(c, self.default_factory):
+                    if isinstance(c, RecursiveDict):
                         levelkeys.extend(c.iterkeys())
                         children.extend(c.itervalues())
                     else:
@@ -146,20 +151,25 @@ class RecursiveDict(defaultdict):
     def iterleaves(self):
         if self:
             for c in self.itervalues():
-                if isinstance(c, self.default_factory):
+                if isinstance(c, RecursiveDict):
                     for i in c.iterleaves():
                         yield i
                 else:
                     yield c
+
+    @lazyproperty
+    def depth(self):
+        return max(i.depth+1 if isinstance(i, RecursiveDict) else 1
+                for i in self.itervalues())
 
     def __str__(self, level=0):
         out = ""
         for k, v in self.iteritems():
             out += "\n%s%s:"  % ("\t"*level, k)
             if isinstance(v, RecursiveDict):
-                out += "%s" % v.__str__(level+1)
+                out += "%s%s" % (v.nleaves, v.__str__(level+1))
             else:
-                out += "%s" % v
+                out += "%s" % (v, )
         return out
 
 
@@ -170,6 +180,7 @@ class Request(object):
         self.reqresp = None
         self.absrequest = None
         self.formparams = FormFiller.Params({})
+        self.state = -1
 
     @lazyproperty
     def method(self):
@@ -1070,7 +1081,8 @@ class PageClusterer(object):
                 # requrire more than X pages in a cluster
 
                 # require some diversity in the dom path in order to create a link
-                if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n):
+                if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
+                        and v.depth <= n:
                     v.clusterable = True
                     level.clusterable = False
                 else:
@@ -1088,7 +1100,8 @@ class PageClusterer(object):
             # requrire more than X pages in a cluster
 
             # require some diversity in the dom path in order to create a link
-            if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n):
+            if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
+                    and v.depth <= n:
                 v.newclusterable = True
                 level.newclusterable = False
             else:
@@ -1102,11 +1115,16 @@ class PageClusterer(object):
         med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
         self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
-            nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
-            if hasattr(v, "nleaves") and v.clusterable:
-                self.logger.debug(output.yellow(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
+            if hasattr(v, "nleaves"):
+                nleaves = v.nleaves
+                depth = v.depth
             else:
-                self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
+                nleaves = len(v)
+                depth = 1
+            if hasattr(v, "nleaves") and v.clusterable:
+                self.logger.debug(output.yellow(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
+            else:
+                self.logger.debug(output.green(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
             if hasattr(v, "nleaves"):
                 self.printlevelstat(v, n+1)
 
@@ -1345,6 +1363,8 @@ class AppGraphGenerator(object):
             #print output.red("A %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             currabsreq.targets[laststate] = PageTarget(currabspage, laststate+1, nvisits=1)
+            currpage.reqresp.request.state = laststate
+
             #print output.red("B %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             laststate += 1
@@ -2081,9 +2101,19 @@ class AppGraphGenerator(object):
 
         self.mergeStateReqRespMaps(statemap)
 
+        self.assign_reduced_state(statemap)
+
         # return last current state
         return statemap[-1]
 
+    def assign_reduced_state(self, statemap):
+        rr = self.reqrespshead
+        while rr:
+            assert rr.request.state != -1
+            assert rr.response.page.state != -1
+            rr.request.reducedstate = statemap[rr.request.state]
+            rr.response.page.reducedstate = statemap[rr.response.page.state]
+            rr = rr.next
 
     def mergeStateReqRespMaps(self, statemap):
         for ap in self.abspages:
@@ -2796,7 +2826,22 @@ class Engine(object):
                         ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
                         maxstate = ag.generateAppGraph()
                         self.state = ag.reduceStates()
-                        #statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=lambda x: 
+                        statechangescores = RecursiveDict(nleavesfunc=lambda x: x,
+                                nleavesaggregator=lambda x: (1, mean(list(float(i[1])/i[0] for i in x))))
+                        rr = cr.headreqresp
+                        while rr:
+                            changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
+                            #if changing:
+                            #    print output.turquoise("%d(%d)->%d(%d) %s %s" % (rr.request.reducedstate,
+                            #        rr.request.state, rr.response.page.reducedstate, rr.response.page.state,
+                            #        rr.request, rr.response))
+                            statechangescores.setapplypath([rr.request.method] + list(rr.request.urlvector),
+                                    (1, changing), lambda x: (x[0] + 1, x[1] + changing))
+                            rr.request.state = -1
+                            rr.response.page.state = -1
+                            rr = rr.next
+                        print output.turquoise("%s" % statechangescores)
+
                         self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
                         #global cond
                         #if cond >= 2: cond += 1
