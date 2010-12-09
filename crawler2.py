@@ -968,7 +968,7 @@ def urlvector(request):
     query = request.query
     if query:
         querytoks = request.query.split('&')
-        keys, values = zip(*(i.split('=') for i in querytoks))
+        keys, values = zip(*(i.split('=', 1) for i in querytoks))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     return tuple(urltoks)
@@ -978,7 +978,7 @@ def formvector(method, action, inputs, hiddens):
     query = action.query
     if query:
         querytoks = action.query.split('&')
-        keys, values = zip(*(i.split('=') for i in querytoks))
+        keys, values = zip(*(i.split('=', 1) for i in querytoks))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     if inputs:
@@ -1082,7 +1082,7 @@ class PageClusterer(object):
 
                 # require some diversity in the dom path in order to create a link
                 if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
-                        and v.depth <= n:
+                        and v.depth <= n and False:
                     v.clusterable = True
                     level.clusterable = False
                 else:
@@ -1101,7 +1101,7 @@ class PageClusterer(object):
 
             # require some diversity in the dom path in order to create a link
             if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
-                    and v.depth <= n:
+                    and v.depth <= n and False:
                 v.newclusterable = True
                 level.newclusterable = False
             else:
