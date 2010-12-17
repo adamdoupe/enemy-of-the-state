@@ -97,6 +97,16 @@ class RecursiveDict(defaultdict):
             i = i[p]
         return i
 
+    def getpathnleaves(self, path):
+        yield self.nleaves
+        i = self
+        for p in path:
+            i = i[p]
+            if not(i, RecursiveDict):
+                break
+            yield i.nleaves
+
+
     def setpath(self, path, value):
         i = self
         # invalidate leaves count
@@ -1943,6 +1953,9 @@ class AppGraphGenerator(object):
         nstates = len(set(statemap))
         self.logger.debug("final states %d", nstates)
 
+    def reqstatechangescore(self, req):
+        return max(self.statechangescores.getpathnleaves([req.method] + list(req.urlvector)))
+
     def splitStatesIfNeeded(self, smallerstates, currreq, currstate, currtarget, statemap, history):
         currmapsto = self.getMinMappedState(currstate, statemap)
         cttransition = self.getMinMappedState(currtarget.transition, statemap)
@@ -1971,22 +1984,19 @@ class AppGraphGenerator(object):
                 for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
                     if req == currreq:
                         self.logger.debug("loop detected on %s", req)
-                        #print "PASTPAGES", pastpages
-                        minnvisits = min(i.nvisits for i in pastpages)
-                        candidates = [i for i in pastpages if i.nvisits == minnvisits]
-                        assert len(candidates) > 0
-                        if len(candidates):
-                            bestcand = min(((tuple(reversed(linkweigh(i.chlink, i.nvisits))), i) for i in candidates), key=lambda x: x[0])[1]
-                            #print "BESTCAND", bestcand
-                            target = bestcand.req.targets[bestcand.cstate]
-                            self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
-                            assert statemap[target.transition] == bestcand.cstate
-                            # this request will always change state
-                            for t in bestcand.req.targets.itervalues():
-                                if t.transition <= currstate:
-                                    statemap[t.transition] = t.transition
+                        print "PASTPAGES", pastpages
+                        scores = [(self.reqstatechangescore(i.req), req) for i in pastpages]
+                        bestcand = max(scores)[1]
+                        print "BESTCAND", bestcand
+                        target = bestcand.req.targets[bestcand.cstate]
+                        self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
+                        assert statemap[target.transition] == bestcand.cstate
+                        # this request will always change state
+                        for t in bestcand.req.targets.itervalues():
+                            if t.transition <= currstate:
+                                statemap[t.transition] = t.transition
 #                                        import pdb; pdb.set_trace()
-                            break
+                        break
 
 
 
@@ -2840,6 +2850,7 @@ class Engine(object):
                             rr.request.state = -1
                             rr.response.page.state = -1
                             rr = rr.next
+                        print output.turquoise("statechangescores")
                         print output.turquoise("%s" % statechangescores)
 
                         self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
