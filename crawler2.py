@@ -102,7 +102,7 @@ class RecursiveDict(defaultdict):
         i = self
         for p in path:
             i = i[p]
-            if not(i, RecursiveDict):
+            if not isinstance(i, RecursiveDict):
                 break
             yield i.nleaves
 
@@ -1274,11 +1274,12 @@ class AppGraphGenerator(object):
         def __init__(self, msg=None):
             PageMergeException.__init__(self, msg)
 
-    def __init__(self, reqrespshead, abspages):
+    def __init__(self, reqrespshead, abspages, statechangescores):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.reqrespshead = reqrespshead
         self.abspages = abspages
         self.absrequests = None
+        self.statechangescores = statechangescores
 
     def updatepageclusters(self, abspages):
         self.abspages = abspages
@@ -1953,8 +1954,10 @@ class AppGraphGenerator(object):
         nstates = len(set(statemap))
         self.logger.debug("final states %d", nstates)
 
-    def reqstatechangescore(self, req):
-        return max(self.statechangescores.getpathnleaves([req.method] + list(req.urlvector)))
+    def reqstatechangescore(self, absreq):
+        return max(max(self.statechangescores.getpathnleaves(
+            [rr.request.method] + list(rr.request.urlvector)))
+            for rr in absreq.reqresps)
 
     def splitStatesIfNeeded(self, smallerstates, currreq, currstate, currtarget, statemap, history):
         currmapsto = self.getMinMappedState(currstate, statemap)
@@ -1982,10 +1985,11 @@ class AppGraphGenerator(object):
                 currreq.statehints += 1
                 pastpages = []
                 for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
+                    assert self.getMinMappedState(laststate, statemap) == currmapsto
                     if req == currreq:
                         self.logger.debug("loop detected on %s", req)
-                        print "PASTPAGES", pastpages
-                        scores = [(self.reqstatechangescore(i.req), req) for i in pastpages]
+                        print "PASTPAGES", '\n'.join(str(i) for i in pastpages)
+                        scores = [(self.reqstatechangescore(i.req), i) for i in pastpages]
                         bestcand = max(scores)[1]
                         print "BESTCAND", bestcand
                         target = bestcand.req.targets[bestcand.cstate]
@@ -2015,7 +2019,7 @@ class AppGraphGenerator(object):
                     #print "SSS %s %s" % (req, req.targets)
                     #print "SSS %s" % req
                     assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
-                    if nvisits == 1:
+                    if nvisits == 1 and False:
                         self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
                         assert statemap[target.transition] == laststate
                         # this request will always change state
@@ -2804,6 +2808,7 @@ class Engine(object):
             reqresp = cr.open(url)
             print output.red("TREE %s" % (reqresp.response.page.linkstree,))
             print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
+            statechangescores = None
             nextAction = self.getNextAction(reqresp)
             while nextAction[0] != Engine.Actions.DONE:
                 if nextAction[0] == Engine.Actions.ANCHOR:
@@ -2833,7 +2838,7 @@ class Engine(object):
                         self.logger.info("need to recompute graph")
                         pc = PageClusterer(cr.headreqresp)
                         print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
-                        ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages())
+                        ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(), statechangescores)
                         maxstate = ag.generateAppGraph()
                         self.state = ag.reduceStates()
                         statechangescores = RecursiveDict(nleavesfunc=lambda x: x,
