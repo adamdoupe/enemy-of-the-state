@@ -1955,9 +1955,12 @@ class AppGraphGenerator(object):
         self.logger.debug("final states %d", nstates)
 
     def reqstatechangescore(self, absreq):
-        return max(max(self.statechangescores.getpathnleaves(
-            [rr.request.method] + list(rr.request.urlvector)))
-            for rr in absreq.reqresps)
+        scores = [[(i[1]/i[0], i, rr.request)
+            for i in self.statechangescores.getpathnleaves(
+            [rr.request.method] + list(rr.request.urlvector))]
+            for rr in absreq.reqresps]
+        print "SCORES", scores
+        return max(max(scores))[0]
 
     def splitStatesIfNeeded(self, smallerstates, currreq, currstate, currtarget, statemap, history):
         currmapsto = self.getMinMappedState(currstate, statemap)
@@ -1988,10 +1991,13 @@ class AppGraphGenerator(object):
                     assert self.getMinMappedState(laststate, statemap) == currmapsto
                     if req == currreq:
                         self.logger.debug("loop detected on %s", req)
-                        print "PASTPAGES", '\n'.join(str(i) for i in pastpages)
                         scores = [(self.reqstatechangescore(i.req), i) for i in pastpages]
+                        print "PASTPAGES", '\n'.join(str(i) for i in scores)
                         bestcand = max(scores)[1]
                         print "BESTCAND", bestcand
+                        if str(bestcand).find("review") != -1:
+                            print self.statechangescores
+                            import pdb; pdb.set_trace()
                         target = bestcand.req.targets[bestcand.cstate]
                         self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                         assert statemap[target.transition] == bestcand.cstate
@@ -1999,7 +2005,7 @@ class AppGraphGenerator(object):
                         for t in bestcand.req.targets.itervalues():
                             if t.transition <= currstate:
                                 statemap[t.transition] = t.transition
-#                                        import pdb; pdb.set_trace()
+#                        import pdb; pdb.set_trace()
                         break
 
 
@@ -2842,7 +2848,7 @@ class Engine(object):
                         maxstate = ag.generateAppGraph()
                         self.state = ag.reduceStates()
                         statechangescores = RecursiveDict(nleavesfunc=lambda x: x,
-                                nleavesaggregator=lambda x: (1, mean(list(float(i[1])/i[0] for i in x))))
+                                nleavesaggregator=lambda x: (1, mean(list(float(i[1])/i[0] for i in x))/2))
                         rr = cr.headreqresp
                         while rr:
                             changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
