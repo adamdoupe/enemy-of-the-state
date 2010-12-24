@@ -1022,7 +1022,7 @@ def linksvector(page):
     return linksvector
 
 
-class Classfier(RecursiveDict):
+class Classifier(RecursiveDict):
 
     def __init__(self, featuresextractor):
         self.featuresextractor = featuresextractor
@@ -1092,7 +1092,7 @@ class PageClusterer(object):
 
                 # require some diversity in the dom path in order to create a link
                 if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
-                        and v.depth <= n and False:
+                        and v.depth <= n:
                     v.clusterable = True
                     level.clusterable = False
                 else:
@@ -1111,7 +1111,7 @@ class PageClusterer(object):
 
             # require some diversity in the dom path in order to create a link
             if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
-                    and v.depth <= n and False:
+                    and v.depth <= n:
                 v.newclusterable = True
                 level.newclusterable = False
             else:
@@ -1177,7 +1177,7 @@ class PageClusterer(object):
             reqresp.response.page.abspage = abspage
 
     def levelclustering(self, reqresps):
-        classif = Classfier(lambda rr: rr.response.page.linksvector)
+        classif = Classifier(lambda rr: rr.response.page.linksvector)
         classif.addall(reqresps)
         self.scanlevels(classif)
         self.printlevelstat(classif)
@@ -1988,9 +1988,9 @@ class AppGraphGenerator(object):
                 currreq.statehints += 1
                 pastpages = []
                 for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
-                    assert self.getMinMappedState(laststate, statemap) == currmapsto
-                    if req == currreq:
-                        self.logger.debug("loop detected on %s", req)
+                    if req == currreq or \
+                            self.getMinMappedState(laststate, statemap) != currmapsto:
+                        self.logger.debug("stopping at %s", req)
                         scores = [(self.reqstatechangescore(i.req), i) for i in pastpages]
                         print "PASTPAGES", '\n'.join(str(i) for i in scores)
                         bestcand = max(scores)[1]
@@ -2007,36 +2007,8 @@ class AppGraphGenerator(object):
                                 statemap[t.transition] = t.transition
 #                        import pdb; pdb.set_trace()
                         break
-
-
-
-                    target = req.targets[laststate]
-                    assert target.target == page, "%s != %s" % (target.target, page)
-                    # the Target.nvisit has not been updated yet, because we have not finalized state assignment
-                    # let's compute the number of simits by counting the states that
-                    # map to the same one and share the target abstract page
-                    assert target.nvisits == 1, target.nvisits
-                    mappedlaststate = self.getMinMappedState(laststate, statemap)
-                    #visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and self.getMinMappedState(s, statemap) == mappedlaststate]
-                    # the condition on t.transition and s is used to not included states that have been already proved to cause a state transition
-                    visits = [s for s, t in req.targets.iteritems() if s <= laststate and t.target == page and
-                            self.getMinMappedState(t.transition, statemap) == self.getMinMappedState(s, statemap)]
-                    nvisits = len(visits)
-                    #print "SSS %s %s" % (req, req.targets)
-                    #print "SSS %s" % req
-                    assert nvisits > 0, "%d, %d" % (laststate, mappedlaststate)
-                    if nvisits == 1 and False:
-                        self.logger.debug(output.teal("splitting on %d->%d request %s to page %s"), laststate, target.transition,  req, page)
-                        assert statemap[target.transition] == laststate
-                        # this request will always change state
-                        for t in req.targets.itervalues():
-                            if t.transition <= currstate:
-                                statemap[t.transition] = t.transition
-                        #if laststate >= 100:
-                        #    gracefulexit()
-                        break
-                    else:
-                        pastpages.append(PastPage(req, page, chlink, laststate, nvisits))
+                    # no longer using PastPage.nvisits
+                    pastpages.append(PastPage(req, page, chlink, laststate, None))
                 else:
                     # if we get hear, we need a better heuristic for splitting state
                     raise RuntimeError()
