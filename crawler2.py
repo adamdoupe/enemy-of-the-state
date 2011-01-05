@@ -152,7 +152,7 @@ class RecursiveDict(defaultdict):
                         levelkeys.extend(c.iterkeys())
                         children.extend(c.itervalues())
                     else:
-                        levelkeys.append(c)
+                        levelkeys.append(self.nleavesfunc(c))
                 if children:
                     queue.append(children)
                 #print "LK", len(queue), levelkeys, queue
@@ -166,6 +166,14 @@ class RecursiveDict(defaultdict):
                         yield i
                 else:
                     yield c
+
+    def iteridxleaves(self):
+        for k, v in defaultdict.iteritems(self):
+            if not isinstance(v, RecursiveDict):
+                yield ((k, ), v)
+            else:
+                for kk, vv in v.iteridxleaves():
+                    yield (tuple([k] + list(kk)), vv)
 
     @lazyproperty
     def depth(self):
@@ -500,9 +508,9 @@ class Page(object):
     def redirects(self):
         return [Redirect(self.internal.getResponseHeaderValue("Location"), self.reqresp)] if self.redirect else []
 
-    @lazyproperty
+    @property
     def linkstree(self):
-        return linkstree(self)
+        return self.links.linkstree
 
     @lazyproperty
     def linksvector(self):
@@ -678,7 +686,7 @@ class AbstractRedirect(AbstractLink):
         return iter(self.locations).next()
 
 
-class Links(object):
+class OldLinks(object):
     Type = Constants("ANCHOR", "FORM", "REDIRECT")
 
     def __init__(self, anchors=[], forms=[], redirects=[]):
@@ -764,6 +772,132 @@ class Links(object):
         return "Links(%s, %s, %s)" % (self.anchors, self.forms, self.redirects)
 
 
+class Links(object):
+    Type = Constants("ANCHOR", "FORM", "REDIRECT")
+
+    def __init__(self, anchors=[], forms=[], redirects=[]):
+        # leaves in linkstree are counter of how many times that url occurred
+        # therefore use that counter when compuing number of urls with "nleaves"
+        linkstree = RecursiveDict(lambda x: len(x))
+        for ltype, links in [(Links.Type.ANCHOR, anchors),
+                (Links.Type.FORM, forms),
+                (Links.Type.REDIRECT, redirects)]:
+            for l in links:
+                urlv = [ltype]
+                urlv += [l.dompath] if l.dompath else []
+                print "LINKVETOR", l.linkvector
+                urlv += list(l.linkvector)
+                print "URLV", urlv
+                linkstree.setapplypath(urlv, [l], lambda x: x+[l])
+                print "LINKSTREE", linkstree
+        if not linkstree:
+            # all pages with no links will end up in the same special bin
+            linkstree.setapplypath(("<EMPTY>", ), [None], lambda x: x+[None])
+        self.linkstree = linkstree
+
+    def nAnchors(self):
+        try:
+            return self.linkstree[Links.Type.ANCHOR].nleaves
+        except KeyError:
+            return 0
+
+    def nForms(self):
+        try:
+            return self.linkstree[Links.Type.FORM].nleaves
+        except KeyError:
+            return 0
+
+    def nRedirects(self):
+        try:
+            return self.linkstree[Links.Type.REDIRECT].nleaves
+        except KeyError:
+            return 0
+
+    def __len__(self):
+        return self.nAnchors() + self.nForms() + self.nRedirects()
+
+    def __nonzero__(self):
+        return self.nAnchors() != 0 or self.nForms() != 0 or self.nRedirects() != 0
+
+    @lazyproperty
+    def _str(self):
+        return "Links(%s, %s, %s)" % (self.nAnchors, self.nForms, self.nRedirects)
+
+    def __str__(self):
+        return self._str
+
+    def __getitem__(self, linkidx):
+        idx = [linkidx.type] + list(linkidx.path)
+        val = self.linkstree.getpath(idx)
+        if hasattr(val, "nleaves"):
+            print output.red("******** PICKING ONE *******")
+            import pdb; pdb.set_trace()
+            val = val.iterleaves().next()[0]
+        assert isinstance(val, list)
+        if len(val) > 1:
+            print output.red("******** PICKING ONE *******")
+            import pdb; pdb.set_trace()
+        return val[0]
+
+    def __iter__(self):
+        for l in self.linkstree.iterleaves():
+            assert isinstance(l, list), l
+            for i in l:
+                yield i
+
+    def iteritems(self):
+        for p, l in self.linkstree.iteridxleaves():
+            assert isinstance(l, list), l
+            if len(l) > 1:
+                print output.red("******** PICKING ONE *******")
+                import pdb; pdb.set_trace()
+            yield (LinkIdx(p[0], p[1:], None), l[0])
+
+
+
+
+
+
+class AbstractLinks(object):
+
+    def __init__(self, linktrees):
+        self.rdict = RecursiveDict()
+        for t, c in [(Links.Type.ANCHOR, AbstractAnchor),
+                (Links.Type.FORM, AbstractForm),
+                (Links.Type.REDIRECT, AbstractRedirect)]:
+            if t in linktrees:
+                self.buildtree(self.rdict, t, linktrees[t], c)
+
+    def buildtree(self, level, key, ltval, c):
+        keys = sorted(ltval[0].keys())
+        if all(sorted(i.keys()) == keys for i in ltval):
+            for k, v in ltval.iteritems():
+                self.buildtree(level[key], k, v)
+        else:
+            # leaves are lists, so iterate teie to get links
+            level[key] = c(ll for l in ltval.iterleaves() for ll in l)
+
+    def __getitem__(self, linkidx):
+        idx = [linkidx.type] + list(linkidx.path)
+        i = self.rdict
+        for p in idx:
+            if p in i:
+                i = i[p]
+            else:
+                break
+        else:
+            return i
+        print output.red("******** PICKING ONE *******")
+        import pdb; pdb.set_trace()
+        return i.iterleaves().next()
+
+    def __iter__(self):
+        return self.linkstree.iterleaves()
+
+    def iteritems(self):
+        for p, l in self.linkstree.iteridxleaves():
+            yield (LinkIdx(p[0], p[1:], None), l)
+
 class AbstractPage(object):
 
     InstanceCounter = 0
@@ -778,10 +912,12 @@ class AbstractPage(object):
         self.statereqrespsmap = defaultdict(list)
         self.seenstates = set()
         self._str = None
-        self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in self.reqresps))]
-        self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in self.reqresps))]
-        self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in self.reqresps))]
-        self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
+        #self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in self.reqresps))]
+        #self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in self.reqresps))]
+        #self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in self.reqresps))]
+        #self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
+        self.abslinks = AbstractLinks([rr.response.page.linkstree
+                for rr in self.reqresps])
 
 
     def addPage(self, reqresp):
@@ -790,16 +926,16 @@ class AbstractPage(object):
         self._str = None
 
     def regenerateLinks(self):
-        # TODO: number of links might not be the same in some more complex clustering
         #if self.instance == 3297:
         #    import pdb; pdb.set_trace()
-        for l, i in zip(self.absanchors, zip(*(rr.response.page.anchors for rr in self.reqresps))):
-            l.update(i)
-        for l, i in zip(self.absforms, zip(*(rr.response.page.forms for rr in self.reqresps))):
-            l.update(i)
-        for l, i in zip(self.absredirects, zip(*(rr.response.page.redirects for rr in self.reqresps))):
-            l.update(i)
-        self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
+        #for l, i in zip(self.absanchors, zip(*(rr.response.page.anchors for rr in self.reqresps))):
+        #     l.update(i)
+        #for l, i in zip(self.absforms, zip(*(rr.response.page.forms for rr in self.reqresps))):
+        #    l.update(i)
+        #for l, i in zip(self.absredirects, zip(*(rr.response.page.redirects for rr in self.reqresps))):
+        #    l.update(i)
+        self.abslinks = AbstractLinks([rr.response.page.linkstree
+                for rr in self.reqresps])
 
     def __str__(self):
         if self._str is None:
@@ -1035,21 +1171,6 @@ def formvector(method, action, inputs, hiddens):
         # TODO hiddens values
         urltoks.append(tuple(hiddens))
     return tuple(urltoks)
-
-def linkstree(page):
-    # leaves in linkstree are counter of how many times that url occurred
-    # therefore use that counter when compuing number of urls with "nleaves"
-    linkstree = RecursiveDict(lambda x: x)
-    if page.links:
-        for l in page.links.itervalues():
-            urlv = [l.dompath] if l.dompath else []
-            urlv += list(l.linkvector)
-            # set leaf to 1 or increment
-            linkstree.setapplypath(urlv, 1, lambda x: x+1)
-    else:
-        # all pages with no links will end up in the same special bin
-        linkstree.setapplypath(("<EMPTY>", ), 1, lambda x: x+1)
-    return linkstree
 
 
 def likstreedist(a, b):
@@ -1299,7 +1420,7 @@ class PairCounter(object):
 
 
 PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
-LinkIdx = namedtuple("LinkIdx", "type dompath href idx params")
+LinkIdx = namedtuple("LinkIdx", "type path params")
 
 class AppGraphGenerator(object):
 
@@ -1439,9 +1560,9 @@ class AppGraphGenerator(object):
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 newtgt = ReqTarget(nextabsreq, laststate, nvisits=1)
                 if chosenlink.type == Links.Type.FORM:
-                    chosenlink = LinkIdx(chosenlink.type, chosenlink.dompath,
-                            chosenlink.href, chosenlink.idx,
-                            curr.next.request.formparams)
+                    #chosenlink = LinkIdx(chosenlink.type, chosenlink.dompath,
+                    #        chosenlink.href, chosenlink.idx,
+                    #        curr.next.request.formparams)
                     # TODO: for now assume that different FORM requests are not clustered
                     assert len(set(tuple(sorted((j[0], tuple(j[1])) for j in i.request.formparams.iteritems())) for i in nextabsreq.reqresps)) == 1
                     tgtdict = {nextabsreq.reqresps[0].request.formparams: newtgt}
@@ -2564,16 +2685,19 @@ class Engine(object):
         if abspage is None:
             if len(page.anchors) > 0:
                 self.logger.debug("abstract page not availabe, picking first anchor")
-                a0 = page.anchors[0]
-                return LinkIdx(Links.Type.ANCHOR, a0.dompath, a0.href, 0, None)
+                for i, aa in page.links.iteritems():
+                    if i.type == Links.Type.ANCHOR:
+                        return i
+                assert False
             else:
                 self.logger.debug("abstract page not availabe, and no anchors")
                 return None
 
         # find unvisited anchor
-        for i, aa in enumerate(abspage.absanchors):
-            if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
-                return LinkIdx(Links.Type.ANCHOR, aa.dompath, aa.href, 0, None)
+        for i, aa in abspage.absanchors.links.iteritems():
+            if i.type == Links.Type.ANCHOR:
+                if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
+                    return i
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
@@ -2662,7 +2786,7 @@ class Engine(object):
                         assert tgt.target
                         if (tgt.target, tgt.transition) in seen:
                             continue
-                        formidx = LinkIdx(idx[0], idx[0], idx[1], 0, formparams)
+                        formidx = LinkIdx(idx.type, idx.path, formparams)
                         newdist = dist + self.linkcost(head, formidx, link, state)
                         #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
                         heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
