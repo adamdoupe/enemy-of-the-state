@@ -564,6 +564,7 @@ class AbstractLink(object):
         # map from state to AbstractRequest
         self.targets = {}
         self.skip = any(i.skip for i in links)
+        self.links = links
 
     @lazyproperty
     def _str(self):
@@ -575,15 +576,26 @@ class AbstractLink(object):
     def __repr__(self):
         return str(self)
 
+    @lazyproperty
+    def dompath(self):
+        dompaths = set(l.dompath for l in self.links)
+        # XXX multiple dompaths not supported yet
+        assert len(dompaths) == 1
+        return iter(dompaths).next()
+
 class AbstractAnchor(AbstractLink):
 
     def __init__(self, anchors):
         AbstractLink.__init__(self, anchors)
         self.hrefs = set(i.href for i in anchors)
         self.type = Links.Type.ANCHOR
+        self._href = None
 
     def update(self, anchors):
+        oldlen = len(self.hrefs)
         self.hrefs = set(i.href for i in anchors)
+        if oldlen != len(self.hrefs):
+            self._href = None
 
     @property
     def _str(self):
@@ -596,6 +608,18 @@ class AbstractAnchor(AbstractLink):
     def hasquery(self):
         return any(i.find('?') != -1 for i in self.hrefs)
 
+    @property
+    def href(self):
+        if not self._href:
+            if len(self.hrefs) == 1:
+                self._href = iter(self.hrefs).next()
+            else:
+                # return longest common substring from the beginning
+                for i, cc in enumerate(zip(*self.hrefs)):
+                    if any(c != cc[0] for c in cc):
+                        break
+                self._href = iter(self.hrefs).next()[:i]
+        return self._href
 
 class AbstractForm(AbstractLink):
 
@@ -620,6 +644,11 @@ class AbstractForm(AbstractLink):
     def isPOST(self):
         return Form.POST in self.methods
 
+    @lazyproperty
+    def action(self):
+        # XXX multiple hrefs not supported yet
+        assert len(self.actions) == 1
+        return iter(self.actions).next()
 
 class AbstractRedirect(AbstractLink):
 
@@ -642,15 +671,20 @@ class AbstractRedirect(AbstractLink):
     def hasquery(self):
         return any(i.find('?') != -1 for i in self.locations)
 
+    @lazyproperty
+    def location(self):
+        # XXX multiple hrefs not supported yet
+        assert len(self.locations) == 1
+        return iter(self.locations).next()
 
 
 class Links(object):
     Type = Constants("ANCHOR", "FORM", "REDIRECT")
 
     def __init__(self, anchors=[], forms=[], redirects=[]):
-        self.anchors = anchors
-        self.forms = forms
-        self.redirects = redirects
+        self.anchors = dict(((i.dompath, i.href), i) for i in anchors)
+        self.forms = dict(((i.dompath, i.action), i) for i in forms)
+        self.redirects = dict(((i.dompath, i.location), i) for i in redirects)
 
     def nAnchors(self):
         return len(self.anchors)
@@ -662,29 +696,30 @@ class Links(object):
         return len(self.redirects)
 
     def __getitem__(self, idx):
-        if idx[0] == Links.Type.ANCHOR:
-            return self.anchors[idx[1]]
-        elif idx[0] == Links.Type.FORM:
-            return self.forms[idx[1]]
-        elif idx[0] == Links.Type.REDIRECT:
-            return self.redirects[idx[1]]
+        if idx.type == Links.Type.ANCHOR:
+            return self.anchors[(idx.dompath, idx.href)]
+        elif idx.type == Links.Type.FORM:
+            return self.forms[(idx.dompath, idx.href)]
+        elif idx.type == Links.Type.REDIRECT:
+            return self.redirects[(idx.dompath, idx.href)]
         else:
             raise KeyError(idx)
 
     def iteritems(self):
-        for i, v in enumerate(self.anchors):
-            yield (LinkIdx(Links.Type.ANCHOR, i, None), v)
-        for i, v in enumerate(self.forms):
-            yield (LinkIdx(Links.Type.FORM, i, None), v)
-        for i, v in enumerate(self.redirects):
-            yield (LinkIdx(Links.Type.REDIRECT, i, None), v)
+        # TODO: handle multiple links with the same path and href
+        for i, v in self.anchors.iteritems():
+            yield (LinkIdx(Links.Type.ANCHOR, i[0], i[1], 0, None), v)
+        for i, v in self.forms.iteritems():
+            yield (LinkIdx(Links.Type.FORM, i[0], i[1], 0, None), v)
+        for i, v in self.redirects.iteritems():
+            yield (LinkIdx(Links.Type.REDIRECT, i[0], i[1], 0, None), v)
 
     def itervalues(self):
-        for v in self.anchors:
+        for v in self.anchors.itervalues():
             yield v
-        for v in self.forms:
+        for v in self.forms.itervalues():
             yield v
-        for v in self.redirects:
+        for v in self.redirects.itervalues():
             yield v
 
     def __iter__(self):
@@ -714,9 +749,12 @@ class Links(object):
     def equals(self, l):
         return self.nAnchors() == l.nAnchors() and self.nForms() == l.nForms() and \
                 self.nRedirects() == l.nRedirects() and \
-                all(a.equals(b) for a, b in zip(self.anchors, l.anchors)) and \
-                all(a.equals(b) for a, b in zip(self.forms, l.forms)) and \
-                all(a.equals(b) for a, b in zip(self.redirects, l.redirects))
+                all(a.equals(b) for a, b in
+                        zip(self.anchors.itervalues(), l.anchors.itervalues())) and \
+                all(a.equals(b) for a, b in
+                        zip(self.forms.itervalues(), l.forms.itervalues())) and \
+                all(a.equals(b) for a, b in
+                        zip(self.redirects.itervalues(), l.redirects.itervalues()))
 
     def __str__(self):
         return self._str
@@ -1261,7 +1299,7 @@ class PairCounter(object):
 
 
 PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
-LinkIdx = namedtuple("LinkIdx", "type idx params")
+LinkIdx = namedtuple("LinkIdx", "type dompath href idx params")
 
 class AppGraphGenerator(object):
 
@@ -1400,9 +1438,10 @@ class AppGraphGenerator(object):
                 #print "%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage)
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 newtgt = ReqTarget(nextabsreq, laststate, nvisits=1)
-                newtgtreq = newtgt
                 if chosenlink.type == Links.Type.FORM:
-                    chosenlink = LinkIdx(chosenlink.type, chosenlink.idx, curr.next.request.formparams)
+                    chosenlink = LinkIdx(chosenlink.type, chosenlink.dompath,
+                            chosenlink.href, chosenlink.idx,
+                            curr.next.request.formparams)
                     # TODO: for now assume that different FORM requests are not clustered
                     assert len(set(tuple(sorted((j[0], tuple(j[1])) for j in i.request.formparams.iteritems())) for i in nextabsreq.reqresps)) == 1
                     tgtdict = {nextabsreq.reqresps[0].request.formparams: newtgt}
@@ -1696,7 +1735,7 @@ class AppGraphGenerator(object):
 
     def colorStateGraph(self, differentpairs, allstates):
         # XXX HOTSPOT
-        ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
+        #ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
 
         # allstates should be sorted
         assert allstates[0] == 0
@@ -1707,7 +1746,7 @@ class AppGraphGenerator(object):
             edges[a].add(b)
             edges[b].add(a)
 
-        degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
+        #degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
 
         assignments = {}
 
@@ -2525,7 +2564,8 @@ class Engine(object):
         if abspage is None:
             if len(page.anchors) > 0:
                 self.logger.debug("abstract page not availabe, picking first anchor")
-                return (Links.Type.ANCHOR, 0)
+                a0 = page.anchors[0]
+                return LinkIdx(Links.Type.ANCHOR, a0.dompath, a0.href, 0, None)
             else:
                 self.logger.debug("abstract page not availabe, and no anchors")
                 return None
@@ -2533,7 +2573,7 @@ class Engine(object):
         # find unvisited anchor
         for i, aa in enumerate(abspage.absanchors):
             if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
-                return (Links.Type.ANCHOR, i)
+                return LinkIdx(Links.Type.ANCHOR, aa.dompath, aa.href, 0, None)
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
@@ -2543,8 +2583,8 @@ class Engine(object):
             tgt = link.targets[state]
             nvisits = tgt.nvisits + 1
             # also add visit count for the subsequent request
-            if linkidx[2] != None:
-                targets = tgt.target[linkidx[2]].target.targets
+            if linkidx.params != None:
+                targets = tgt.target[linkidx.params].target.targets
             else:
                 targets = tgt.target.targets
             if tgt.target and state in targets:
@@ -2565,7 +2605,7 @@ class Engine(object):
                 if t.target == tgt.target:
                     othernvisits += t.nvisits
 
-        assert link.type == linkidx[0]
+        assert link.type == linkidx.type
         # XXX statechange is not set correctly
         dist = linkweigh(link, nvisits, othernvisits, statechange)
 
@@ -2622,7 +2662,7 @@ class Engine(object):
                         assert tgt.target
                         if (tgt.target, tgt.transition) in seen:
                             continue
-                        formidx = (idx[0], idx[1], formparams)
+                        formidx = LinkIdx(idx[0], idx[0], idx[1], 0, formparams)
                         newdist = dist + self.linkcost(head, formidx, link, state)
                         #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
                         heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
@@ -2643,11 +2683,11 @@ class Engine(object):
 
 
     def getEngineAction(self, linkidx):
-        if linkidx[0] == Links.Type.ANCHOR:
+        if linkidx.type == Links.Type.ANCHOR:
             engineaction = Engine.Actions.ANCHOR
-        elif linkidx[0] == Links.Type.FORM:
+        elif linkidx.type == Links.Type.FORM:
             engineaction = Engine.Actions.FORM
-        elif linkidx[0] == Links.Type.REDIRECT:
+        elif linkidx.type == Links.Type.REDIRECT:
             engineaction = Engine.Actions.REDIRECT
         else:
             assert False, linkidx
