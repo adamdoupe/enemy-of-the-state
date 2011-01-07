@@ -865,17 +865,22 @@ class AbstractLinks(object):
         for t, c in [(Links.Type.ANCHOR, AbstractAnchor),
                 (Links.Type.FORM, AbstractForm),
                 (Links.Type.REDIRECT, AbstractRedirect)]:
-            if t in linktrees:
-                self.buildtree(self.rdict, t, linktrees[t], c)
+            self.buildtree(self.rdict, t, [lt[t] for lt in linktrees], c)
+        import pdb; pdb.set_trace()
 
     def buildtree(self, level, key, ltval, c):
-        keys = sorted(ltval[0].keys())
-        if all(sorted(i.keys()) == keys for i in ltval):
-            for k, v in ltval.iteritems():
-                self.buildtree(level[key], k, v)
+        assert all(isinstance(i, list) for i in ltval) or \
+                all(not isinstance(i, list) for i in ltval)
+        if isinstance(ltval[0], list):
+            level[key] = c(ltval)
         else:
-            # leaves are lists, so iterate teie to get links
-            level[key] = c(ll for l in ltval.iterleaves() for ll in l)
+            keys = sorted(ltval[0].keys())
+            if all(sorted(i.keys()) == keys for i in ltval):
+                for k in keys:
+                    self.buildtree(level[key], k, [v[k] for v in ltval], c)
+            else:
+                # leaves are lists, so iterate teie to get links
+                level[key] = c(ll for l in ltval.iterleaves() for ll in l)
 
     def __getitem__(self, linkidx):
         idx = [linkidx.type] + list(linkidx.path)
