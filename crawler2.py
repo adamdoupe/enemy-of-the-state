@@ -521,6 +521,8 @@ class Page(object):
         return Links(self.anchors, self.forms, self.redirects)
 
     def getNewRequest(self, idx, link):
+#        if str(idx).find("guestbook") != -1:
+#            import pdb; pdb.set_trace()
         if isinstance(link, AbstractAnchor):
             if len(link.hrefs) == 1:
                 href = iter(link.hrefs).next()
@@ -594,6 +596,8 @@ class AbstractLink(object):
 class AbstractAnchor(AbstractLink):
 
     def __init__(self, anchors):
+        if not isinstance(anchors, list):
+            anchors = list(anchors)
         AbstractLink.__init__(self, anchors)
         self.hrefs = set(i.href for i in anchors)
         self.type = Links.Type.ANCHOR
@@ -632,6 +636,8 @@ class AbstractAnchor(AbstractLink):
 class AbstractForm(AbstractLink):
 
     def __init__(self, forms):
+        if not isinstance(forms, list):
+            forms = list(forms)
         AbstractLink.__init__(self, forms)
         self.methods = set(i.method for i in forms)
         self.actions = set(i.action for i in forms)
@@ -661,6 +667,8 @@ class AbstractForm(AbstractLink):
 class AbstractRedirect(AbstractLink):
 
     def __init__(self, redirects):
+        if not isinstance(redirects, list):
+            redirects = list(redirects)
         AbstractLink.__init__(self, redirects)
         self.locations = set(i.location for i in redirects)
         self.type = Links.Type.REDIRECT
@@ -785,11 +793,11 @@ class Links(object):
             for l in links:
                 urlv = [ltype]
                 urlv += [l.dompath] if l.dompath else []
-                print "LINKVETOR", l.linkvector
+                #print "LINKVETOR", l.linkvector
                 urlv += list(l.linkvector)
-                print "URLV", urlv
+                #print "URLV", urlv
                 linkstree.setapplypath(urlv, [l], lambda x: x+[l])
-                print "LINKSTREE", linkstree
+                #print "LINKSTREE", linkstree
         if not linkstree:
             # all pages with no links will end up in the same special bin
             linkstree.setapplypath(("<EMPTY>", ), [None], lambda x: x+[None])
@@ -861,30 +869,38 @@ class Links(object):
 class AbstractLinks(object):
 
     def __init__(self, linktrees):
-        self.rdict = RecursiveDict()
+        self.linkstree = RecursiveDict()
         for t, c in [(Links.Type.ANCHOR, AbstractAnchor),
                 (Links.Type.FORM, AbstractForm),
                 (Links.Type.REDIRECT, AbstractRedirect)]:
-            self.buildtree(self.rdict, t, [lt[t] for lt in linktrees], c)
-        import pdb; pdb.set_trace()
+            self.buildtree(self.linkstree, t, [lt[t] for lt in linktrees], c)
+        #import pdb; pdb.set_trace()
 
     def buildtree(self, level, key, ltval, c):
         assert all(isinstance(i, list) for i in ltval) or \
                 all(not isinstance(i, list) for i in ltval)
         if isinstance(ltval[0], list):
-            level[key] = c(ltval)
+            # we have reached the leaves without the encountering a cluster
+            # create an abstract object with all the objects in all the leaves
+            # ltval is a list of leaves, ie a list of lists containing abstractlinks
+            level[key] = c(i for j in ltval for i in j)
         else:
             keys = sorted(ltval[0].keys())
             if all(sorted(i.keys()) == keys for i in ltval):
+                # the linkstree for all the pages in the current subtree match,
+                # lets go deeper in the tree
                 for k in keys:
                     self.buildtree(level[key], k, [v[k] for v in ltval], c)
             else:
+                # different li8nks have been clustered together
+                # stop here a make a node containing all descending
+                # abstractlinks
                 # leaves are lists, so iterate teie to get links
                 level[key] = c(ll for l in ltval.iterleaves() for ll in l)
 
     def __getitem__(self, linkidx):
         idx = [linkidx.type] + list(linkidx.path)
-        i = self.rdict
+        i = self.linkstree
         for p in idx:
             if p in i:
                 i = i[p]
@@ -899,9 +915,21 @@ class AbstractLinks(object):
     def __iter__(self):
         return self.linkstree.iterleaves()
 
+    def itervalues(self):
+        return iter(self)
+
     def iteritems(self):
         for p, l in self.linkstree.iteridxleaves():
             yield (LinkIdx(p[0], p[1:], None), l)
+
+    def getUnvisited(self, state):
+        #self.printInfo()
+        # unvisited if we never did the request for that state
+        # third element of the tuple are the form parameters
+        return [(i, l) for i, l in self.iteritems() if not l.skip \
+                and (state not in l.targets
+                    or not state in l.targets[state].target.targets)]
+
 
 class AbstractPage(object):
 
@@ -1706,6 +1734,7 @@ class AppGraphGenerator(object):
 
 
     def fillPageMissingRequests(self, ap):
+#        import pdb; pdb.set_trace()
         allstates = ap.seenstates
         #print "AP", ap, ap.seenstates
         for idx, l in ap.abslinks.iteritems():
@@ -2741,15 +2770,15 @@ class Engine(object):
         return dist
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
-        unvlink = unvlinks[0]
-        costs = [(self.linkcost(head, i, j, state), i) for (i, j, k) in unvlinks]
-        #print "COSTS", costs
+        costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
+        print "COSTS", costs
         #print "NCOST", [i[0].normalized for i in costs]
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         newdist = dist + mincost[0]
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
-                unvlink, len(unvlinks), head, state, dist, newdist, priority, new)
+                mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
+#        import pdb; pdb.set_trace()
         heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
@@ -2766,6 +2795,7 @@ class Engine(object):
                 continue
             seen.add((head, state))
             #head.abslinks.printInfo()
+            unvlinks_added = False
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
                     continue
@@ -2782,9 +2812,13 @@ class Engine(object):
                         if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
                             # this is a page known to be revealing of possible state change
                             # go there first, priority=-1 !
-                            self.addUnvisisted(dist, head, state, headpath, [(idx, link, formparams)], candidates, -1)
+                            formidx = LinkIdx(idx.type, idx.path, formparams)
+                            self.addUnvisisted(dist, head, state, headpath,
+                                    [(formidx, link)], candidates, -1)
                         if state not in nextabsreq.targets:
-                            self.addUnvisisted(dist, head, state, headpath, [(idx, link, formparams)], candidates, 0)
+                            formidx = LinkIdx(idx.type, idx.path, formparams)
+                            self.addUnvisisted(dist, head, state, headpath,
+                                    [(formidx, link)], candidates, 0)
                             continue
                         # do not put request in the heap, but just go for the next abstract page
                         tgt = nextabsreq.targets[state]
@@ -2796,16 +2830,18 @@ class Engine(object):
                         #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
                         heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
-                    unvlinks = head.abslinks.getUnvisited(state)
-                    print "UNVLINKS", "\n\t".join(str(i) for i in unvlinks)
-                    if unvlinks:
-                        self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
-                        continue
-                    else:
-                        # TODO handle state changes
-                        raise NotImplementedError
+                    if not unvlinks_added:
+                        unvlinks = head.abslinks.getUnvisited(state)
+                        print "UNVLINKS", "\n\t".join(str(i) for i in unvlinks)
+                        if unvlinks:
+                            self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
+                            unvlinks_added = True
+                        else:
+                            # TODO handle state changes
+                            raise NotImplementedError
         nvisited = len(set(i[0] for i in seen))
         if candidates:
+            print "CAND", candidates
             return candidates[0].path, nvisited
         else:
             return None, nvisited
