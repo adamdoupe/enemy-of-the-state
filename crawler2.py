@@ -190,6 +190,10 @@ class RecursiveDict(defaultdict):
                 out += "%s" % (v, )
         return out
 
+    def equals(self, o):
+        # TODO
+        assert False
+
 
 class Request(object):
 
@@ -930,6 +934,8 @@ class AbstractLinks(object):
                 and (state not in l.targets
                     or not state in l.targets[state].target.targets)]
 
+    def equals(self, l):
+        return self.linkstree.equals(l.linkstree)
 
 class AbstractPage(object):
 
