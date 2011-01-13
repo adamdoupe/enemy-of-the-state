@@ -1289,6 +1289,7 @@ class PageClusterer(object):
                 # requrire more than X pages in a cluster
 
                 # require some diversity in the dom path in order to create a link
+                print "========", n, len(k), k, level
                 if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
                         and v.depth <= n:
                     v.clusterable = True
