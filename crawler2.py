@@ -22,7 +22,10 @@ from collections import defaultdict, deque, namedtuple
 
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
+import pdb
+
 cond = 0
+debug_set = set()
 
 # running htmlunit via JCC will override the signal halders
 
@@ -191,8 +194,10 @@ class RecursiveDict(defaultdict):
         return out
 
     def equals(self, o):
-        # TODO
-        assert False
+        return len(self) == len(o) \
+                and set(self.keys()) == set(o.keys()) \
+                and all(self[k].equals(o[k]) if hasattr(self[k], 'equals') else 
+                        self[k] == o[k] for k in self.iterkeys())
 
 
 class Request(object):
@@ -526,7 +531,7 @@ class Page(object):
 
     def getNewRequest(self, idx, link):
 #        if str(idx).find("guestbook") != -1:
-#            import pdb; pdb.set_trace()
+#            pdb.set_trace()
         if isinstance(link, AbstractAnchor):
             if len(link.hrefs) == 1:
                 href = iter(link.hrefs).next()
@@ -551,7 +556,7 @@ class Page(object):
                     #print "CASTING?"
                     newreq = iform.getWebRequest(submitter)
                     if htmlunit.HtmlImageInput.instance_(submitter):
-                        #import pdb; pdb.set_trace()
+                        #pdb.set_trace()
                         url = newreq.getUrl()
                         #print "CASTING!", url.getQuery(), url.getPath()
                         urlstr = url.getPath()
@@ -843,12 +848,12 @@ class Links(object):
         val = self.linkstree.getpath(idx)
         if hasattr(val, "nleaves"):
             print output.red("******** PICKING ONE *******")
-            import pdb; pdb.set_trace()
+            pdb.set_trace()
             val = val.iterleaves().next()[0]
         assert isinstance(val, list)
         if len(val) > 1:
             print output.red("******** PICKING ONE *******")
-            import pdb; pdb.set_trace()
+            pdb.set_trace()
         return val[0]
 
     def __iter__(self):
@@ -862,7 +867,7 @@ class Links(object):
             assert isinstance(l, list), l
             if len(l) > 1:
                 print output.red("******** PICKING ONE *******")
-                import pdb; pdb.set_trace()
+                pdb.set_trace()
             yield (LinkIdx(p[0], p[1:], None), l[0])
 
 
@@ -878,7 +883,7 @@ class AbstractLinks(object):
                 (Links.Type.FORM, AbstractForm),
                 (Links.Type.REDIRECT, AbstractRedirect)]:
             self.buildtree(self.linkstree, t, [lt[t] for lt in linktrees], c)
-        #import pdb; pdb.set_trace()
+        #pdb.set_trace()
 
     def buildtree(self, level, key, ltval, c):
         assert all(isinstance(i, list) for i in ltval) or \
@@ -913,7 +918,7 @@ class AbstractLinks(object):
         else:
             return i
         print output.red("******** PICKING ONE *******")
-        import pdb; pdb.set_trace()
+        pdb.set_trace()
         return i.iterleaves().next()
 
     def __iter__(self):
@@ -966,7 +971,7 @@ class AbstractPage(object):
 
     def regenerateLinks(self):
         #if self.instance == 3297:
-        #    import pdb; pdb.set_trace()
+        #    pdb.set_trace()
         #for l, i in zip(self.absanchors, zip(*(rr.response.page.anchors for rr in self.reqresps))):
         #     l.update(i)
         #for l, i in zip(self.absforms, zip(*(rr.response.page.forms for rr in self.reqresps))):
@@ -1404,7 +1409,7 @@ class PairCounter(object):
 
     def add(self, a, b):
         #if self.debug and cond  > 4 and ((a in [0, 20] and b in [0, 29]) or (a in [22, 58] and b in [22, 58])):
-        #    import pdb; pdb.set_trace()
+        #    pdb.set_trace()
         assert a != b
         if a < b:
             self._dict[(a, b)] += 1
@@ -1511,7 +1516,7 @@ class AppGraphGenerator(object):
 
         for ar, rrs in sorted(mappedrequests.iteritems()):
             #if ar.instance == 481:
-            #    import pdb; pdb.set_trace()
+            #    pdb.set_trace()
             if len(rrs) > 1 and len(set(rr.request.query for rr in rrs)) > 1:
                 for rr in rrs:
                     rr.request.absrequest = ar
@@ -1533,12 +1538,14 @@ class AppGraphGenerator(object):
         self.absrequests = absrequests
 
     def addtorequestclusters(self, rr):
+        #if str(rr.request).find("recent.php") != -1:
+        #    pdb.set_trace()
         mappedreq = self.contextreqmap.getAbstract(rr.request)
         reqs = self.mappedrequests[mappedreq]
         if len(reqs) >= 1 and mappedreq not in self.absrequests \
                 and len(frozenset(self.reqmap.getAbstractOrDefault(i.request, None) for i in reqs)) > 1 :
             # failing, because we would need to break another cluster
-            #import pdb; pdb.set_trace()
+            #pdb.set_trace()
             raise AppGraphGenerator.AddToAbstractRequestException()
 
         absreq = self.reqmap.getAbstract(rr.request)
@@ -1689,7 +1696,7 @@ class AppGraphGenerator(object):
         for ar in self.absrequests:
             for t in ar.targets.itervalues():
                 #if t.target.instance == 3297:
-                #    import pdb; pdb.set_trace()
+                #    pdb.set_trace()
                 t.target.seenstates.add(t.transition)
 
         for ap in self.abspages:
@@ -1704,7 +1711,7 @@ class AppGraphGenerator(object):
         ar = reqresp.request.absrequest
         for t in ar.targets.itervalues():
             #if t.target.instance == 3297:
-            #    import pdb; pdb.set_trace()
+            #    pdb.set_trace()
             if t.nvisits > 0:
                 t.target.seenstates.add(t.transition)
 
@@ -1720,6 +1727,7 @@ class AppGraphGenerator(object):
 
         self.updateSeenStates()
 
+        # create a map from all requests to their AbstractRequest
         # XXX using the following hash function, requests may overlap
         # we should actually have an heuristic to choose the good one...
         self.fillreqmap = CustomDict([(rr.request, ar) for ar in sorted(self.absrequests) for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
@@ -1741,7 +1749,7 @@ class AppGraphGenerator(object):
 
 
     def fillPageMissingRequests(self, ap):
-#        import pdb; pdb.set_trace()
+#        pdb.set_trace()
         allstates = ap.seenstates
         #print "AP", ap, ap.seenstates
         for idx, l in ap.abslinks.iteritems():
@@ -1756,7 +1764,8 @@ class AppGraphGenerator(object):
                         #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
                         if newwebrequest:
                             request = Request(newwebrequest)
-                            newrequest = self.fillreqmap[request]
+                            newrequest = self.reqmap.getAbstract(request)
+                            #newrequest = self.fillreqmap[request]
                             #print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
                             newrequest.reqresps.append(RequestResponse(request, None))
                         newrequestbuilt = True
@@ -2196,9 +2205,9 @@ class AppGraphGenerator(object):
                         print "PASTPAGES", '\n'.join(str(i) for i in scores)
                         bestcand = max(scores)[1]
                         print "BESTCAND", bestcand
-                        if str(bestcand).find("review") != -1:
-                            print self.statechangescores
-                            import pdb; pdb.set_trace()
+                        #if str(bestcand).find("review") != -1:
+                        #    print self.statechangescores
+                        #    pdb.set_trace()
                         target = bestcand.req.targets[bestcand.cstate]
                         self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                         assert statemap[target.transition] == bestcand.cstate
@@ -2206,7 +2215,7 @@ class AppGraphGenerator(object):
                         for t in bestcand.req.targets.itervalues():
                             if t.transition <= currstate:
                                 statemap[t.transition] = t.transition
-#                        import pdb; pdb.set_trace()
+#                        pdb.set_trace()
                         break
                     # no longer using PastPage.nvisits
                     pastpages.append(PastPage(req, page, chlink, laststate, None))
@@ -2785,7 +2794,8 @@ class Engine(object):
         newdist = dist + mincost[0]
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
                 mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
-#        import pdb; pdb.set_trace()
+        if mincost[1].path[1:] in debug_set:
+            pdb.set_trace()
         heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
@@ -2797,7 +2807,7 @@ class Engine(object):
             dist, head, state, headpath = heapq.heappop(heads)
             print output.yellow("H %s %s %s %s" % (dist, head, state, headpath))
 #            if str(head).find("review.php") != -1:
-#                import pdb; pdb.set_trace()
+#                pdb.set_trace()
             if (head, state) in seen:
                 continue
             seen.add((head, state))
@@ -2937,6 +2947,7 @@ class Engine(object):
                 #print nexthop
                 assert nexthop.abspage == reqresp.response.page.abspage
                 assert nexthop.state == self.state
+                debug_set.add(nexthop.idx.path[1:])
                 return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx])
             elif self.ag and float(nvisited)/len(self.ag.abspages) > 0.9:
                 # we can reach almost everywhere form the current page, still we cannot find unvisited links
