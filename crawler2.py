@@ -324,6 +324,8 @@ class Link(object):
     xpathsimplifier = re.compile(r"\[[^\]*]\]")
 
     def __init__(self, internal, reqresp):
+        assert internal
+        assert reqresp
         self.internal = internal
         self.reqresp = reqresp
         self.to = []
@@ -470,11 +472,11 @@ class Redirect(Link):
 
     @property
     def linkvector(self):
-        return [self.location]
+        return urlvector(htmlunit.URL(self.reqresp.request.webrequest.getUrl(), self.location))
 
     @lazyproperty
     def dompath(self):
-        return None
+        return "REDIRECT"
 
 
 class StateSet(frozenset):
@@ -503,7 +505,8 @@ class Page(object):
         self.redirect = redirect
         self.error = error
         self.state = -1
-        assert not self.redirect or len(self.redirects) == 1, self.redirects
+        # cannot use this assert, otherwise calls the lazypropery reirects before reqresp is initialized
+        #assert not self.redirect or len(self.redirects) == 1, self.redirects
 
     @lazyproperty
     def anchors(self):
@@ -537,6 +540,13 @@ class Page(object):
                 href = iter(link.hrefs).next()
                 if not href.strip().lower().startswith("javascript:"):
                     url = self.internal.getFullyQualifiedUrl(href)
+                    return htmlunit.WebRequest(url)
+        elif isinstance(link, AbstractRedirect):
+            if len(link.locations) == 1:
+                href = iter(link.locations).next()
+                if not href.strip().lower().startswith("javascript:"):
+                    url = htmlunit.URL(self.internal.getWebRequest().getUrl(),
+                            href)
                     return htmlunit.WebRequest(url)
         elif isinstance(link, AbstractForm):
             if len(link.methods) == 1:
@@ -701,92 +711,6 @@ class AbstractRedirect(AbstractLink):
         # XXX multiple hrefs not supported yet
         assert len(self.locations) == 1
         return iter(self.locations).next()
-
-
-class OldLinks(object):
-    Type = Constants("ANCHOR", "FORM", "REDIRECT")
-
-    def __init__(self, anchors=[], forms=[], redirects=[]):
-        self.anchors = dict(((i.dompath, i.href), i) for i in anchors)
-        self.forms = dict(((i.dompath, i.action), i) for i in forms)
-        self.redirects = dict(((i.dompath, i.location), i) for i in redirects)
-
-    def nAnchors(self):
-        return len(self.anchors)
-
-    def nForms(self):
-        return len(self.forms)
-
-    def nRedirects(self):
-        return len(self.redirects)
-
-    def __getitem__(self, idx):
-        if idx.type == Links.Type.ANCHOR:
-            return self.anchors[(idx.dompath, idx.href)]
-        elif idx.type == Links.Type.FORM:
-            return self.forms[(idx.dompath, idx.href)]
-        elif idx.type == Links.Type.REDIRECT:
-            return self.redirects[(idx.dompath, idx.href)]
-        else:
-            raise KeyError(idx)
-
-    def iteritems(self):
-        # TODO: handle multiple links with the same path and href
-        for i, v in self.anchors.iteritems():
-            yield (LinkIdx(Links.Type.ANCHOR, i[0], i[1], 0, None), v)
-        for i, v in self.forms.iteritems():
-            yield (LinkIdx(Links.Type.FORM, i[0], i[1], 0, None), v)
-        for i, v in self.redirects.iteritems():
-            yield (LinkIdx(Links.Type.REDIRECT, i[0], i[1], 0, None), v)
-
-    def itervalues(self):
-        for v in self.anchors.itervalues():
-            yield v
-        for v in self.forms.itervalues():
-            yield v
-        for v in self.redirects.itervalues():
-            yield v
-
-    def __iter__(self):
-        return self.itervalues()
-
-    def getUnvisited(self, state):
-        #self.printInfo()
-        # unvisited if we never did the request for that state
-        # third element of the tuple are the form parameters
-        return [(i, l, None) for i, l in self.iteritems() if not l.skip \
-                and (state not in l.targets
-                    or not state in l.targets[state].target.targets)]
-
-    def printInfo(self):
-        print "UNV"
-        for i, l in self.iteritems():
-            for s, t in l.targets.iteritems():
-                print " \t %s %d %s" % (("*" if l.skip else ""), s, t)
-        print "DONE"
-
-    def __len__(self):
-        return self.nAnchors() + self.nForms() + self.nRedirects()
-
-    def __nonzero__(self):
-        return self.nAnchors() != 0 or self.nForms() != 0 or self.nRedirects() != 0
-
-    def equals(self, l):
-        return self.nAnchors() == l.nAnchors() and self.nForms() == l.nForms() and \
-                self.nRedirects() == l.nRedirects() and \
-                all(a.equals(b) for a, b in
-                        zip(self.anchors.itervalues(), l.anchors.itervalues())) and \
-                all(a.equals(b) for a, b in
-                        zip(self.forms.itervalues(), l.forms.itervalues())) and \
-                all(a.equals(b) for a, b in
-                        zip(self.redirects.itervalues(), l.redirects.itervalues()))
-
-    def __str__(self):
-        return self._str
-
-    @lazyproperty
-    def _str(self):
-        return "Links(%s, %s, %s)" % (self.anchors, self.forms, self.redirects)
 
 
 class Links(object):
@@ -1749,10 +1673,12 @@ class AppGraphGenerator(object):
 
 
     def fillPageMissingRequests(self, ap):
-#        pdb.set_trace()
         allstates = ap.seenstates
         #print "AP", ap, ap.seenstates
         for idx, l in ap.abslinks.iteritems():
+            #if str(ap).find("home") != -1 and str(ap).find("upload") != -1 \
+            #        and str(l).find("Redirect") != -1:
+            #    pdb.set_trace()
             #print "LINK", l, "TTTT", l.targets
             newrequest = None
             newrequestbuilt = False
@@ -2794,8 +2720,8 @@ class Engine(object):
         newdist = dist + mincost[0]
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
                 mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
-        if mincost[1].path[1:] in debug_set:
-            pdb.set_trace()
+#        if mincost[1].path[1:] in debug_set:
+#            pdb.set_trace()
         heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
@@ -3207,7 +3133,6 @@ if __name__ == "__main__":
     except:
         import traceback
         traceback.print_exc()
-        import pdb
         pdb.post_mortem()
     finally:
         e.writeStateDot()
