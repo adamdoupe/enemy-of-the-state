@@ -825,17 +825,18 @@ class AbstractLinks(object):
                 for k in keys:
                     self.buildtree(level[key], k, [v[k] for v in ltval], c)
             else:
-                # different li8nks have been clustered together
-                # stop here a make a node containing all descending
+                # different links have been clustered together
+                # stop here and make a node containing all descending
                 # abstractlinks
                 # leaves are lists, so iterate teie to get links
-                level[key] = c(ll for l in ltval.iterleaves() for ll in l)
+                level[key] = c(lll for l in ltval for ll in l.iterleaves()
+                        for lll in ll)
 
     def __getitem__(self, linkidx):
         idx = [linkidx.type] + list(linkidx.path)
         i = self.linkstree
         for p in idx:
-            if p in i:
+            if isinstance(i, RecursiveDict) and p in i:
                 i = i[p]
             else:
                 break
@@ -1219,7 +1220,7 @@ class PageClusterer(object):
 
                 # require some diversity in the dom path in order to create a link
                 print "========", n, len(k), k, level
-                if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
+                if nleaves >= med and nleaves > 13*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
                         and v.depth <= n:
                     v.clusterable = True
                     level.clusterable = False
@@ -1238,7 +1239,7 @@ class PageClusterer(object):
             # requrire more than X pages in a cluster
 
             # require some diversity in the dom path in order to create a link
-            if nleaves >= med and nleaves > 6*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
+            if nleaves >= med and nleaves > 13*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
                     and v.depth <= n:
                 v.newclusterable = True
                 level.newclusterable = False
