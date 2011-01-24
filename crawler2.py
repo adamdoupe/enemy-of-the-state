@@ -1229,8 +1229,8 @@ class PageClusterer(object):
                 # requrire more than X pages in a cluster
 
                 # require some diversity in the dom path in order to create a link
-                print "========", n, len(k), k, level
-                if nleaves >= med and nleaves > 13*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
+#                print "========", n, len(k), k, level
+                if nleaves >= med and nleaves > 33*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
                         and v.depth <= n:
                     v.clusterable = True
                     level.clusterable = False
@@ -1249,7 +1249,7 @@ class PageClusterer(object):
             # requrire more than X pages in a cluster
 
             # require some diversity in the dom path in order to create a link
-            if nleaves >= med and nleaves > 13*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
+            if nleaves >= med and nleaves > 33*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
                     and v.depth <= n:
                 v.newclusterable = True
                 level.newclusterable = False
@@ -2724,7 +2724,7 @@ class Engine(object):
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
-        print "COSTS", costs
+#        print "COSTS", costs
         #print "NCOST", [i[0].normalized for i in costs]
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
@@ -2786,7 +2786,7 @@ class Engine(object):
                 else:
                     if not unvlinks_added:
                         unvlinks = head.abslinks.getUnvisited(state)
-                        print "UNVLINKS", "\n\t".join(str(i) for i in unvlinks)
+#                        print "UNVLINKS", "\n\t".join(str(i) for i in unvlinks)
                         if unvlinks:
                             self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
                             unvlinks_added = True
@@ -2795,7 +2795,7 @@ class Engine(object):
                             raise NotImplementedError
         nvisited = len(set(i[0] for i in seen))
         if candidates:
-            print "CAND", candidates
+#            print "CAND", candidates
             return candidates[0].path, nvisited
         else:
             return None, nvisited
