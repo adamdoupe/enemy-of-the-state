@@ -729,12 +729,22 @@ class Links(object):
                 #print "LINKVETOR", l.linkvector
                 urlv += list(l.linkvector)
                 #print "URLV", urlv
-                linkstree.setapplypath(urlv, [l], lambda x: x+[l])
+                linkstree.applypath(urlv, lambda x: self.addlink(x, l))
                 #print "LINKSTREE", linkstree
         if not linkstree:
             # all pages with no links will end up in the same special bin
             linkstree.setapplypath(("<EMPTY>", ), [None], lambda x: x+[None])
         self.linkstree = linkstree
+
+    def addlink(self, v, l):
+        if v:
+            nextk = max(v.keys()) + 1
+        else:
+            nextk = 0
+        # call setpath to fix the leaves count
+        v.setpath([nextk], [l])
+        return v
+
 
     def nAnchors(self):
         try:
