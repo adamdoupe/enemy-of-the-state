@@ -112,6 +112,7 @@ class LogReader(object):
             textbuffer.remove_tag(self.invisibletag,
                     textbuffer.get_start_iter(), textbuffer.get_end_iter())
             return
+            self.textview.scroll_to_mark(textbuffer.get_insert(), 0.1)
         print "UPDATE FILTER", regexpstr
         regexp = re.compile(regexpstr)
         curstartit = textbuffer.get_start_iter()
@@ -147,7 +148,7 @@ class LogReader(object):
         textbuffer.remove_tag(self.highlightedtag,
                 textbuffer.get_start_iter(), textbuffer.get_end_iter())
         regexpstr = self.searchentry.get_text()
-        if not regexpstr:
+        if regexpstr:
             return
         print "SEARCH", regexpstr
         cursor = textbuffer.get_iter_at_mark(textbuffer.get_insert())
