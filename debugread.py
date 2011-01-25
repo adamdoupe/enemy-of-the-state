@@ -39,6 +39,7 @@ class LogReader(object):
             coltagmap[c] = tag
 
         self.invisibletag = textbuffer.create_tag(invisible=True)
+        self.highlightedtag = textbuffer.create_tag(background="#404040")
 
         colorre = re.compile(r'\x1b\x5b[^m]*m')
         valsre = re.compile(r'\x1b\x5b([0-9]+)(?:;([0-9]+))*m')
@@ -71,18 +72,23 @@ class LogReader(object):
         sw.add(textview)
 
         self.filterentry = filterentry = gtk.Entry()
-
         filterentry.connect("key-press-event", self.filter_key_press_event)
+
+        self.searchentry = searchentry = gtk.Entry()
+        searchentry.connect("key-press-event", self.search_key_press_event)
 
         vbox = gtk.VBox()
         vbox.pack_start(filterentry, expand=False)
+        vbox.pack_start(searchentry, expand=False)
         vbox.pack_start(sw)
 
         window.add(vbox)
 
         textview.show()
+        textbuffer.place_cursor(textbuffer.get_start_iter())
         sw.show()
         filterentry.show()
+        searchentry.show()
         vbox.show()
         window.show()
 
@@ -95,10 +101,10 @@ class LogReader(object):
         return False
 
     def filter_key_press_event(self, widget, event):
-        textbuffer = self.textbuffer
-        regexpstr = self.filterentry.get_text()
         if event.keyval != 65293:
             return
+        textbuffer = self.textbuffer
+        regexpstr = self.filterentry.get_text()
         if not regexpstr:
             print "CLEAR FILTER"
             textbuffer.remove_tag(self.invisibletag,
@@ -128,6 +134,41 @@ class LogReader(object):
             textbuffer.remove_tag(self.invisibletag, startit, textbuffer.get_end_iter())
         else:
             textbuffer.apply_tag(self.invisibletag, startit, textbuffer.get_end_iter())
+
+        self.textview.scroll_to_mark(textbuffer.get_insert(), 0.1)
+
+    def search_key_press_event(self, widget, event):
+        if event.keyval != 65293:
+            return
+        textbuffer = self.textbuffer
+        print "CLEAR SEARCH"
+        textbuffer.remove_tag(self.highlightedtag,
+                textbuffer.get_start_iter(), textbuffer.get_end_iter())
+        regexpstr = self.searchentry.get_text()
+        if not regexpstr:
+            return
+        print "SEARCH", regexpstr
+        cursor = textbuffer.get_iter_at_mark(textbuffer.get_insert())
+        cursormoved = False
+        regexp = re.compile(regexpstr)
+        curstartit = textbuffer.get_start_iter()
+        for i in range(1, textbuffer.get_line_count()):
+            curendit = textbuffer.get_iter_at_line(i)
+            text = curstartit.get_text(curendit)
+            m = regexp.search(text)
+            if m:
+                startit = curstartit.copy()
+                startit.forward_chars(m.start())
+                endit = curstartit.copy()
+                endit.forward_chars(m.end())
+                textbuffer.apply_tag(self.highlightedtag, startit, endit)
+                if not cursormoved and startit.compare(cursor) > 0:
+                    textbuffer.place_cursor(startit)
+                    cursormoved = True
+            curstartit = curendit
+
+        self.textview.scroll_to_mark(textbuffer.get_insert(), 0.1)
+
 
     def main(self):
         gtk.main()
