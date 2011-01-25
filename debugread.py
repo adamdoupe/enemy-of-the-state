@@ -184,7 +184,7 @@ class LogReader(object):
             curstartit.forward_char()
             for i in range(curstartit.get_line()+1, textbuffer.get_line_count()):
                 curendit = textbuffer.get_iter_at_line(i)
-                text = curstartit.get_text(curendit)
+                text = curstartit.get_visible_text(curendit)
                 m = regexp.search(text)
                 if m:
                     startit = curstartit.copy()
@@ -197,7 +197,7 @@ class LogReader(object):
             curendit = cursor
             for i in range(cursor.get_line(), -1, -1):
                 curstartit = textbuffer.get_iter_at_line(i)
-                text = curstartit.get_text(curendit)
+                text = curstartit.get_visible_text(curendit)
                 m = None
                 for m in regexp.finditer(text):
                     pass
