@@ -77,6 +77,8 @@ class LogReader(object):
         self.searchentry = searchentry = gtk.Entry()
         searchentry.connect("key-press-event", self.search_key_press_event)
 
+        textview.connect("key-press-event", self.textview_key_press_event)
+
         vbox = gtk.VBox()
         vbox.pack_start(filterentry, expand=False)
         vbox.pack_start(searchentry, expand=False)
@@ -155,8 +157,7 @@ class LogReader(object):
         for i in range(1, textbuffer.get_line_count()):
             curendit = textbuffer.get_iter_at_line(i)
             text = curstartit.get_text(curendit)
-            m = regexp.search(text)
-            if m:
+            for m in regexp.finditer(text):
                 startit = curstartit.copy()
                 startit.forward_chars(m.start())
                 endit = curstartit.copy()
@@ -166,6 +167,46 @@ class LogReader(object):
                     textbuffer.place_cursor(startit)
                     cursormoved = True
             curstartit = curendit
+
+        self.textview.scroll_to_mark(textbuffer.get_insert(), 0.1)
+
+    def textview_key_press_event(self, widget, event):
+#        print "KEY", event.keyval
+        regexpstr = self.searchentry.get_text()
+        if not regexpstr:
+            return
+        textbuffer = self.textbuffer
+        regexp = re.compile(regexpstr)
+        cursor = textbuffer.get_iter_at_mark(textbuffer.get_insert())
+        if event.keyval == 110:
+            print "FWD SEARCH", regexpstr
+            curstartit = cursor.copy()
+            curstartit.forward_char()
+            for i in range(curstartit.get_line()+1, textbuffer.get_line_count()):
+                curendit = textbuffer.get_iter_at_line(i)
+                text = curstartit.get_text(curendit)
+                m = regexp.search(text)
+                if m:
+                    startit = curstartit.copy()
+                    startit.forward_chars(m.start())
+                    textbuffer.place_cursor(startit)
+                    break
+                curstartit = curendit
+        elif event.keyval == 78:
+            print "BWD SEARCH", regexpstr
+            curendit = cursor
+            for i in range(cursor.get_line(), -1, -1):
+                curstartit = textbuffer.get_iter_at_line(i)
+                text = curstartit.get_text(curendit)
+                m = None
+                for m in regexp.finditer(text):
+                    pass
+                if m:
+                    startit = curstartit.copy()
+                    startit.forward_chars(m.start())
+                    textbuffer.place_cursor(startit)
+                    break
+                curendit = curstartit
 
         self.textview.scroll_to_mark(textbuffer.get_insert(), 0.1)
 
