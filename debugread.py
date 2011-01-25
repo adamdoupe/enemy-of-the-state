@@ -38,6 +38,7 @@ class LogReader(object):
             tag = textbuffer.create_tag(foreground=g)
             coltagmap[c] = tag
 
+        self.invisibletag = textbuffer.create_tag(invisible=True)
 
         colorre = re.compile(r'\x1b\x5b[^m]*m')
         valsre = re.compile(r'\x1b\x5b([0-9]+)(?:;([0-9]+))*m')
@@ -68,10 +69,21 @@ class LogReader(object):
 
         sw = gtk.ScrolledWindow()
         sw.add(textview)
-        window.add(sw)
+
+        self.filterentry = filterentry = gtk.Entry()
+
+        filterentry.connect("key-press-event", self.filter_key_press_event)
+
+        vbox = gtk.VBox()
+        vbox.pack_start(filterentry, expand=False)
+        vbox.pack_start(sw)
+
+        window.add(vbox)
 
         textview.show()
         sw.show()
+        filterentry.show()
+        vbox.show()
         window.show()
 
 
@@ -82,6 +94,40 @@ class LogReader(object):
     def delete_event(self, widget, event, data=None):
         return False
 
+    def filter_key_press_event(self, widget, event):
+        textbuffer = self.textbuffer
+        regexpstr = self.filterentry.get_text()
+        if event.keyval != 65293:
+            return
+        if not regexpstr:
+            print "CLEAR FILTER"
+            textbuffer.remove_tag(self.invisibletag,
+                    textbuffer.get_start_iter(), textbuffer.get_end_iter())
+            return
+        print "UPDATE FILTER", regexpstr
+        regexp = re.compile(regexpstr)
+        curstartit = textbuffer.get_start_iter()
+        startit = curstartit
+        lastvisible = True
+        for i in range(0, textbuffer.get_line_count()):
+            curendit = textbuffer.get_iter_at_line(i)
+            text = curstartit.get_text(curendit)
+            if regexp.search(text):
+                if not lastvisible:
+                    textbuffer.apply_tag(self.invisibletag, startit, curstartit)
+                    lastvisible = True
+                    startit = curstartit
+            else:
+                if lastvisible:
+                    textbuffer.remove_tag(self.invisibletag, startit, curstartit)
+                    lastvisible = False
+                    startit = curstartit
+            curstartit = curendit
+
+        if lastvisible:
+            textbuffer.remove_tag(self.invisibletag, startit, textbuffer.get_end_iter())
+        else:
+            textbuffer.apply_tag(self.invisibletag, startit, textbuffer.get_end_iter())
 
     def main(self):
         gtk.main()
