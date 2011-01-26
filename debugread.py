@@ -19,6 +19,7 @@ class LogReader(object):
 
     def __init__(self, logfile):
         self.window = window = gtk.Window(gtk.WINDOW_TOPLEVEL)
+        window.set_title(logfile + " - debugread")
 
         window.connect("delete_event", self.delete_event)
         window.connect("destroy", self.destroy)
@@ -111,8 +112,8 @@ class LogReader(object):
             print "CLEAR FILTER"
             textbuffer.remove_tag(self.invisibletag,
                     textbuffer.get_start_iter(), textbuffer.get_end_iter())
-            return
             self.textview.scroll_to_mark(textbuffer.get_insert(), 0.1)
+            return
         print "UPDATE FILTER", regexpstr
         regexp = re.compile(regexpstr)
         curstartit = textbuffer.get_start_iter()
@@ -148,7 +149,7 @@ class LogReader(object):
         textbuffer.remove_tag(self.highlightedtag,
                 textbuffer.get_start_iter(), textbuffer.get_end_iter())
         regexpstr = self.searchentry.get_text()
-        if regexpstr:
+        if not regexpstr:
             return
         print "SEARCH", regexpstr
         cursor = textbuffer.get_iter_at_mark(textbuffer.get_insert())
