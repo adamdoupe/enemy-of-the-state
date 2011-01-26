@@ -33,6 +33,8 @@ import signal
 
 wanttoexit = False
 
+maxstate = -1
+
 def gracefulexit():
     global wanttoexit
     wanttoexit = True
@@ -185,7 +187,7 @@ class RecursiveDict(defaultdict):
 
     def __str__(self, level=0):
         out = ""
-        for k, v in self.iteritems():
+        for k, v in sorted(self.items()):
             out += "\n%s%s:"  % ("\t"*level, k)
             if isinstance(v, RecursiveDict):
                 out += "%s%s" % (v.nleaves, v.__str__(level+1))
@@ -211,7 +213,7 @@ class Request(object):
 
     @lazyproperty
     def method(self):
-        return self.webrequest.getHttpMethod()
+        return str(self.webrequest.getHttpMethod())
 
     @lazyproperty
     def isPOST(self):
@@ -1475,6 +1477,8 @@ class AppGraphGenerator(object):
     def addtorequestclusters(self, rr):
         #if str(rr.request).find("recent.php") != -1:
         #    pdb.set_trace()
+        #if maxstate == 47:
+        #    pdb.set_trace()
         mappedreq = self.contextreqmap.getAbstract(rr.request)
         reqs = self.mappedrequests[mappedreq]
         if len(reqs) >= 1 and mappedreq not in self.absrequests \
@@ -1483,10 +1487,13 @@ class AppGraphGenerator(object):
             #pdb.set_trace()
             raise AppGraphGenerator.AddToAbstractRequestException()
 
-        absreq = self.reqmap.getAbstract(rr.request)
+        if mappedreq not in self.absrequests:
+            absreq = self.reqmap.getAbstract(rr.request)
+            self.absrequests.add(absreq)
+        else:
+            absreq = mappedreq
         rr.request.absrequest = absreq
         absreq.reqresps.append(rr)
-        self.absrequests.add(absreq)
         print output.turquoise("%s" % absreq)
 
 
@@ -1667,10 +1674,13 @@ class AppGraphGenerator(object):
         # we should actually have an heuristic to choose the good one...
         self.fillreqmap = CustomDict([(rr.request, ar) for ar in sorted(self.absrequests) for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
 
+#        self.buildTmpReqMap()
+
         for ap in self.abspages:
             self.fillPageMissingRequests(ap)
 
         self.allabsrequests = set(self.fillreqmap.itervalues())
+        self.absrequests = self.allabsrequests
 
 
     def fillMissingRequestsForPage(self, reqresp):
@@ -1678,9 +1688,24 @@ class AppGraphGenerator(object):
         self.updateSeenStatesForPage(reqresp)
 
         #self.fillPageMissingRequests(reqresp.response.page.abspage)
+
         self.fillMissingRequests()
 
-        self.allabsrequests = set(self.fillreqmap.itervalues())
+
+    def buildTmpReqMap(self):
+        # build a map from any Request(.method, .path, .query) to a pre-exiting
+        # AbstractRequest
+        tmpreqmap = AbstractMap(AbstractRequest,
+                lambda x: (x.method, x.path, x.query))
+        for ar in itertools.chain(self.contextreqmap.itervalues(), self.reqmap.itervalues()):
+            hashes = set(tmpreqmap.h(rr.request) for rr in ar.reqresps)
+            for h in hashes:
+                # there should not be overlap between contextreqmap and reqmap,
+                # but not sure about that...
+                assert not h in tmpreqmap
+                tmpreqmap[h] = ar
+
+        self.tmpreqmap = tmpreqmap
 
 
     def fillPageMissingRequests(self, ap):
@@ -1691,6 +1716,8 @@ class AppGraphGenerator(object):
             #        and str(l).find("Redirect") != -1:
             #    pdb.set_trace()
             #print "LINK", l, "TTTT", l.targets
+#            if maxstate >= 45 and str(l).find("view.php?picid=4") != -1:
+#                pdb.set_trace()
             newrequest = None
             newrequestbuilt = False
             for s in sorted(allstates):
@@ -1701,9 +1728,14 @@ class AppGraphGenerator(object):
                         #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
                         if newwebrequest:
                             request = Request(newwebrequest)
-                            newrequest = self.reqmap.getAbstract(request)
+                            #if maxstate >= 11 and str(request).find("upload"):
+                            #    pdb.set_trace()
+                            if request in self.fillreqmap:
+                                newrequest = self.fillreqmap[request]
+                            else:
+                                newrequest = self.reqmap.getAbstract(request)
                             #newrequest = self.fillreqmap[request]
-                            #print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
+                            print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
                             newrequest.reqresps.append(RequestResponse(request, None))
                         newrequestbuilt = True
                     if newrequest:
@@ -2731,6 +2763,8 @@ class Engine(object):
         newdist = dist + mincost[0]
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
                 mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
+#        if maxstate == 48 and str(mincost[1]).find("view.php") != -1:
+#            pdb.set_trace()
 #        if mincost[1].path[1:] in debug_set:
 #            pdb.set_trace()
         heapq.heappush(candidates, Candidate(priority, newdist, path))
@@ -2939,6 +2973,7 @@ class Engine(object):
         self.ag = None
         cr = Crawler()
         self.cr = cr
+        global maxstate
 
         for cnt, url in enumerate(urls):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
@@ -2971,6 +3006,7 @@ class Engine(object):
                             # do not even try to merge forms
                             raise PageMergeException()
                         self.state = self.tryMergeInGraph(reqresp)
+                        maxstate += 1
                         self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
                     except PageMergeException:
                         self.logger.info("need to recompute graph")
