@@ -9,6 +9,10 @@ import random
 import math
 from numpy import mean
 
+LAST_REQUEST_BOOST=0.2
+POST_BOOST=0.2
+QUERY_BOOST=0.1
+
 rng = random.Random()
 rng.seed(1)
 
@@ -210,6 +214,8 @@ class Request(object):
         self.absrequest = None
         self.formparams = FormFiller.Params({})
         self.state = -1
+        self.statehint = False
+        self.changingstate = False
 
     @lazyproperty
     def method(self):
@@ -957,6 +963,11 @@ class AbstractRequest(object):
         def append(self, rr):
             if self.outer._requestset is not None:
                 self.outer._requestset.add(rr.request.shortstr)
+            self.outer.changingstate = self.outer.changingstate or rr.request.changingstate
+#            if maxstate >= 76 and str(rr.request).find("review") != -1:
+#                pdb.set_trace()
+            if rr.request.statehint:
+                self.outer.statehints += 1
             return list.append(self, rr)
 
     def __init__(self, request):
@@ -970,6 +981,7 @@ class AbstractRequest(object):
         # counter of how often this page gave hints for detecting a state change
         self.statehints = 0
         self._requestset = None
+        self.changingstate = False
 
     def __str__(self):
         return "AbstractRequest(%s)%d" % (self.requestset, self.instance)
@@ -2133,13 +2145,26 @@ class AppGraphGenerator(object):
         nstates = len(set(statemap))
         self.logger.debug("final states %d", nstates)
 
-    def reqstatechangescore(self, absreq):
-        scores = [[(i[1]/i[0], i, rr.request)
+    def reqstatechangescore(self, absreq, dist):
+        if str(absreq).find("action.php?action=add") != -1:
+            pdb.set_trace()
+        scores = [[(i[1]/i[0] + self.pagescoreboost(rr.request, dist),
+                i, rr.request)
             for i in self.statechangescores.getpathnleaves(
             [rr.request.method] + list(rr.request.urlvector))]
             for rr in absreq.reqresps]
         print "SCORES", scores
         return max(max(scores))[0]
+
+    def pagescoreboost(self, req, dist):
+        boost = float(LAST_REQUEST_BOOST)
+        if req.isPOST:
+            boost += POST_BOOST
+        elif req.query:
+            boost += QUERY_BOOST
+        boost /= dist+1
+        return boost
+
 
     def splitStatesIfNeeded(self, smallerstates, currreq, currstate, currtarget, statemap, history):
         currmapsto = self.getMinMappedState(currstate, statemap)
@@ -2170,7 +2195,8 @@ class AppGraphGenerator(object):
                     if req == currreq or \
                             self.getMinMappedState(laststate, statemap) != currmapsto:
                         self.logger.debug("stopping at %s", req)
-                        scores = [(self.reqstatechangescore(i.req), i) for i in pastpages]
+                        scores = [(self.reqstatechangescore(pp.req, i), pp)
+                            for i, pp in enumerate(pastpages)]
                         print "PASTPAGES", '\n'.join(str(i) for i in scores)
                         bestcand = max(scores)[1]
                         print "BESTCAND", bestcand
@@ -2215,6 +2241,8 @@ class AppGraphGenerator(object):
         while True:
             #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
             currtarget = currreq.targets[currstate]
+#            if maxstate >= 75 and str(currreq).find("review") != -1:
+#                pdb.set_trace()
 
             # if any of the previous states leading to the same target caused a state transition,
             # directly guess that this request will cause a state transition
@@ -2273,6 +2301,12 @@ class AppGraphGenerator(object):
         self.mergeStateReqRespMaps(statemap)
 
         self.assign_reduced_state(statemap)
+
+        for ar in self.absrequests:
+            if str(ar).find("users/home") != -1:
+                for s, t in ar.targets.iteritems():
+                    if s != t.transition:
+                        pdb.set_trace()
 
         # return last current state
         return statemap[-1]
@@ -2335,6 +2369,15 @@ class AppGraphGenerator(object):
             self.collapseNode(ap.abslinks.itervalues(), statemap)
 
         self.collapseNode(self.absrequests, statemap)
+
+
+    def markChangingState(self):
+        for ar in self.absrequests:
+            changing = any(s != t.transition for s, t in ar.targets.iteritems())
+            if changing:
+                print "CHANGING", ar
+                for rr in ar.reqresps:
+                    rr.request.changingstate = True
 
 
 class DeferringRefreshHandler(htmlunit.RefreshHandler):
@@ -2739,7 +2782,7 @@ class Engine(object):
         othernvisits = 0
         for s, t in link.targets.iteritems():
             if t.transition != s:
-                # XXX a link should never change state, it is the request that does it!
+                # a link should never change state, it is the request that does it!
                 assert False
                 statechange = 1
             if tgt:
@@ -2797,7 +2840,11 @@ class Engine(object):
                         nextabsrequests = [(None, linktgt.target)]
                     for formparams, nextabsreq in nextabsrequests:
                         #print "NEXTABSREQ", nextabsreq
-                        if state == startstate and nextabsreq.statehints and nextabsreq not in recentlyseen:
+#                        if maxstate >= 111 and str(nextabsreq).find("review"):
+#                            pdb.set_trace()
+                        if state == startstate and nextabsreq.statehints and \
+                                not nextabsreq.changingstate and \
+                                not nextabsreq in recentlyseen:
                             # this is a page known to be revealing of possible state change
                             # go there first, priority=-1 !
                             formidx = LinkIdx(idx.type, idx.path, formparams)
@@ -2881,18 +2928,29 @@ class Engine(object):
             found = False
             while rr:
                 destination = rr.response.page.abspage
+#                if str(rr.response.page.abspage).find("tos") != -1:
+#                    pdb.set_trace()
+                probablyseen = None
                 for s, t in rr.request.absrequest.targets.iteritems():
                     if (t.target, t.transition) == (destination, self.state):
                         if s == self.state:
                             # state transition did not happen here
-                            recentlyseen.add(rr.request.absrequest)
-                            break
+                            assert not probablyseen or \
+                                    probablyseen == rr.request.absrequest
+                            probablyseen = rr.request.absrequest
                         else:
+                            # XXX we are matching only of tragte and anot on
+                            # source state, so it might detect that there was a
+                            # state transition when there was none. it should
+                            # not be an issue at this stage, but could it create
+                            # an inifinite loop because it keep going to the
+                            # "state-change revealing" pages?
                             found = True
                             break
                 else:
                     # we should always be able to find the destination page in the target object
-                    assert False
+                    assert probablyseen
+                    recentlyseen.add(probablyseen)
                 if found:
                     break
                 rr = rr.prev
@@ -2951,14 +3009,16 @@ class Engine(object):
                 self.logger.info(output.red("Level clustering changed, reclustering"))
                 raise
             except PageClusterer.AddToAbstractPageException:
-               self.logger.info(output.red("Unable to add page to current abstract page, reclustering"))
-               raise
+                self.logger.info(output.red("Unable to add page to current abstract page, reclustering"))
+                raise
             except AppGraphGenerator.AddToAbstractRequestException:
-               self.logger.info(output.red("Unable to add page to current abstract request, reclustering"))
-               raise
+                self.logger.info(output.red("Unable to add page to current abstract request, reclustering"))
+                raise
             except AppGraphGenerator.AddToAppGraphException, e:
-               self.logger.info(output.red("Unable to add page to current application graph, reclustering. %s" % e))
-               raise
+                print "STATEHINT", reqresp.request, hash(reqresp.request)
+                reqresp.request.statehint = True
+                self.logger.info(output.red("Unable to add page to current application graph, reclustering. %s" % e))
+                raise
             except PageMergeException, e:
                 raise RuntimeError("uncaught PageMergeException %s" % e)
         else:
@@ -3015,6 +3075,7 @@ class Engine(object):
                         ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(), statechangescores)
                         maxstate = ag.generateAppGraph()
                         self.state = ag.reduceStates()
+                        ag.markChangingState()
                         statechangescores = RecursiveDict(nleavesfunc=lambda x: x,
                                 nleavesaggregator=lambda x: (1, mean(list(float(i[1])/i[0] for i in x))/2))
                         rr = cr.headreqresp
