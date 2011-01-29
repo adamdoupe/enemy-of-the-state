@@ -29,6 +29,7 @@ htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 import pdb
 
 cond = 0
+debugstop = False
 debug_set = set()
 
 # running htmlunit via JCC will override the signal halders
@@ -90,6 +91,8 @@ class RecursiveDict(defaultdict):
 
     def __missing__(self, key):
         v = RecursiveDict(nleavesfunc=self.nleavesfunc, nleavesaggregator=self.nleavesaggregator)
+#        if str(key).find("logout") != -1 and debugstop:
+#            pdb.set_trace()
         self.__setitem__(key, v)
         return v
 
@@ -110,10 +113,15 @@ class RecursiveDict(defaultdict):
         yield self.nleaves
         i = self
         for p in path:
-            i = i[p]
-            if not isinstance(i, RecursiveDict):
+            if not p in i:
+                yield (0, 0)
                 break
-            yield i.nleaves
+            else:
+                i = i[p]
+                if not isinstance(i, RecursiveDict):
+                    yield i
+                    break
+                yield i.nleaves
 
 
     def setpath(self, path, value):
@@ -124,6 +132,8 @@ class RecursiveDict(defaultdict):
             i = i[p]
             # invalidate leaves count
             i._nleaves = None
+#        if str(path[-1]).find("logout") != -1 and debugstop:
+#            pdb.set_trace()
         i[path[-1]] = value
 
     def applypath(self, path, func):
@@ -134,6 +144,8 @@ class RecursiveDict(defaultdict):
             i = i[p]
             # invalidate leaves count
             i._nleaves = None
+#        if str(path[-1]).find("logout") != -1 and debugstop:
+#            pdb.set_trace()
         i[path[-1]] = func(i[path[-1]])
 
     def setapplypath(self, path, value, func):
@@ -144,6 +156,8 @@ class RecursiveDict(defaultdict):
             i = i[p]
             # invalidate leaves count
             i._nleaves = None
+#        if str(path[-1]).find("logout") != -1 and debugstop:
+#            pdb.set_trace()
         if path[-1] in i:
             i[path[-1]] = func(i[path[-1]])
         else:
@@ -2146,15 +2160,29 @@ class AppGraphGenerator(object):
         self.logger.debug("final states %d", nstates)
 
     def reqstatechangescore(self, absreq, dist):
-        if str(absreq).find("action.php?action=add") != -1:
-            pdb.set_trace()
-        scores = [[(i[1]/i[0] + self.pagescoreboost(rr.request, dist),
+#        if str(absreq).find("action.php?action=add") != -1:
+#            pdb.set_trace()
+        global debugstop
+        debugstop = True
+        scores = [[(self.pagescore(i, rr.request, dist),
                 i, rr.request)
             for i in self.statechangescores.getpathnleaves(
             [rr.request.method] + list(rr.request.urlvector))]
             for rr in absreq.reqresps]
+        debugstop = False
         print "SCORES", scores
         return max(max(scores))[0]
+
+    def pagescore(self, counter, req, dist):
+        return self.pagehitscore(counter) + self.pagescoreboost(req, dist)
+
+    @staticmethod
+    def pagehitscore(counter):
+        if counter[0] >= 3:
+            score = -(1-float(counter[1])/counter[0])**2 + 1
+        else:
+            score = -(1-float((counter[1]+1))/(counter[0]+1))**2 + 1
+        return score
 
     def pagescoreboost(self, req, dist):
         boost = float(LAST_REQUEST_BOOST)
@@ -2204,6 +2232,8 @@ class AppGraphGenerator(object):
                         #    print self.statechangescores
                         #    pdb.set_trace()
                         target = bestcand.req.targets[bestcand.cstate]
+#                        if str(bestcand).find("tos") != -1:
+#                            pdb.set_trace()
                         self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                         assert statemap[target.transition] == bestcand.cstate
                         # this request will always change state
@@ -2302,11 +2332,11 @@ class AppGraphGenerator(object):
 
         self.assign_reduced_state(statemap)
 
-        for ar in self.absrequests:
-            if str(ar).find("users/home") != -1:
-                for s, t in ar.targets.iteritems():
-                    if s != t.transition:
-                        pdb.set_trace()
+#        for ar in self.absrequests:
+#            if str(ar).find("users/home") != -1:
+#                for s, t in ar.targets.iteritems():
+#                    if s != t.transition:
+#                        pdb.set_trace()
 
         # return last current state
         return statemap[-1]
@@ -3076,8 +3106,18 @@ class Engine(object):
                         maxstate = ag.generateAppGraph()
                         self.state = ag.reduceStates()
                         ag.markChangingState()
+                        global debugstop
+                        debugstop = True
+                        def check(x):
+                            l = list(x)
+                            v = reduce(lambda a, b: (a[0] + b[0], (a[1] + b[1])), l, (0, 0))
+                            v = (v[0], v[1]/2.0)
+                            return v
                         statechangescores = RecursiveDict(nleavesfunc=lambda x: x,
-                                nleavesaggregator=lambda x: (1, mean(list(float(i[1])/i[0] for i in x))/2))
+                                #nleavesaggregator=lambda x: (1, mean(list(AppGraphGenerator.pagehitscore(i) for i in x))/2))
+                                #nleavesaggregator=lambda x: (1, mean(list(float(i[1])/i[0] for i in x))/2))
+                                nleavesaggregator=check)
+                        debugstop = False
                         rr = cr.headreqresp
                         while rr:
                             changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
