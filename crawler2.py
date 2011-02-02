@@ -7,9 +7,8 @@ import heapq
 import itertools
 import random
 import math
-from numpy import mean
 
-LAST_REQUEST_BOOST=0.2
+LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
 QUERY_BOOST=0.1
 
@@ -845,11 +844,11 @@ class AbstractLinks(object):
         assert all(isinstance(i, list) for i in ltval) or \
                 all(not isinstance(i, list) for i in ltval)
         if isinstance(ltval[0], list):
-            # we have reached the leaves without the encountering a cluster
+            # we have reached the leaves without encountering a cluster
             # create an abstract object with all the objects in all the leaves
             # ltval is a list of leaves, ie a list of lists containing abstractlinks
             level[key] = c(i for j in ltval for i in j)
-        else:
+        else: #isinstance(ltval[0], RecursiveDict)
             keys = sorted(ltval[0].keys())
             if all(sorted(i.keys()) == keys for i in ltval):
                 # the linkstree for all the pages in the current subtree match,
@@ -863,6 +862,36 @@ class AbstractLinks(object):
                 # leaves are lists, so iterate teie to get links
                 level[key] = c(lll for l in ltval for ll in l.iterleaves()
                         for lll in ll)
+
+    def tryMergeLinkstree(self, pagelinkstree):
+        # check if the linkstree pagelinkstree matches teh current linkstree for
+        # the current AbstractPage. If not, raise an exception and go back to
+        # reclustering
+        for t, c in [(Links.Type.ANCHOR, AbstractAnchor),
+                (Links.Type.FORM, AbstractForm),
+                (Links.Type.REDIRECT, AbstractRedirect)]:
+            self.tryMergeLinkstreeRec(pagelinkstree[t], self.linkstree[t])
+
+    def tryMergeLinkstreeRec(self, pagelinkstree, baselinkstree):
+        if isinstance(baselinkstree, RecursiveDict) and \
+                isinstance(pagelinkstree, RecursiveDict):
+            # make sure the trees have the same keys
+            pagekeys = set(pagelinkstree.keys())
+            basekeys = set(baselinkstree.keys())
+            if pagekeys != basekeys:
+                # there is difference, abort and go back reclustering
+                pdb.set_trace()
+                raise AppGraphGenerator.MergeLinksTreeException()
+            for k in pagekeys:
+                # descend into tree
+                self.tryMergeLinkstreeRec(pagelinkstree[k], baselinkstree[k])
+        elif isinstance(baselinkstree, AbstractLink) and \
+                isinstance(pagelinkstree, list):
+            pass
+        else:
+            pdb.set_trace()
+            raise AppGraphGenerator.MergeLinksTreeException()
+
 
     def __getitem__(self, linkidx):
         idx = [linkidx.type] + list(linkidx.path)
@@ -922,21 +951,13 @@ class AbstractPage(object):
 
 
     def addPage(self, reqresp):
+#        if maxstate > 155 and self.instance == 966:
+#            pdb.set_trace()
+
         self.reqresps.append(reqresp)
-        self.regenerateLinks()
+        self.abslinks.tryMergeLinkstree(reqresp.response.page.linkstree)
         self._str = None
 
-    def regenerateLinks(self):
-        #if self.instance == 3297:
-        #    pdb.set_trace()
-        #for l, i in zip(self.absanchors, zip(*(rr.response.page.anchors for rr in self.reqresps))):
-        #     l.update(i)
-        #for l, i in zip(self.absforms, zip(*(rr.response.page.forms for rr in self.reqresps))):
-        #    l.update(i)
-        #for l, i in zip(self.absredirects, zip(*(rr.response.page.redirects for rr in self.reqresps))):
-        #    l.update(i)
-        self.abslinks = AbstractLinks([rr.response.page.linkstree
-                for rr in self.reqresps])
 
     def __str__(self):
         if self._str is None:
@@ -945,7 +966,7 @@ class AbstractPage(object):
         return self._str
 
     def __repr__(self):
-        return str(self) + str(self.instance)
+        return str(self)
 
     def match(self, p):
         return self.abslinks.equals(p.abslinks)
@@ -964,6 +985,17 @@ class AbstractPage(object):
     def __cmp__(self, o):
         return cmp(self.instance, o.instance)
 
+
+class DebugDict(dict):
+
+    def __init__(self, parent):
+        self.parent = parent
+        dict.__init__(self)
+
+    def __setitem__(self, k, v):
+#        if self.parent.instance == 2583 and k == 90: 
+#            pdb.set_trace()
+        dict.__setitem__(self, k, v)
 
 class AbstractRequest(object):
 
@@ -986,7 +1018,7 @@ class AbstractRequest(object):
 
     def __init__(self, request):
         # map from state to AbstractPage
-        self.targets = {}
+        self.targets = DebugDict(self)
         self.method = request.method
         self.path = request.path
         self.reqresps = AbstractRequest.ReqRespsWrapper(self)
@@ -998,10 +1030,10 @@ class AbstractRequest(object):
         self.changingstate = False
 
     def __str__(self):
-        return "AbstractRequest(%s)%d" % (self.requestset, self.instance)
+        return "AbstractRequest(%s, %s)%d" % (self.requestset, self.targets, self.instance)
 
     def __repr__(self):
-        return str(self)
+        return "AbstractRequest(%s)%d" % (self.requestset, self.instance)
 
     @property
     def requestset(self):
@@ -1258,7 +1290,7 @@ class PageClusterer(object):
 
                 # require some diversity in the dom path in order to create a link
 #                print "========", n, len(k), k, level
-                if nleaves >= med and nleaves > 33*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
+                if nleaves >= med and nleaves > 330*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
                         and v.depth <= n:
                     v.clusterable = True
                     level.clusterable = False
@@ -1277,7 +1309,7 @@ class PageClusterer(object):
             # requrire more than X pages in a cluster
 
             # require some diversity in the dom path in order to create a link
-            if nleaves >= med and nleaves > 33*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
+            if nleaves >= med and nleaves > 330*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
                     and v.depth <= n:
                 v.newclusterable = True
                 level.newclusterable = False
@@ -1430,6 +1462,44 @@ class PairCounter(object):
 PastPage = namedtuple("PastPage", "req page chlink cstate nvisits")
 LinkIdx = namedtuple("LinkIdx", "type path params")
 
+class Score(object):
+
+    def __init__(self, counter, req, dist):
+        self.counter = counter
+        self.hitscore = self.pagehitscore(counter)
+        self.req = req
+        self.dist = dist
+        self.boost = self.pagescoreboost(req, dist)
+        self.score = self.hitscore + self.boost
+
+    def __str__(self):
+        return "%f(%f+%f)" % (self.score, self.hitscore, self.boost)
+
+    def __repr__(self):
+        return str(self)
+
+    def __cmp__(self, s):
+        return cmp((self.score, self.hitscore), (s.score, s.hitscore))
+
+    @staticmethod
+    def pagehitscore(counter):
+        if counter[0] >= 3:
+            score = -(1-float(counter[1])/counter[0])**2 + 1
+        else:
+            score = -(1-float((counter[1]+1))/(counter[0]+1))**2 + 1
+        return score
+
+    @staticmethod
+    def pagescoreboost(req, dist):
+        boost = float(LAST_REQUEST_BOOST)
+        if req.isPOST:
+            boost += POST_BOOST
+        elif req.query:
+            boost += QUERY_BOOST
+        boost /= dist+1
+        return boost
+
+
 class AppGraphGenerator(object):
 
     class AddToAbstractRequestException(PageMergeException):
@@ -1438,6 +1508,10 @@ class AppGraphGenerator(object):
         pass
 
     class AddToAppGraphException(PageMergeException):
+        def __init__(self, msg=None):
+            PageMergeException.__init__(self, msg)
+
+    class MergeLinksTreeException(PageMergeException):
         def __init__(self, msg=None):
             PageMergeException.__init__(self, msg)
 
@@ -2174,24 +2248,8 @@ class AppGraphGenerator(object):
         return max(max(scores))[0]
 
     def pagescore(self, counter, req, dist):
-        return self.pagehitscore(counter) + self.pagescoreboost(req, dist)
-
-    @staticmethod
-    def pagehitscore(counter):
-        if counter[0] >= 3:
-            score = -(1-float(counter[1])/counter[0])**2 + 1
-        else:
-            score = -(1-float((counter[1]+1))/(counter[0]+1))**2 + 1
+        score = Score(counter, req, dist)
         return score
-
-    def pagescoreboost(self, req, dist):
-        boost = float(LAST_REQUEST_BOOST)
-        if req.isPOST:
-            boost += POST_BOOST
-        elif req.query:
-            boost += QUERY_BOOST
-        boost /= dist+1
-        return boost
 
 
     def splitStatesIfNeeded(self, smallerstates, currreq, currstate, currtarget, statemap, history):
@@ -2480,6 +2538,8 @@ class Crawler(object):
             htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(fqurl))
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
+        except TypeError, e:
+            reqresp = self.handleNavigationException(e)
         reqresp = self.newPage(htmlpage)
         redirect.to.append(reqresp)
         return reqresp
@@ -2508,12 +2568,23 @@ class Crawler(object):
         return self.currreqresp
 
     def newHttpError(self, webresponse):
-        redirect = Page(webresponse, error=True)
-        response = Response(webresponse, page=redirect)
+        error = Page(webresponse, error=True)
+        response = Response(webresponse, page=error)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
         request.reqresp = reqresp
-        redirect.reqresp = reqresp
+        error.reqresp = reqresp
+
+        self.updateInternalData(reqresp)
+        return self.currreqresp
+
+    def newUnexpectedPage(self, webresponse):
+        error = Page(webresponse, error=True)
+        response = Response(webresponse, page=error)
+        request = Request(webresponse.getWebRequest())
+        reqresp = RequestResponse(request, response)
+        request.reqresp = reqresp
+        error.reqresp = reqresp
 
         self.updateInternalData(reqresp)
         return self.currreqresp
@@ -2532,25 +2603,30 @@ class Crawler(object):
         self.logger.info("%s", self.currreqresp)
 
     def handleNavigationException(self, e):
-        javaex = e.getJavaException()
-        if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
-            httpex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
-            self.logger.info("%s" % httpex)
-            statuscode = httpex.getStatusCode()
-            message = httpex.getMessage()
-            if statuscode == 303:
-                response = httpex.getResponse()
-                location = response.getResponseHeaderValue("Location")
-                self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
-                reqresp = self.newHttpRedirect(response)
-            elif statuscode == 404:
-                response = httpex.getResponse()
-                self.logger.info(output.purple("error %d (%s)" % (statuscode, message)))
-                reqresp = self.newHttpError(response)
+        if isinstance(e, TypeError):
+            response = e.args[0].webResponse
+            self.logger.info(output.purple("unexpected page"))
+            reqresp = self.newHttpError(response)
+        else:
+            javaex = e.getJavaException()
+            if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
+                httpex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
+                self.logger.info("%s" % httpex)
+                statuscode = httpex.getStatusCode()
+                message = httpex.getMessage()
+                if statuscode == 303:
+                    response = httpex.getResponse()
+                    location = response.getResponseHeaderValue("Location")
+                    self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
+                    reqresp = self.newHttpRedirect(response)
+                elif statuscode == 404:
+                    response = httpex.getResponse()
+                    self.logger.info(output.purple("error %d (%s)" % (statuscode, message)))
+                    reqresp = self.newHttpError(response)
+                else:
+                    raise
             else:
                 raise
-        else:
-            raise
         return reqresp
 
     def click(self, anchor):
@@ -2564,6 +2640,8 @@ class Crawler(object):
             htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
             reqresp = self.newPage(htmlpage)
         except htmlunit.JavaError, e:
+            reqresp = self.handleNavigationException(e)
+        except TypeError, e:
             reqresp = self.handleNavigationException(e)
         anchor.to.append(reqresp)
         assert reqresp.request.fullpath[-len(anchor.href):] == anchor.href, \
@@ -2618,6 +2696,8 @@ class Crawler(object):
             reqresp.request.formparams = FormFiller.Params(params)
 
         except htmlunit.JavaError, e:
+            reqresp = self.handleNavigationException(e)
+        except TypeError, e:
             reqresp = self.handleNavigationException(e)
 
         form.to.append(reqresp)
@@ -2793,11 +2873,18 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
+#        if maxstate >= 158 and \
+#                str(linkidx).find("picid'), (u'add', u'5')") != -1:
+#                pdb.set_trace()
         statechange = 0
         tgt = None
+        # must be > 0, as it will also mark the kond of query in the dist vector
+        nvisits = 1
+        # count visits done for this link and the subsequent request the current
+        # state
         if state in link.targets:
             tgt = link.targets[state]
-            nvisits = tgt.nvisits + 1
+            nvisits += tgt.nvisits
             # also add visit count for the subsequent request
             if linkidx.params != None:
                 targets = tgt.target[linkidx.params].target.targets
@@ -2805,11 +2892,10 @@ class Engine(object):
                 targets = tgt.target.targets
             if tgt.target and state in targets:
                 nvisits += targets[state].nvisits
-        else:
-            # never visited, but it must be > 0
-            nvisits = 1
 
-        othernvisits = 0
+        # must be > 0, as it will also mark the kond of query in the dist
+        # vector, in case nvisits == 0
+        othernvisits = 1
         for s, t in link.targets.iteritems():
             if t.transition != s:
                 # a link should never change state, it is the request that does it!
@@ -2820,10 +2906,17 @@ class Engine(object):
                 # otherwise we might skip exploring them for some states
                 if t.target == tgt.target:
                     othernvisits += t.nvisits
+        # also add visit count for the subsequent request in different states
+        if tgt and not isinstance(tgt, FormTarget):
+            for s, t in tgt.target.targets.iteritems():
+                if s != state:
+                    othernvisits += t.nvisits
 
         assert link.type == linkidx.type
         # XXX statechange is not set correctly
-        dist = linkweigh(link, nvisits, othernvisits, statechange)
+        # divide othernvisits by 3, so it weights less and for the first 3
+        # visists it is 0
+        dist = linkweigh(link, nvisits, othernvisits/3, statechange)
 
         return dist
 
@@ -2836,7 +2929,7 @@ class Engine(object):
         newdist = dist + mincost[0]
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
                 mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
-#        if maxstate == 48 and str(mincost[1]).find("view.php") != -1:
+#        if maxstate >= 158 and str(mincost[1]).find("picid'), (u'add', u'5") != -1:
 #            pdb.set_trace()
 #        if mincost[1].path[1:] in debug_set:
 #            pdb.set_trace()
@@ -3137,6 +3230,9 @@ class Engine(object):
                         #global cond
                         #if cond >= 2: cond += 1
                         ag.fillMissingRequests()
+                        for r in sorted(ag.absrequests):
+                            print output.turquoise("%s" % r)
+
                         print output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages()))
                         self.pc = pc
                         self.ag = ag
