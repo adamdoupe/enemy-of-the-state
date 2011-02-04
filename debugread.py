@@ -15,9 +15,12 @@ colmap = {
         (6, 6): "#00cccc",
         }
 
+MAX_LINES = 100000
+CHUNK_SIZE = 102400
+
 class LogReader(object):
 
-    def __init__(self, logfile):
+    def __init__(self, logfile, skiplines=0):
         self.window = window = gtk.Window(gtk.WINDOW_TOPLEVEL)
         window.set_title(logfile + " - debugread")
 
@@ -44,17 +47,49 @@ class LogReader(object):
 
         colorre = re.compile(r'\x1b\x5b[^m]*m')
         valsre = re.compile(r'\x1b\x5b([0-9]+)(?:;([0-9]+))*m')
+        nlines = 0
+        text = ""
         with open(logfile, 'r') as f:
-            text = f.read()
+            while True:
+                newtext = f.read(CHUNK_SIZE)
+                newnlines = newtext.count('\n')
+                still_needed = skiplines - nlines
+                p = 0
+                if newnlines > still_needed:
+                    for i in range(still_needed):
+                        p = newtext.find('\n', p)
+                    break
+                nlines += newnlines
+                if len(newtext) == 0:
+                    break
+
+            text = newtext[(p+1):]
+            nlines = newnlines - still_needed
+
+            while len(newtext) and nlines < MAX_LINES:
+                newtext = f.read(CHUNK_SIZE)
+                nlines += newtext.count('\n')
+                text += newtext
+                if len(newtext) == 0:
+                    break
+
+        print "done reading file (%d) lines" % nlines
+
+
 
         start = 0
         nexttag = None
         it = textbuffer.get_iter_at_offset(0)
+        lines = 0
         for m in colorre.finditer(text):
+            newtext = text[start:m.start()]
+            lines += newtext.count('\n')
+            if lines % 10000 == 0:
+                print lines
             if nexttag:
-                textbuffer.insert_with_tags(it, text[start:m.start()], nexttag)
+                textbuffer.insert_with_tags(it, newtext, nexttag)
             else:
-                textbuffer.insert(it, text[start:m.start()])
+                textbuffer.insert(it, newtext)
             mm = valsre.match(m.group(0))
             mainattr = int(mm.group(1))
             if mainattr >= 30:
@@ -68,6 +103,9 @@ class LogReader(object):
             start = m.end()
 
         del text
+
+        print "done creating buffer"
+
 
         sw = gtk.ScrolledWindow()
         sw.add(textview)
@@ -95,6 +133,8 @@ class LogReader(object):
         vbox.show()
         window.show()
 
+    def print_stat(self, i, tot):
+        print "%d (%f%%)" % (i, i*100.0/tot)
 
     def destroy(self, widget, data=None):
         gtk.main_quit()
@@ -119,7 +159,10 @@ class LogReader(object):
         curstartit = textbuffer.get_start_iter()
         startit = curstartit
         lastvisible = True
-        for i in range(0, textbuffer.get_line_count()):
+        linecount = textbuffer.get_line_count()
+        for i in range(1, linecount):
+            if i % 10000 == 0:
+                self.print_stat(i, linecount)
             curendit = textbuffer.get_iter_at_line(i)
             text = curstartit.get_text(curendit)
             if regexp.search(text):
@@ -156,7 +199,11 @@ class LogReader(object):
         cursormoved = False
         regexp = re.compile(regexpstr)
         curstartit = textbuffer.get_start_iter()
-        for i in range(1, textbuffer.get_line_count()):
+        linecount = textbuffer.get_line_count()
+        for i in range(1, linecount):
+            if i % 10000 == 0:
+                self.print_stat(i, linecount)
+
             curendit = textbuffer.get_iter_at_line(i)
             text = curstartit.get_text(curendit)
             for m in regexp.finditer(text):
@@ -184,7 +231,10 @@ class LogReader(object):
             print "FWD SEARCH", regexpstr
             curstartit = cursor.copy()
             curstartit.forward_char()
-            for i in range(curstartit.get_line()+1, textbuffer.get_line_count()):
+            linecount = textbuffer.get_line_count()
+            for i in range(curstartit.get_line()+1, linecount):
+                if i % 10000 == 0:
+                    self.print_stat(i, linecount)
                 curendit = textbuffer.get_iter_at_line(i)
                 text = curstartit.get_visible_text(curendit)
                 m = regexp.search(text)
@@ -197,7 +247,10 @@ class LogReader(object):
         elif event.keyval == 78:
             print "BWD SEARCH", regexpstr
             curendit = cursor
+            linecount = textbuffer.get_line_count()
             for i in range(cursor.get_line(), -1, -1):
+                if i % 10000 == 0:
+                    self.print_stat(i, linecount)
                 curstartit = textbuffer.get_iter_at_line(i)
                 text = curstartit.get_visible_text(curendit)
                 m = None
@@ -219,5 +272,8 @@ class LogReader(object):
 
 if __name__ == "__main__":
     import sys
-    logreader = LogReader(sys.argv[1])
+    skiplines = 0
+    if len(sys.argv) > 2:
+        skiplines = int(sys.argv[2])
+    logreader = LogReader(sys.argv[1], skiplines)
     logreader.main()
