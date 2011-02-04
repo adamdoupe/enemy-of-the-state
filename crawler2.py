@@ -1818,8 +1818,10 @@ class AppGraphGenerator(object):
             #print "LINK", l, "TTTT", l.targets
 #            if maxstate >= 45 and str(l).find("view.php?picid=4") != -1:
 #                pdb.set_trace()
-            newrequest = None
-            newrequestbuilt = False
+
+            newrequest = None  # abstract request for link l
+            newrequestbuilt = False # attempt has already been made to build an
+                                    # abstract request
             for s in sorted(allstates):
                 #if s not in l.targets or l.targets[s].nvisits == 0:
                 if s not in l.targets:
@@ -2769,6 +2771,9 @@ class Dist(object):
         #print "NORM %s %s" % (self.val, ret)
         return ret
 
+    def __getitem__(self, i):
+        return self.val[i]
+
 class FormField(object):
 
     Type = Constants("CHECKBOX", "TEXT", "HIDDEN", "OTHER")
@@ -2891,7 +2896,9 @@ class Engine(object):
             else:
                 targets = tgt.target.targets
             if tgt.target and state in targets:
-                nvisits += targets[state].nvisits
+                reqtarget = targets[state]
+                nvisits += reqtarget.nvisits
+                statechange = reqtarget.transition != state
 
         # must be > 0, as it will also mark the kond of query in the dist
         # vector, in case nvisits == 0
@@ -2911,12 +2918,19 @@ class Engine(object):
             for s, t in tgt.target.targets.iteritems():
                 if s != state:
                     othernvisits += t.nvisits
+                # if the request has ever caused a change in state, consider it
+                # state chaning even if the state is not the same. This helps
+                # Dijstra stay away from potential state changing requests
+                if s != t.transition:
+                    statechange = True
+
 
         assert link.type == linkidx.type
         # XXX statechange is not set correctly
         # divide othernvisits by 3, so it weights less and for the first 3
-        # visists it is 0
-        dist = linkweigh(link, nvisits, othernvisits/3, statechange)
+        # visists it is 1
+        othernvisits = int(math.ceil(othernvisits/3.0))
+        dist = linkweigh(link, nvisits, othernvisits, statechange)
 
         return dist
 
@@ -2926,7 +2940,13 @@ class Engine(object):
         #print "NCOST", [i[0].normalized for i in costs]
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
-        newdist = dist + mincost[0]
+        if priority == 0:
+            # for startndard priority, select unvisited links disregarding the
+            # distance, provided they do not change state
+            newdist = (dist[0], mincost[0], dist)
+        else:
+            # for non-standard priority (-1), use the real distance
+            newdist = dist
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
                 mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
 #        if maxstate >= 158 and str(mincost[1]).find("picid'), (u'add', u'5") != -1:
@@ -2943,7 +2963,9 @@ class Engine(object):
         while heads:
             dist, head, state, headpath = heapq.heappop(heads)
             print output.yellow("H %s %s %s %s" % (dist, head, state, headpath))
-#            if str(head).find("review.php") != -1:
+#            if maxstate >= 297 and (str(head).find(r"view.php\?picid=") != -1 or
+#                    str(head).find(r"action=add\?picid=") != -1 or
+#                    str(head).find(r"recent.php") != -1):
 #                pdb.set_trace()
             if (head, state) in seen:
                 continue
@@ -2954,6 +2976,8 @@ class Engine(object):
                 if link.skip:
                     continue
                 newpath = [PathStep(head, idx, state)] + headpath
+#                if maxstate >= 297 and str(link).find(r"recent.php") != -1:
+#                    pdb.set_trace()
                 #print "state %s targets %s" % (state, link.targets)
                 if state in link.targets:
                     linktgt = link.targets[state]
@@ -2973,6 +2997,8 @@ class Engine(object):
                             formidx = LinkIdx(idx.type, idx.path, formparams)
                             self.addUnvisisted(dist, head, state, headpath,
                                     [(formidx, link)], candidates, -1)
+                        # the request associated to this link has never been
+                        # made in the current state, add it as unvisited
                         if state not in nextabsreq.targets:
                             formidx = LinkIdx(idx.type, idx.path, formparams)
                             self.addUnvisisted(dist, head, state, headpath,
@@ -2986,6 +3012,8 @@ class Engine(object):
                         formidx = LinkIdx(idx.type, idx.path, formparams)
                         newdist = dist + self.linkcost(head, formidx, link, state)
                         #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
+#                        if maxstate >= 297 and str(tgt.target).find(r"recent.php") != -1:
+#                            pdb.set_trace()
                         heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     if not unvlinks_added:
@@ -2999,7 +3027,7 @@ class Engine(object):
                             raise NotImplementedError
         nvisited = len(set(i[0] for i in seen))
         if candidates:
-#            print "CAND", candidates
+            print "CAND", candidates
             return candidates[0].path, nvisited
         else:
             return None, nvisited
@@ -3046,6 +3074,22 @@ class Engine(object):
                 return (Engine.Actions.ANCHOR, reqresp.response.page.links[unvisited])
 
         if reqresp.response.page.abspage:
+            # if there is only one REDIRECT, follow it
+            abspage = reqresp.response.page.abspage
+            linksiter = abspage.abslinks.iteritems()
+            firstlink = None
+            try:
+                # extract the first link
+                firstlink = linksiter.next()
+                # next like will raise StopIteration if there is only 1 link
+                linksiter.next()
+            except StopIteration:
+                # if we have at least one link, and it is the only one, and it is a redirect, 
+                # then follow it
+                if firstlink and firstlink[0].type == Links.Type.REDIRECT:
+                    self.logger.debug("page contains only a rediect, following it")
+                    return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
+
             recentlyseen = set()
             rr = reqresp
             found = False
