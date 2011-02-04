@@ -612,9 +612,12 @@ class AbstractLink(object):
 
     def __init__(self, links):
         # map from state to AbstractRequest
-        self.targets = {}
         self.skip = any(i.skip for i in links)
         self.links = links
+        self.parentpage = links[0].reqresp.response.page.abspage
+        assert all(i.reqresp.response.page.abspage == self.parentpage
+                for i in links)
+        self.targets = DebugDict(self.parentpage.instance)
 
     @lazyproperty
     def _str(self):
@@ -936,6 +939,9 @@ class AbstractPage(object):
         self.instance = AbstractPage.InstanceCounter
         AbstractPage.InstanceCounter += 1
         self.reqresps = reqresps[:]
+        for rr in reqresps:
+            rr.response.page.abspage = self
+
         # maps a state to the corresponding abstract link chosen for that state
         self.statelinkmap = {}
         # maps a state to the corresponding requestresponse objects for that state
@@ -993,7 +999,7 @@ class DebugDict(dict):
         dict.__init__(self)
 
     def __setitem__(self, k, v):
-#        if self.parent.instance == 2583 and k == 90: 
+#        if self.parent == 1471 and k == 46: 
 #            pdb.set_trace()
         dict.__setitem__(self, k, v)
 
@@ -1017,13 +1023,13 @@ class AbstractRequest(object):
             return list.append(self, rr)
 
     def __init__(self, request):
-        # map from state to AbstractPage
-        self.targets = DebugDict(self)
         self.method = request.method
         self.path = request.path
         self.reqresps = AbstractRequest.ReqRespsWrapper(self)
         self.instance = AbstractRequest.InstanceCounter
         AbstractRequest.InstanceCounter += 1
+        # map from state to AbstractPage
+        self.targets = DebugDict(self.instance)
         # counter of how often this page gave hints for detecting a state change
         self.statehints = 0
         self._requestset = None
@@ -1466,10 +1472,18 @@ class Score(object):
 
     def __init__(self, counter, req, dist):
         self.counter = counter
-        self.hitscore = self.pagehitscore(counter)
         self.req = req
         self.dist = dist
-        self.boost = self.pagescoreboost(req, dist)
+        if req.absrequest.targets:
+            # XXX if a page is a dead end, assume it cannot cause a state
+            # transition this could actually happen, but support for handling it
+            # is not in place (i.e. we will have a request from state B, but the
+            # correponding abstract link in the previous page will only have
+            # state A, therefore an asswert will fail
+            self.hitscore = self.boost = 0
+        else:
+            self.hitscore = self.pagehitscore(counter)
+            self.boost = self.pagescoreboost(req, dist)
         self.score = self.hitscore + self.boost
 
     def __str__(self):
