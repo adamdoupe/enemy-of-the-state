@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 
 import logging
+def handleError(self, record):
+      raise
+logging.Handler.handleError = handleError
+
 import urlparse
 import re
 import heapq
@@ -177,7 +181,7 @@ class RecursiveDict(defaultdict):
                         levelkeys.append(self.nleavesfunc(c))
                 if children:
                     queue.append(children)
-                #print "LK", len(queue), levelkeys, queue
+                #self.logger.debug("LK", len(queue), levelkeys, queue)
                 yield levelkeys
 
     def iterleaves(self):
@@ -576,7 +580,7 @@ class Page(object):
                 for submittable in Form.SUBMITTABLES:
                     try:
                         submitter = iform.getOneHtmlElementByAttribute(*submittable)
-                        #print "SUBMITTER", submitter, submitter.getPage()
+                        #self.logger.debug("SUBMITTER", submitter, submitter.getPage())
                         break
                     except htmlunit.JavaError, e:
                         javaex = e.getJavaException()
@@ -584,12 +588,12 @@ class Page(object):
                             raise
                         continue
                 if submitter:
-                    #print "CASTING?"
+                    #self.logger.debug("CASTING?")
                     newreq = iform.getWebRequest(submitter)
                     if htmlunit.HtmlImageInput.instance_(submitter):
                         #pdb.set_trace()
                         url = newreq.getUrl()
-                        #print "CASTING!", url.getQuery(), url.getPath()
+                        #self.logger.debug("CASTING!", url.getQuery(), url.getPath())
                         urlstr = url.getPath()
                         if urlstr.find('?') == -1:
                             urlstr += "?"
@@ -603,7 +607,7 @@ class Page(object):
                         urlstr += "x=0&y=0"
                         newurl = htmlunit.URL(url, urlstr)
                         newreq.setUrl(newurl)
-                    #print "NEWFORMREQ %s %s" % (newreq, self)
+                    #self.logger.debug("NEWFORMREQ %s %s" % (newreq, self))
                     return newreq
         return None
 
@@ -750,11 +754,11 @@ class Links(object):
             for l in links:
                 urlv = [ltype]
                 urlv += [l.dompath] if l.dompath else []
-                #print "LINKVETOR", l.linkvector
+                #self.logger.debug("LINKVETOR", l.linkvector)
                 urlv += list(l.linkvector)
-                #print "URLV", urlv
+                #self.logger.debug("URLV", urlv)
                 linkstree.applypath(urlv, lambda x: self.addlink(x, l))
-                #print "LINKSTREE", linkstree
+                #self.logger.debug("LINKSTREE", linkstree)
         if not linkstree:
             # all pages with no links will end up in the same special bin
             linkstree.setapplypath(("<EMPTY>", ), [None], lambda x: x+[None])
@@ -805,12 +809,12 @@ class Links(object):
         idx = [linkidx.type] + list(linkidx.path)
         val = self.linkstree.getpath(idx)
         if hasattr(val, "nleaves"):
-            print output.red("******** PICKING ONE *******")
+            self.logger.debug(output.red("******** PICKING ONE *******"))
             pdb.set_trace()
             val = val.iterleaves().next()[0]
         assert isinstance(val, list)
         if len(val) > 1:
-            print output.red("******** PICKING ONE *******")
+            self.logger.debug(output.red("******** PICKING ONE *******"))
             pdb.set_trace()
         return val[0]
 
@@ -824,7 +828,7 @@ class Links(object):
         for p, l in self.linkstree.iteridxleaves():
             assert isinstance(l, list), l
             if len(l) > 1:
-                print output.red("******** PICKING ONE *******")
+                self.logger.debug(output.red("******** PICKING ONE *******"))
                 pdb.set_trace()
             yield (LinkIdx(p[0], p[1:], None), l[0])
 
@@ -906,7 +910,7 @@ class AbstractLinks(object):
                 break
         else:
             return i
-        print output.red("******** PICKING ONE *******")
+        self.logger.debug(output.red("******** PICKING ONE *******"))
         pdb.set_trace()
         return i.iterleaves().next()
 
@@ -999,8 +1003,8 @@ class DebugDict(dict):
         dict.__init__(self)
 
     def __setitem__(self, k, v):
-#        if self.parent == 1471 and k == 46: 
-#            pdb.set_trace()
+        if self.parent == 1471 and k == 46: 
+            pdb.set_trace()
         dict.__setitem__(self, k, v)
 
 class AbstractRequest(object):
@@ -1122,7 +1126,7 @@ class CustomDict(dict):
             self[k] = v
 
     def __getitem__(self, k):
-        #print "GET", k
+        #self.logger.debug("GET", k)
         h = self.h(k)
         if dict.__contains__(self, h):
             return dict.__getitem__(self, self.h(k))
@@ -1168,7 +1172,7 @@ class AbstractMap(dict):
         else:
             v = self.absobj(obj)
             self[h] = v
-        #print output.yellow("%s (%s) -> %s" % (h, obj, v))
+        #self.logger.debug(output.yellow("%s (%s) -> %s" % (h, obj, v)))
         return v
 
     def getAbstractOrDefault(self, obj, default):
@@ -1295,7 +1299,7 @@ class PageClusterer(object):
                 # requrire more than X pages in a cluster
 
                 # require some diversity in the dom path in order to create a link
-#                print "========", n, len(k), k, level
+#                self.logger.debug("========", n, len(k), k, level)
                 if nleaves >= med and nleaves > 330*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
                         and v.depth <= n:
                     v.clusterable = True
@@ -1474,7 +1478,9 @@ class Score(object):
         self.counter = counter
         self.req = req
         self.dist = dist
-        if req.absrequest.targets:
+        if str(req.absrequest).find("highqual") != -1:
+            pdb.set_trace()
+        if not req.absrequest.targets:
             # XXX if a page is a dead end, assume it cannot cause a state
             # transition this could actually happen, but support for handling it
             # is not in place (i.e. we will have a request from state B, but the
@@ -1584,7 +1590,7 @@ class AppGraphGenerator(object):
         self.reqmap = reqmap
 
         for r in sorted(absrequests):
-            print output.turquoise("%s" % r)
+            self.logger.debug(output.turquoise("%s" % r))
 
         self.absrequests = absrequests
 
@@ -1608,7 +1614,7 @@ class AppGraphGenerator(object):
             absreq = mappedreq
         rr.request.absrequest = absreq
         absreq.reqresps.append(rr)
-        print output.turquoise("%s" % absreq)
+        self.logger.debug(output.turquoise("%s" % absreq))
 
 
     def generateAppGraph(self):
@@ -1633,12 +1639,12 @@ class AppGraphGenerator(object):
             currpage = curr.response.page
             currabspage = currpage.abspage
             assert not laststate in currabsreq.targets
-            #print output.red("A %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
+            #self.logger.debug(output.red("A %s(%d)\n\t%s " % (currabsreq, id(currabsreq),)
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             currabsreq.targets[laststate] = PageTarget(currabspage, laststate+1, nvisits=1)
             currpage.reqresp.request.state = laststate
 
-            #print output.red("B %s(%d)\n\t%s " % (currabsreq, id(currabsreq),
+            #self.logger.debug(output.red("B %s(%d)\n\t%s " % (currabsreq, id(currabsreq),)
             #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             laststate += 1
 
@@ -1656,10 +1662,10 @@ class AppGraphGenerator(object):
                 # find which link goes to the next request in the history
                 chosenlink = (i for i, l in currpage.links.iteritems() if curr.next in l.to).next()
                 nextabsreq = curr.next.request.absrequest
-                #print output.green("A %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
+                #self.logger.debug(output.green("A %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),)
                 #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
                 # XXX we cannot just use the index for more complex clustering
-                #print "%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage)
+                #self.logger.debug("%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage))
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 newtgt = ReqTarget(nextabsreq, laststate, nvisits=1)
                 if chosenlink.type == Links.Type.FORM:
@@ -1678,7 +1684,7 @@ class AppGraphGenerator(object):
                 else:
                     currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate]
 
-            #print output.green("B %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),
+            #self.logger.debug(output.green("B %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),)
             #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
 
             curr = curr.next
@@ -1824,12 +1830,12 @@ class AppGraphGenerator(object):
 
     def fillPageMissingRequests(self, ap):
         allstates = ap.seenstates
-        #print "AP", ap, ap.seenstates
+        #self.logger.debug("AP", ap, ap.seenstates)
         for idx, l in ap.abslinks.iteritems():
             #if str(ap).find("home") != -1 and str(ap).find("upload") != -1 \
             #        and str(l).find("Redirect") != -1:
             #    pdb.set_trace()
-            #print "LINK", l, "TTTT", l.targets
+            #self.logger.debug("LINK", l, "TTTT", l.targets)
 #            if maxstate >= 45 and str(l).find("view.php?picid=4") != -1:
 #                pdb.set_trace()
 
@@ -1841,7 +1847,7 @@ class AppGraphGenerator(object):
                 if s not in l.targets:
                     if not newrequestbuilt:
                         newwebrequest = ap.reqresps[0].response.page.getNewRequest(idx, l)
-                        #print "NEWWR %s %d %s %s" % (ap, s, l, newwebrequest)
+                        #self.logger.debug("NEWWR %s %d %s %s" % (ap, s, l, newwebrequest))
                         if newwebrequest:
                             request = Request(newwebrequest)
                             #if maxstate >= 11 and str(request).find("upload"):
@@ -1851,7 +1857,7 @@ class AppGraphGenerator(object):
                             else:
                                 newrequest = self.reqmap.getAbstract(request)
                             #newrequest = self.fillreqmap[request]
-                            print "NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest)
+                            self.logger.debug("NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest))
                             newrequest.reqresps.append(RequestResponse(request, None))
                         newrequestbuilt = True
                     if newrequest:
@@ -1861,9 +1867,9 @@ class AppGraphGenerator(object):
                             tgtdict = {"": newtgt}
                             newtgt = FormTarget(tgtdict, s, nvisits=0)
                         l.targets[s] = newtgt
-                        #print output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest))
+                        #self.logger.debug(output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest)))
                         #for ss, tt in newrequest.targets.iteritems():
-                        #    print output.purple("\t %s %s" % (ss, tt))
+                        #    self.logger.debug(output.purple("\t %s %s" % (ss, tt)))
                 else:
                     assert l.targets[s].target is not None
 
@@ -1880,7 +1886,7 @@ class AppGraphGenerator(object):
         newequalstates = set()
         for ss in statebins:
             otherstates = seenstates - ss
-            #print output.darkred("OS %s" % otherstates)
+            #self.logger.debug(output.darkred("OS %s" % otherstates))
             for es in equalstates:
                 newes = StateSet(es-otherstates)
                 if newes:
@@ -1927,8 +1933,8 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-            #print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
-            #print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
+            #self.logger.debug(output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar)))
+            #self.logger.debug(output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins))))
 
             for sb in statebins:
                 seentogether.addset(sb)
@@ -1945,8 +1951,8 @@ class AppGraphGenerator(object):
                     statelist[rr.response.page.linksvector].append(s)
 
             if len(statelist) > 1:
-                print "DIFFSTATESABSTRACT", ap, statelist
-                print output.yellow(str(statelist.values()))
+                self.logger.debug("DIFFSTATESABSTRACT %s %s", ap, statelist)
+                self.logger.debug(output.yellow(str(statelist.values())))
                 differentpairs.addallcombinations(statelist.values())
 
 
@@ -1962,14 +1968,14 @@ class AppGraphGenerator(object):
             for t, states in sorted(targetbins.items()):
                 if len(states) > 1:
                     #targetequalstates = set([StateSet(states)])
-                    #print "preTES", targetequalstates, ar, t
+                    #self.logger.debug("preTES", targetequalstates, ar, t)
 
                     statelist = sorted(states)
 
                     for i, a in enumerate(statelist):
                         for b in statelist[i+1:]:
                             if differentpairs.get(a, b):
-                                #print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
+                                #self.logger.debug("DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)]))
                                 differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
 
     def assignColor(self, assignments, edges, node, maxused):
@@ -1977,12 +1983,12 @@ class AppGraphGenerator(object):
         neighcolors = frozenset(n[1] for n in neighs)
         for i in range(maxused, -1, -1) + [maxused+1]:
             if i not in neighcolors:
-                #print "ASSIGN %d %d <%s>" % (node, i, sorted(neighs))
+                #self.logger.debug("ASSIGN %d %d <%s>" % (node, i, sorted(neighs)))
                 assignments[node] = i
                 maxused = max(maxused, i)
                 break
             else:
-                #print "NEIGH %s %d" % (node, i)
+                #self.logger.debug("NEIGH %s %d" % (node, i))
                 pass
         else:
             assert False
@@ -2023,7 +2029,7 @@ class AppGraphGenerator(object):
         for i, a in enumerate(allstates):
             for b in allstates[i+1:]:
                 if a not in exceptions and b not in exceptions and not seentogether.containsSorted(a, b):
-                    #print output.darkred("NEVER %s" % ((a, b), ))
+                    #self.logger.debug(output.darkred("NEVER %s" % ((a, b), )))
                     differentpairs.addSorted(a, b)
 
     def markNeverSeenTogether(self, statemap, seentogether, differentpairs, exceptions=frozenset()):
@@ -2045,18 +2051,18 @@ class AppGraphGenerator(object):
     def updateStatemapFromColorBins(self, bins, assignments, statemap):
             colormap = [min(nn) for nn in bins]
 
-            #print "CMAP", colormap
+            #self.logger.debug("CMAP", colormap)
 
             for n, c in assignments.iteritems():
                 statemap[n] = colormap[c]
 
-            #print "SMAP", statemap
+            #self.logger.debug("SMAP", statemap)
 
     def refreshStatemap(self, statemap):
         for i in range(len(statemap)):
             statemap[i] = statemap[statemap[i]]
 
-        #print "SMAP", statemap
+        #self.logger.debug("SMAP", statemap)
 
         nstates = len(set(statemap))
         return nstates
@@ -2124,8 +2130,8 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-            #print output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar))
-            #print output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins)))
+            #self.logger.debug(output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar)))
+            #self.logger.debug(output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins))))
 
             for sb in statebins:
                 seentogether.addset(sb)
@@ -2138,7 +2144,7 @@ class AppGraphGenerator(object):
             equalstates = self.addStateBins(statebins, equalstates)
             self.dropRedundantStateGroups(equalstates)
 
-            #print output.darkred("ES %s" % sorted(equalstates))
+            #self.logger.debug(output.darkred("ES %s" % sorted(equalstates)))
 
 
         # in the previous step, we marked as different states that were leading to different target pages,
@@ -2164,31 +2170,31 @@ class AppGraphGenerator(object):
                     for t, states in sorted(targetbins.items()):
                         if len(states) > 1:
                             targetequalstates = set([StateSet(states)])
-                            #print "preTES", targetequalstates, ar, t
+                            #self.logger.debug("preTES", targetequalstates, ar, t)
 
                             statelist = sorted(states)
 
                             for i, a in enumerate(statelist):
                                 for b in statelist[i+1:]:
                                     if currentdifferentpairs.get(a, b):
-                                        #print "DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)])
+                                        #self.logger.debug("DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)]))
                                         differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
                                         targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
                                         targetequalstates = self.dropRedundantStateGroupsMild(targetequalstates)
 
                             self.dropRedundantStateGroups(targetequalstates)
-                            #print "TES", targetequalstates, ar, t
+                            #self.logger.debug("TES", targetequalstates, ar, t)
 
                             startstatebins = set(reduce(lambda a, b: StateSet(a | b), (StateSet(targetstatebins[(t, ts)]) for ts in esb)) for esb in targetequalstates)
 
-                            #print "SSB", startstatebins, ar, t
+                            #self.logger.debug("SSB", startstatebins, ar, t)
 
                             newequalstates = self.addStateBins(startstatebins, equalstates)
                             self.dropRedundantStateGroups(newequalstates)
                             if newequalstates != equalstates:
                                 equalstates = newequalstates
                                 again2 = True
-                                #print output.darkred("ES %s" % sorted(equalstates))
+                                #self.logger.debug(output.darkred("ES %s" % sorted(equalstates)))
 
                 assert len(differentpairs) > 0 or not again2, "%s %s %s" % (again2, differentpairs, (len(differentpairs) > 0))
 
@@ -2219,7 +2225,7 @@ class AppGraphGenerator(object):
                     bestset = max((score, s) for score, s in zip(containingsetscores, containingsets))[1]
 
                     self.logger.debug("keep state %s in stateset %s" % (m, bestset))
-                    #print [i for i in zip(containingsetscores, containingsets, reducedcontainingsets)]
+                    #self.logger.debug([i for i in zip(containingsetscores, containingsets, reducedcontainingsets)])
 
                     for (cs, rcs) in zip(containingsets, reducedcontainingsets):
                         if cs != bestset:
@@ -2260,7 +2266,7 @@ class AppGraphGenerator(object):
             [rr.request.method] + list(rr.request.urlvector))]
             for rr in absreq.reqresps]
         debugstop = False
-        print "SCORES", scores
+        self.logger.debug("SCORES %s", scores)
         return max(max(scores))[0]
 
     def pagescore(self, counter, req, dist):
@@ -2282,7 +2288,7 @@ class AppGraphGenerator(object):
                     if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
                         continue
                     else:
-                        #print "DIFFSTATES"
+                        #self.logger.debug("DIFFSTATES")
                         pass
                 self.logger.debug(output.teal("need to split state for request %s")
                         % currtarget)
@@ -2299,11 +2305,11 @@ class AppGraphGenerator(object):
                         self.logger.debug("stopping at %s", req)
                         scores = [(self.reqstatechangescore(pp.req, i), pp)
                             for i, pp in enumerate(pastpages)]
-                        print "PASTPAGES", '\n'.join(str(i) for i in scores)
+                        self.logger.debug("PASTPAGES %s", '\n'.join(str(i) for i in scores))
                         bestcand = max(scores)[1]
-                        print "BESTCAND", bestcand
+                        self.logger.debug("BESTCAND %s", bestcand)
                         #if str(bestcand).find("review") != -1:
-                        #    print self.statechangescores
+                        #    self.logger.debug(self.statechangescores)
                         #    pdb.set_trace()
                         target = bestcand.req.targets[bestcand.cstate]
 #                        if str(bestcand).find("tos") != -1:
@@ -2343,7 +2349,7 @@ class AppGraphGenerator(object):
         tgtchosenlink = None
 
         while True:
-            #print output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap)
+            #self.logger.debug(output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap))
             currtarget = currreq.targets[currstate]
 #            if maxstate >= 75 and str(currreq).find("review") != -1:
 #                pdb.set_trace()
@@ -2355,7 +2361,7 @@ class AppGraphGenerator(object):
             smallerstates = [(s, t) for s, t in currreq.targets.iteritems()
                     if s < currstate and t.target == currtarget.target]
             if smallerstates and any(statemap[t.transition] != s for s, t in smallerstates):
-                #print output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets)
+                #self.logger.debug(output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets))
                 currstate += 1
             else:
                 # find if there are other states that we have already processed that lead to a different target
@@ -2387,18 +2393,18 @@ class AppGraphGenerator(object):
         nstates = lenstatemap
 
         self.logger.debug("statemap states %d", nstates)
-        #print statemap
+        #self.logger.debug(statemap)
 
         self.collapseGraph(statemap)
 
-        #print statemap
+        #self.logger.debug(statemap)
 
         self.mergeStateReqRespMaps(statemap)
 
         self.mergeStatesGreedyColoring(statemap)
         #self.mergeStates(statemap)
 
-        #print statemap
+        #self.logger.debug(statemap)
 
         self.collapseGraph(statemap)
 
@@ -2479,7 +2485,7 @@ class AppGraphGenerator(object):
         for ar in self.absrequests:
             changing = any(s != t.transition for s, t in ar.targets.iteritems())
             if changing:
-                print "CHANGING", ar
+                self.logger.debug("CHANGING %s", ar)
                 for rr in ar.reqresps:
                     rr.request.changingstate = True
 
@@ -2683,7 +2689,7 @@ class Crawler(object):
                         i.setChecked(False)
                 else:
                     i.setValueAttribute(v)
-                print "VALUE %s %s %s" % (i, i.getValueAttribute(), v)
+                self.logger.debug("VALUE %s %s %s" % (i, i.getValueAttribute(), v))
 
         try:
             # find an element to click in order to submit the form
@@ -2691,7 +2697,7 @@ class Crawler(object):
             for submittable in Form.SUBMITTABLES:
                 try:
                     submitter = iform.getOneHtmlElementByAttribute(*submittable)
-                    print "SUBMITTER", submitter
+                    self.logger.debug("SUBMITTER %s", submitter)
                     htmlpage = submitter.click()
                     break
                 except htmlunit.JavaError, e:
@@ -2782,7 +2788,7 @@ class Dist(object):
         #n = (self.val[0], reduce(lambda a, b: a*10 + b, self.val[1:]))
         penalty = sum(self.val)/5
         ret = (self.val[0], penalty, self.val[1:])
-        #print "NORM %s %s" % (self.val, ret)
+        #self.logger.debug("NORM %s %s" % (self.val, ret))
         return ret
 
     def __getitem__(self, i):
@@ -2950,8 +2956,8 @@ class Engine(object):
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
-#        print "COSTS", costs
-        #print "NCOST", [i[0].normalized for i in costs]
+#        self.logger.debug("COSTS", costs)
+        #self.logger.debug("NCOST", [i[0].normalized for i in costs])
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         if priority == 0:
@@ -2976,7 +2982,7 @@ class Engine(object):
         candidates = []
         while heads:
             dist, head, state, headpath = heapq.heappop(heads)
-            print output.yellow("H %s %s %s %s" % (dist, head, state, headpath))
+            self.logger.debug(output.yellow("H %s %s %s %s" % (dist, head, state, headpath)))
 #            if maxstate >= 297 and (str(head).find(r"view.php\?picid=") != -1 or
 #                    str(head).find(r"action=add\?picid=") != -1 or
 #                    str(head).find(r"recent.php") != -1):
@@ -2992,7 +2998,7 @@ class Engine(object):
                 newpath = [PathStep(head, idx, state)] + headpath
 #                if maxstate >= 297 and str(link).find(r"recent.php") != -1:
 #                    pdb.set_trace()
-                #print "state %s targets %s" % (state, link.targets)
+                #self.logger.debug("state %s targets %s" % (state, link.targets))
                 if state in link.targets:
                     linktgt = link.targets[state]
                     if isinstance(linktgt, FormTarget):
@@ -3000,7 +3006,7 @@ class Engine(object):
                     else:
                         nextabsrequests = [(None, linktgt.target)]
                     for formparams, nextabsreq in nextabsrequests:
-                        #print "NEXTABSREQ", nextabsreq
+                        #self.logger.debug("NEXTABSREQ", nextabsreq)
 #                        if maxstate >= 111 and str(nextabsreq).find("review"):
 #                            pdb.set_trace()
                         if state == startstate and nextabsreq.statehints and \
@@ -3025,14 +3031,14 @@ class Engine(object):
                             continue
                         formidx = LinkIdx(idx.type, idx.path, formparams)
                         newdist = dist + self.linkcost(head, formidx, link, state)
-                        #print "TGT %s %s %s" % (tgt, newdist, nextabsreq)
+                        #self.logger.debug("TGT %s %s %s" % (tgt, newdist, nextabsreq))
 #                        if maxstate >= 297 and str(tgt.target).find(r"recent.php") != -1:
 #                            pdb.set_trace()
                         heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     if not unvlinks_added:
                         unvlinks = head.abslinks.getUnvisited(state)
-#                        print "UNVLINKS", "\n\t".join(str(i) for i in unvlinks)
+#                        self.logger.debug("UNVLINKS", "\n\t".join(str(i) for i in unvlinks))
                         if unvlinks:
                             self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
                             unvlinks_added = True
@@ -3041,7 +3047,7 @@ class Engine(object):
                             raise NotImplementedError
         nvisited = len(set(i[0] for i in seen))
         if candidates:
-            print "CAND", candidates
+            self.logger.debug("CAND %s", candidates)
             return candidates[0].path, nvisited
         else:
             return None, nvisited
@@ -3135,9 +3141,9 @@ class Engine(object):
                 if found:
                     break
                 rr = rr.prev
-                #print "RRRR", rr
+                #self.logger.debug("RRRR", rr)
             self.logger.debug("last changing request %s", rr)
-            #print "recentlyseen", recentlyseen
+            #self.logger.debug("recentlyseen", recentlyseen)
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
             if self.ag:
                 self.logger.debug("visited %d/%d abstract pages", nvisited, len(self.ag.abspages))
@@ -3154,7 +3160,7 @@ class Engine(object):
                 assert not self.pathtofollow
                 self.pathtofollow = path
                 nexthop = self.pathtofollow.pop(0)
-                #print nexthop
+                #self.logger.debug(nexthop)
                 assert nexthop.abspage == reqresp.response.page.abspage
                 assert nexthop.state == self.state
                 debug_set.add(nexthop.idx.path[1:])
@@ -3196,7 +3202,7 @@ class Engine(object):
                 self.logger.info(output.red("Unable to add page to current abstract request, reclustering"))
                 raise
             except AppGraphGenerator.AddToAppGraphException, e:
-                print "STATEHINT", reqresp.request, hash(reqresp.request)
+                self.logger.debug("STATEHINT %s %s", reqresp.request, hash(reqresp.request))
                 reqresp.request.statehint = True
                 self.logger.info(output.red("Unable to add page to current application graph, reclustering. %s" % e))
                 raise
@@ -3220,8 +3226,8 @@ class Engine(object):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
             maxstate = -1
             reqresp = cr.open(url)
-            print output.red("TREE %s" % (reqresp.response.page.linkstree,))
-            print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
+            self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
+            self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
             statechangescores = None
             nextAction = self.getNextAction(reqresp)
             while nextAction[0] != Engine.Actions.DONE:
@@ -3239,8 +3245,8 @@ class Engine(object):
                     reqresp = cr.followRedirect(nextAction[1])
                 else:
                     assert False, nextAction
-                print output.red("TREE %s" % (reqresp.response.page.linkstree,))
-                print output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,))
+                self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
+                self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
                 if not nextAction[0] == Engine.Actions.BACK:
                     try:
                         if nextAction[0] == Engine.Actions.FORM:
@@ -3252,7 +3258,7 @@ class Engine(object):
                     except PageMergeException:
                         self.logger.info("need to recompute graph")
                         pc = PageClusterer(cr.headreqresp)
-                        print output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages()))
+                        self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages())))
                         ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(), statechangescores)
                         maxstate = ag.generateAppGraph()
                         self.state = ag.reduceStates()
@@ -3273,7 +3279,7 @@ class Engine(object):
                         while rr:
                             changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
                             #if changing:
-                            #    print output.turquoise("%d(%d)->%d(%d) %s %s" % (rr.request.reducedstate,
+                            #    self.logger.debug(output.turquoise("%d(%d)->%d(%d) %s %s" % (rr.request.reducedstate,)
                             #        rr.request.state, rr.response.page.reducedstate, rr.response.page.state,
                             #        rr.request, rr.response))
                             statechangescores.setapplypath([rr.request.method] + list(rr.request.urlvector),
@@ -3281,17 +3287,17 @@ class Engine(object):
                             rr.request.state = -1
                             rr.response.page.state = -1
                             rr = rr.next
-                        print output.turquoise("statechangescores")
-                        print output.turquoise("%s" % statechangescores)
+                        self.logger.debug(output.turquoise("statechangescores"))
+                        self.logger.debug(output.turquoise("%s" % statechangescores))
 
                         self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
                         #global cond
                         #if cond >= 2: cond += 1
                         ag.fillMissingRequests()
                         for r in sorted(ag.absrequests):
-                            print output.turquoise("%s" % r)
+                            self.logger.debug(output.turquoise("%s" % r))
 
-                        print output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages()))
+                        self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages())))
                         self.pc = pc
                         self.ag = ag
 
@@ -3347,7 +3353,7 @@ class Engine(object):
             for s, t in p.targets.iteritems():
                 if s != t.transition:
                     edge = pydot.Edge(nodes[p], nodes[t.target])
-                    #print "LINK %s => %s" % (p, t.target)
+                    #self.logger.debug("LINK %s => %s" % (p, t.target))
                     edge.set_label("%s->%s" % (s, t.transition))
                     edge.set_color("red")
                     dot.add_edge(edge)
@@ -3421,7 +3427,14 @@ def writeColorableStateGraph(allstates, differentpairs):
 
 if __name__ == "__main__":
     import sys
-    logging.basicConfig(level=logging.DEBUG)
+    import getopt
+    optslist, args = getopt.getopt(sys.argv[1:], "l:")
+    opts = dict(optslist) if optslist else {}
+    try:
+        logging.basicConfig(level=logging.DEBUG, filename=opts['-l'])
+    except KeyError:
+        logging.basicConfig(level=logging.DEBUG)
+
     ff = FormFiller()
     login = {'username': ['ludo'], 'password': ['duuwhe782osjs']}
     ff.add(login)
@@ -3431,7 +3444,7 @@ if __name__ == "__main__":
     ff.add(login)
     e = Engine(ff)
     try:
-        e.main(sys.argv[1:])
+        e.main(args)
     except:
         import traceback
         traceback.print_exc()
