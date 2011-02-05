@@ -1003,8 +1003,8 @@ class DebugDict(dict):
         dict.__init__(self)
 
     def __setitem__(self, k, v):
-        if self.parent == 1471 and k == 46: 
-            pdb.set_trace()
+#        if self.parent == 1471 and k == 46: 
+#            pdb.set_trace()
         dict.__setitem__(self, k, v)
 
 class AbstractRequest(object):
@@ -1478,9 +1478,9 @@ class Score(object):
         self.counter = counter
         self.req = req
         self.dist = dist
-        if str(req.absrequest).find("highqual") != -1:
-            pdb.set_trace()
-        if not req.absrequest.targets:
+#        if repr(req.absrequest).find("highqual") != -1:
+#            pdb.set_trace()
+        if not req.reqresp.response.page.links:
             # XXX if a page is a dead end, assume it cannot cause a state
             # transition this could actually happen, but support for handling it
             # is not in place (i.e. we will have a request from state B, but the
