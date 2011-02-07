@@ -1863,7 +1863,7 @@ class AppGraphGenerator(object):
                             else:
                                 newrequest = self.reqmap.getAbstract(request)
                             #newrequest = self.fillreqmap[request]
-                            self.logger.debug("NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest))
+                            #self.logger.debug("NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest))
                             newrequest.reqresps.append(RequestResponse(request, None))
                         newrequestbuilt = True
                     if newrequest:
@@ -2488,7 +2488,7 @@ class AppGraphGenerator(object):
 
 
     def markChangingState(self):
-        for ar in self.absrequests:
+        for ar in sorted(self.absrequests):
             changing = any(s != t.transition for s, t in ar.targets.iteritems())
             if changing:
                 self.logger.debug("CHANGING %s", ar)
@@ -2738,7 +2738,12 @@ class Crawler(object):
         # htmlunit has not "back" function
         if self.currreqresp.prev is None:
             raise Crawler.EmptyHistory()
-        self.currreqresp = self.currreqresp.prev
+        # use "backto" rather than "prev", because the page pointed by "prev"
+        # might be still page for which we had to call "back()"
+        # backto will point to the page having the link that generated the
+        # current request
+        self.currreqresp = self.currreqresp.backto if self.currreqresp.backto \
+                else self.currreqresp.prev
         return self.currreqresp
 
 def linkweigh(link, nvisits, othernvisits=0, statechange=0):
@@ -2904,9 +2909,9 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
-#        if maxstate >= 158 and \
-#                str(linkidx).find("picid'), (u'add', u'5')") != -1:
-#                pdb.set_trace()
+        if maxstate >= 453 and \
+                str(linkidx).find("add_comment") != -1:
+                pdb.set_trace()
         statechange = 0
         tgt = None
         # must be > 0, as it will also mark the kond of query in the dist vector
@@ -3208,7 +3213,7 @@ class Engine(object):
                 self.logger.info(output.red("Unable to add page to current abstract request, reclustering"))
                 raise
             except AppGraphGenerator.AddToAppGraphException, e:
-                self.logger.debug("STATEHINT %s %s", reqresp.request, hash(reqresp.request))
+                #self.logger.debug("STATEHINT %s", reqresp.request)
                 reqresp.request.statehint = True
                 self.logger.info(output.red("Unable to add page to current application graph, reclustering. %s" % e))
                 raise
