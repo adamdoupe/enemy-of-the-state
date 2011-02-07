@@ -1792,7 +1792,10 @@ class AppGraphGenerator(object):
         # create a map from all requests to their AbstractRequest
         # XXX using the following hash function, requests may overlap
         # we should actually have an heuristic to choose the good one...
-        self.fillreqmap = CustomDict([(rr.request, ar) for ar in sorted(self.absrequests) for rr in ar.reqresps], AbstractRequest, h=lambda r: (r.method, r.path, r.query))
+        self.fillreqmap = CustomDict([(rr.request, ar)
+            for ar in sorted(self.absrequests)
+            for rr in ar.reqresps], AbstractRequest,
+            h=lambda r: (r.method, r.path, r.query))
 
 #        self.buildTmpReqMap()
 
@@ -1800,6 +1803,9 @@ class AppGraphGenerator(object):
             self.fillPageMissingRequests(ap)
 
         self.allabsrequests = set(self.fillreqmap.itervalues())
+        # fillreqmap may not include all requests, i.e. in case of multiple
+        # requests with same hashed value
+        self.allabsrequests |= self.absrequests
         self.absrequests = self.allabsrequests
 
 
@@ -3295,11 +3301,14 @@ class Engine(object):
                         #if cond >= 2: cond += 1
                         ag.fillMissingRequests()
                         for r in sorted(ag.absrequests):
-                            self.logger.debug(output.turquoise("%s" % r))
+                            self.logger.debug(output.turquoise("POSTMISSING %s" % r))
 
                         self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages())))
                         self.pc = pc
                         self.ag = ag
+
+#                        if maxstate >= 196:
+#                            pdb.set_trace()
 
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
@@ -3431,7 +3440,9 @@ if __name__ == "__main__":
     optslist, args = getopt.getopt(sys.argv[1:], "l:")
     opts = dict(optslist) if optslist else {}
     try:
-        logging.basicConfig(level=logging.DEBUG, filename=opts['-l'])
+        handler = logging.FileHandler(opts['-l'], 'w')
+        logging.basicConfig(level=logging.DEBUG, filename=opts['-l'],
+                filemode='w')
     except KeyError:
         logging.basicConfig(level=logging.DEBUG)
 
