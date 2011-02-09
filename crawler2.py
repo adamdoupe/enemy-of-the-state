@@ -1699,25 +1699,25 @@ class AppGraphGenerator(object):
                 # find which link goes to the next request in the history
                 chosenlink = (i for i, l in currpage.links.iteritems() if curr.next in l.to).next()
                 nextabsreq = curr.next.request.absrequest
-                #self.logger.debug(output.green("A %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),)
-                #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
-                # XXX we cannot just use the index for more complex clustering
-                #self.logger.debug("%d %s %s %s" % (laststate, chosenlink, currabspage.abslinks, currabspage))
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 newtgt = ReqTarget(nextabsreq, laststate, nvisits=1)
                 if chosenlink.type == Links.Type.FORM:
-                    #chosenlink = LinkIdx(chosenlink.type, chosenlink.dompath,
-                    #        chosenlink.href, chosenlink.idx,
-                    #        curr.next.request.formparams)
-                    # TODO: for now assume that different FORM requests are not clustered
-                    assert len(set(tuple(sorted((j[0], tuple(j[1])) for j in i.request.formparams.iteritems())) for i in nextabsreq.reqresps)) == 1
-                    tgtdict = {nextabsreq.reqresps[0].request.formparams: newtgt}
+                    chosenlink = LinkIdx(chosenlink.type, chosenlink.path,
+                            curr.next.request.formparams)
+                    ## TODO: for now assume that different FORM requests are not clustered
+                    #assert len(set(tuple(sorted((j[0], tuple(j[1])) for j in i.request.formparams.iteritems())) for i in nextabsreq.reqresps)) == 1
+                    #tgtdict = {nextabsreq.reqresps[0].request.formparams: newtgt}
+                    # we should get the form parameters from the chosenlink
+                    assert chosenlink.params != None
+                    tgtdict = {chosenlink.params: newtgt}
                     newtgt = FormTarget(tgtdict, laststate, nvisits=1)
-                currabspage.abslinks[chosenlink].targets[laststate] = newtgt
+                chosenlinktargets = currabspage.abslinks[chosenlink].targets
+                assert laststate not in chosenlinktargets
+                chosenlinktargets[laststate] = newtgt
                 assert not laststate in currabspage.statelinkmap
-                tgt = currabspage.abslinks[chosenlink].targets[laststate]
+                tgt = newtgt
                 if isinstance(tgt, FormTarget):
-                    currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate].target[nextabsreq.reqresps[0].request.formparams]
+                    currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate].target[chosenlink.params]
                 else:
                     currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate]
 
