@@ -16,8 +16,23 @@ LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
 QUERY_BOOST=0.1
 
-rng = random.Random()
-rng.seed(1)
+class RandGen(random.Random):
+
+    SMALLCASE = ''.join(chr(i) for i in range(ord('a'), ord('z')+1))
+    UPPERCASE = SMALLCASE.upper()
+    LETTERS = SMALLCASE + UPPERCASE
+
+    def __init__(self):
+        random.Random.__init__(self)
+        self.seed(1)
+
+    def getWord(self, length=8):
+        return ''.join(self.choice(RandGen.LETTERS) for i in range(length))
+
+    def getWords(self, num=2, length=8):
+        return ' '.join(self.getWord(length) for i in range(num))
+
+rng = RandGen()
 
 import pydot
 
@@ -432,18 +447,29 @@ class Form(Link):
         return self.inputs + self.textareas + self.selects
 
     def buildFormField(self, e):
-        etype = e.getAttribute('type').lower()
-        name = e.getAttribute('name')
-        value = e.getAttribute('value')
-        if etype == "hidden":
-            type = FormField.Type.HIDDEN
-        elif etype == "text":
-            type = FormField.Type.TEXT
-        elif etype == "checkbox":
-            type = FormField.Type.CHECKBOX
+        tag = e.getTagName().lower()
+        if tag == "input":
+            etype = e.getAttribute('type').lower()
+            name = e.getAttribute('name')
+            value = e.getAttribute('value')
+            if etype == "hidden":
+                type = FormField.Type.HIDDEN
+            elif etype == "text":
+                type = FormField.Type.TEXT
+            elif etype == "checkbox":
+                type = FormField.Type.CHECKBOX
+            else:
+                type = FormField.Type.OTHER
+        elif tag == "textarea":
+            type = FormField.Type.TEXTAREA
+            name = e.getAttribute('name')
+            textarea = htmlunit.HtmlTextArea.cast_(e)
+            value = textarea.getText()
         else:
-            type = FormField.Type.OTHER
+            raise RuntimeError("unexpcted form field tag %s" % tag)
+
         return FormField(type, name, value)
+
 
     @lazyproperty
     def inputnames(self):
@@ -477,8 +503,9 @@ class Form(Link):
 
     @lazyproperty
     def textareas(self):
-        # TODO
-        return []
+        return [self.buildFormField(e)
+                for e in (htmlunit.HtmlElement.cast_(i)
+                    for i in self.internal.getHtmlElementsByTagName('textarea'))]
 
     @lazyproperty
     def selects(self):
@@ -2703,6 +2730,9 @@ class Crawler(object):
                         i.setChecked(True)
                     else:
                         i.setChecked(False)
+                elif htmlunit.HtmlTextArea.instance_(i):
+                    textarea = htmlunit.HtmlTextArea.cast_(i)
+                    textarea.setText(v)
                 else:
                     i.setValueAttribute(v)
                 self.logger.debug("VALUE %s %s %s" % (i, i.getValueAttribute(), v))
@@ -2755,6 +2785,11 @@ class Crawler(object):
         self.currreqresp = self.currreqresp.backto if self.currreqresp.backto \
                 else self.currreqresp.prev
         return self.currreqresp
+
+    @property
+    def steppingback(self):
+        return self.currreqresp != self.lastreqresp
+
 
 def linkweigh(link, nvisits, othernvisits=0, statechange=0):
         if link.type == Links.Type.ANCHOR:
@@ -2817,7 +2852,7 @@ class Dist(object):
 
 class FormField(object):
 
-    Type = Constants("CHECKBOX", "TEXT", "HIDDEN", "OTHER")
+    Type = Constants("CHECKBOX", "TEXT", "HIDDEN", "TEXTAREA", "OTHER")
 
     def __init__(self, type, name, value=None):
         self.type = type
@@ -2865,6 +2900,10 @@ class FormFiller(object):
                 value = rng.choice([f.value, ''])
             elif f.type == FormField.Type.HIDDEN:
                 value = f.value
+            elif f.type == FormField.Type.TEXT:
+                value = rng.getWords()
+            elif f.type == FormField.Type.TEXTAREA:
+                value = rng.getWords(10)
             else:
                 value = ''
             res[f.name].append(value)
@@ -3141,8 +3180,12 @@ class Engine(object):
                 # if we have at least one link, and it is the only one, and it is a redirect, 
                 # then follow it
                 if firstlink and firstlink[0].type == Links.Type.REDIRECT:
-                    self.logger.debug("page contains only a rediect, following it")
-                    return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
+                    if self.cr.steppingback:
+                        self.logger.debug("page contains only a rediect, but we are stepping back; keep stepping back")
+                        return (Engine.Actions.BACK, )
+                    else:
+                        self.logger.debug("page contains only a rediect, following it")
+                        return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
 
             recentlyseen = set()
             rr = reqresp
@@ -3476,6 +3519,8 @@ if __name__ == "__main__":
 
     ff = FormFiller()
     login = {'username': ['ludo'], 'password': ['duuwhe782osjs']}
+    ff.add(login)
+    login = {'adminname': ['admin'], 'password': ['admin']}
     ff.add(login)
     login = {'user': ['ludo'], 'pass': ['ludo']}
     ff.add(login)
