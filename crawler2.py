@@ -1085,8 +1085,13 @@ class ReqTarget(Target):
         Target.__init__(self, target, transition, nvisits)
 
 class FormTarget(Target):
+    """ FormTarget.target is a dictionary containing ReqTarget objects as values
+    and form parameters as keys """
 
     class MultiDict(object):
+        """ The purpos of the MultiDict object is allowing searchin for a
+        key (state) in the ReqTarget.tagets dictionaries of all values of the
+        FormTarget.target dictiornay """
 
         def __init__(self, outer):
             self.outer = outer
@@ -1098,7 +1103,12 @@ class FormTarget(Target):
 
         def __init__(self, outer, d):
             self.targets = FormTarget.MultiDict(outer)
+            assert all(isinstance(i, FormFiller.Params) for i in d)
             dict.__init__(self, d)
+
+        def __setitem__(self, k, v):
+            assert isinstance(k, FormFiller.Params)
+            return dict.__setitem__(k, v)
 
 
     def __init__(self, target, transition, nvisits=0):
@@ -1870,7 +1880,7 @@ class AppGraphGenerator(object):
                         newtgt = ReqTarget(newrequest, transition=s, nvisits=0)
                         if isinstance(l, AbstractForm):
                             # TODO: for now assume that different FORM requests are not clustered
-                            tgtdict = {"": newtgt}
+                            tgtdict = {FormFiller.Params(): newtgt}
                             newtgt = FormTarget(tgtdict, s, nvisits=0)
                         l.targets[s] = newtgt
                         #self.logger.debug(output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest)))
@@ -2909,9 +2919,9 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
-        if maxstate >= 453 and \
-                str(linkidx).find("add_comment") != -1:
-                pdb.set_trace()
+#        if maxstate >= 453 and \
+#                str(linkidx).find("add_comment") != -1:
+#                pdb.set_trace()
         statechange = 0
         tgt = None
         # must be > 0, as it will also mark the kond of query in the dist vector
@@ -2931,6 +2941,8 @@ class Engine(object):
                 nvisits += reqtarget.nvisits
                 statechange = reqtarget.transition != state
 
+        assert linkidx.params == None or isinstance(tgt, FormTarget)
+
         # must be > 0, as it will also mark the kond of query in the dist
         # vector, in case nvisits == 0
         othernvisits = 1
@@ -2942,18 +2954,29 @@ class Engine(object):
             if tgt:
                 # we need to sum only the visits to requests that have the same target
                 # otherwise we might skip exploring them for some states
-                if t.target == tgt.target:
+                if linkidx.params != None and linkidx.params in t.target:
+                    if t.target[linkidx.params].target == tgt.target[linkidx.params].target:
+                        othernvisits += t.target[linkidx.params].nvisits
+                elif t.target == tgt.target:
                     othernvisits += t.nvisits
         # also add visit count for the subsequent request in different states
-        if tgt and not isinstance(tgt, FormTarget):
-            for s, t in tgt.target.targets.iteritems():
-                if s != state:
-                    othernvisits += t.nvisits
-                # if the request has ever caused a change in state, consider it
-                # state chaning even if the state is not the same. This helps
-                # Dijstra stay away from potential state changing requests
-                if s != t.transition:
-                    statechange = True
+        if tgt:
+            if linkidx.params != None:
+                tgt2 = tgt.target[linkidx.params]
+            elif not isinstance(tgt, FormTarget):
+                tgt2 = tgt
+            else:
+                tgt2 = None
+
+            if tgt2:
+                for s, t in tgt2.target.targets.iteritems():
+                    if s != state:
+                        othernvisits += t.nvisits
+                    # if the request has ever caused a change in state, consider it
+                    # state chaning even if the state is not the same. This helps
+                    # Dijstra stay away from potential state changing requests
+                    if s != t.transition:
+                        statechange = True
 
 
         assert link.type == linkidx.type
