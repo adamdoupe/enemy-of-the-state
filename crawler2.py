@@ -2926,7 +2926,7 @@ class Engine(object):
                 targets = tgt.target[linkidx.params].target.targets
             else:
                 targets = tgt.target.targets
-            if tgt.target and state in targets:
+            if state in targets:
                 reqtarget = targets[state]
                 nvisits += reqtarget.nvisits
                 statechange = reqtarget.transition != state
