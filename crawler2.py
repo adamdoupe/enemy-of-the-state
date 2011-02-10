@@ -2333,8 +2333,8 @@ class AppGraphGenerator(object):
                     else:
                         #self.logger.debug("DIFFSTATES")
                         pass
-                self.logger.debug(output.teal("need to split state for request %s")
-                        % currtarget)
+                self.logger.debug(output.teal("need to split state for request %s -> %s")
+                        % (currreq, currtarget))
                 self.logger.debug("\t%d(%d)->%s %d(%d)"
                         % (currstate, currmapsto, currtarget, currtarget.transition, cttransition))
                 self.logger.debug("\t%d(%d)->%s %d(%d)"
@@ -2887,7 +2887,7 @@ class FormFiller(object):
         self.forms = {}
 
     def add(self, k):
-        self.forms[tuple(sorted(i for i in k.iterkeys()))] = k
+        self.forms[tuple(sorted(i for i in k.iterkeys() if i))] = k
 
     def __getitem__(self, k):
         return self.forms[tuple(sorted([i.name for i in k if i.name]))]
@@ -3253,10 +3253,13 @@ class Engine(object):
     def submitForm(self, form):
         formkeys = form.elems
         self.logger.debug("form keys %s", formkeys)
+        # TODO properly support multiple set of possible values for form submission
         try:
             params = self.formfiller[formkeys]
         except KeyError:
             params = self.formfiller.randfill(formkeys)
+            # record this set of form parameters for later use
+            self.formfiller.add(params)
         return self.cr.submitForm(form, params)
 
     def tryMergeInGraph(self, reqresp):
