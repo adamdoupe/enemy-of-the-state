@@ -2730,12 +2730,14 @@ class Crawler(object):
                         i.setChecked(True)
                     else:
                         i.setChecked(False)
-                elif htmlunit.HtmlTextArea.instance_(i):
-                    textarea = htmlunit.HtmlTextArea.cast_(i)
-                    textarea.setText(v)
                 else:
                     i.setValueAttribute(v)
                 self.logger.debug("VALUE %s %s %s" % (i, i.getValueAttribute(), v))
+
+            for i, v in zip(iform.getTextAreasByName(k), vv):
+                textarea = htmlunit.HtmlTextArea.cast_(i)
+                textarea.setText(v)
+                self.logger.debug("VALUE %s %s %s" % (i, i.getText(), v))
 
         try:
             # find an element to click in order to submit the form
