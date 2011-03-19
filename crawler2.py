@@ -3523,7 +3523,7 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.DEBUG)
 
     ff = FormFiller()
-    login = {'username': ['ludo'], 'password': ['duuwhe782osjs']}
+    login = {'username': ['ludo'], 'password': ['ludoludo']}
     ff.add(login)
     login = {'adminname': ['admin'], 'password': ['admin']}
     ff.add(login)
