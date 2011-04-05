@@ -2355,8 +2355,8 @@ class AppGraphGenerator(object):
                         #    self.logger.debug(self.statechangescores)
                         #    pdb.set_trace()
                         target = bestcand.req.targets[bestcand.cstate]
-                        if str(bestcand).find("search") != -1 or str(bestcand).find("/preview") != -1 :
-                            pdb.set_trace()
+#                        if str(bestcand).find("search") != -1 or str(bestcand).find("/preview") != -1 :
+#                            pdb.set_trace()
                         self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                         assert statemap[target.transition] == bestcand.cstate
                         # this request will always change state
@@ -2960,9 +2960,9 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
-        if maxstate >= 37 and \
-                str(linkidx).find("search") != -1:
-                pdb.set_trace()
+#        if maxstate >= 37 and \
+#                str(linkidx).find("search") != -1:
+#                pdb.set_trace()
         statechange = 0
         tgt = None
         # must be > 0, as it will also mark the kond of query in the dist vector
@@ -2974,15 +2974,15 @@ class Engine(object):
             nvisits += linktarget.nvisits
             tgt = linktarget.target
             # also add visit count for the subsequent request
-            if isinstance(tgt, FormTarget):
+            if isinstance(linktarget, FormTarget):
                 if linkidx.params != None:
                     # if we have form parameters, limits the visit count to
                     # froms submitted with that set of parameters
-                    targetslist = [tgt.targets[linkidx.params].target.targets]
+                    targetlist = [tgt[linkidx.params].target.targets]
                 else:
                     # if we do not have form parameters, count all the submitted
                     # forms
-                    targetslist = [i.target.targets for i in tgt.targets.itervalues()]
+                    targetlist = [i.target.targets for i in tgt.itervalues()]
             else:
                 assert isinstance(tgt, AbstractRequest)
                 targetlist = [tgt.targets]
@@ -2999,12 +2999,12 @@ class Engine(object):
         othernvisits = 1
         if tgt:
 
-            assert linkidx.params == None or isinstance(tgt, FormTarget)
+            assert linkidx.params == None or isinstance(linktarget, FormTarget)
 
             # we will count in othernvisits only links leading to the following
             # set of abstract requests
-            if isinstance(tgt, FormTarget):
-                finalabsreqs = frozenset(i.target for i in tgt.targets.itervalues())
+            if isinstance(linktarget, FormTarget):
+                finalabsreqs = frozenset(i.target for i in tgt.itervalues())
             else:
                 finalabsreqs = frozenset([tgt])
 
@@ -3014,11 +3014,11 @@ class Engine(object):
                 # a link should never change state, it is the request that does it!
                 assert t.transition == s
 
-                if isinstance(t.target, FormTarget):
+                if isinstance(t, FormTarget):
                     # add all visits made in any state with any form parameters
                     # that lead to any of the AbstractRequest found for the
                     # current state
-                    for rt in t.target.targets.itervalues():
+                    for rt in t.target.itervalues():
                         assert isinstance(rt, ReqTarget)
                         if rt.target in finalabsreqs:
                             othernvisits += rt.nvisits
@@ -3035,14 +3035,14 @@ class Engine(object):
             # also add visit count for the subsequent request in different states
 
             if linkidx.params != None:
-                tgt2 = tgt.target[linkidx.params]
-            elif not isinstance(tgt, FormTarget):
+                tgt2 = tgt[linkidx.params].target
+            elif not isinstance(linktarget, FormTarget):
                 tgt2 = tgt
             else:
                 tgt2 = None
 
             if tgt2:
-                for s, t in tgt2.target.targets.iteritems():
+                for s, t in tgt2.targets.iteritems():
                     if s != state:
                         othernvisits += t.nvisits
                     # if the request has ever caused a change in state, consider it
