@@ -953,9 +953,13 @@ class AbstractLinks(object):
                 break
         else:
             return i
-        self.logger.debug(output.red("******** PICKING ONE *******"))
-        pdb.set_trace()
-        return i.iterleaves().next()
+        return i
+        items = [j for j in i.iterleaves()]
+        self.logger.debug("path does not match exactly; %d leaves" % len(items))
+        if len(items) > 1:
+            self.logger.debug(output.red("******** PICKING ONE *******"))
+            pdb.set_trace()
+        return items[0]
 
     def __iter__(self):
         return self.linkstree.iterleaves()
