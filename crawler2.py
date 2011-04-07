@@ -2510,23 +2510,30 @@ class AppGraphGenerator(object):
                 else:
                     if goodst in aa.targets:
                         if isinstance(aa, AbstractForm):
-                            common = frozenset(aa.targets[st].target.keys()) & frozenset(aa.targets[goodst].target.keys())
+                            common = frozenset(aa.targets[st].target.keys()) \
+                                    & frozenset(aa.targets[goodst].target.keys())
                             for c in common:
                                 assert aa.targets[st].target[c].target == aa.targets[goodst].target[c].target, \
                                         "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
-                                assert st == goodst or statemap[aa.targets[goodst].target[c].transition] == statemap[aa.targets[st].target[c].transition], \
+                                assert st == goodst or \
+                                        statemap[aa.targets[goodst].target[c].transition] \
+                                        == statemap[aa.targets[st].target[c].transition], \
                                         "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
                                         % (aa, st, aa.targets[st], statemap[aa.targets[st].transition],
-                                                goodst, aa.targets[goodst], statemap[aa.targets[goodst].transition])
+                                                goodst, aa.targets[goodst],
+                                                statemap[aa.targets[goodst].transition])
                             aa.targets[goodst].nvisits += aa.targets[st].nvisits
                             aa.targets[goodst].target.update(aa.targets[st].target)
                         else:
                             assert aa.targets[st].target == aa.targets[goodst].target, \
                                     "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
-                            assert st == goodst or statemap[aa.targets[goodst].transition] == statemap[aa.targets[st].transition], \
+                            assert st == goodst or \
+                                    statemap[aa.targets[goodst].transition] == \
+                                    statemap[aa.targets[st].transition], \
                                     "%s\n\t%d->%s (%d)\n\t%d->%s (%d)" \
                                     % (aa, st, aa.targets[st], statemap[aa.targets[st].transition],
-                                            goodst, aa.targets[goodst], statemap[aa.targets[goodst].transition])
+                                            goodst, aa.targets[goodst],
+                                            statemap[aa.targets[goodst].transition])
                             aa.targets[goodst].nvisits += aa.targets[st].nvisits
                     else:
                         aa.targets[goodst] = aa.targets[st]
