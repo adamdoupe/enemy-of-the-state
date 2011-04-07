@@ -21,6 +21,8 @@ class RandGen(random.Random):
     SMALLCASE = ''.join(chr(i) for i in range(ord('a'), ord('z')+1))
     UPPERCASE = SMALLCASE.upper()
     LETTERS = SMALLCASE + UPPERCASE
+    NUMBERS = ''.join(chr(i) for i in range(ord('0'), ord('9')+1))
+    ALPHANUMERIC = LETTERS + NUMBERS
 
     def __init__(self):
         random.Random.__init__(self)
@@ -31,6 +33,18 @@ class RandGen(random.Random):
 
     def getWords(self, num=2, length=8):
         return ' '.join(self.getWord(length) for i in range(num))
+
+    def getPassword(self, length=8):
+        # make sure we have at least one for each category (A a 0)
+        password = [self.choice(RandGen.SMALLCASE)] + \
+                [self.choice(RandGen.UPPERCASE)] + \
+                [self.choice(RandGen.NUMBERS)]
+        password += [self.choice(RandGen.LETTERS)
+                for i in range(length-len(password))]
+        self.shuffle(password)
+        return ''.join(password)
+
+
 
 rng = RandGen()
 
@@ -456,6 +470,8 @@ class Form(Link):
                 type = FormField.Type.HIDDEN
             elif etype == "text":
                 type = FormField.Type.TEXT
+            elif etype == "password":
+                type = FormField.Type.PASSWORD
             elif etype == "checkbox":
                 type = FormField.Type.CHECKBOX
             else:
@@ -2854,7 +2870,7 @@ class Dist(object):
 
 class FormField(object):
 
-    Type = Constants("CHECKBOX", "TEXT", "HIDDEN", "TEXTAREA", "OTHER")
+    Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "TEXTAREA", "OTHER")
 
     def __init__(self, type, name, value=None):
         self.type = type
@@ -2897,6 +2913,7 @@ class FormFiller(object):
     def randfill(self, keys):
         self.logger.debug("random filling from")
         res = defaultdict(list)
+        password = None
         for f in keys:
             if f.type == FormField.Type.CHECKBOX:
                 value = rng.choice([f.value, ''])
@@ -2904,6 +2921,10 @@ class FormFiller(object):
                 value = f.value
             elif f.type == FormField.Type.TEXT:
                 value = rng.getWords()
+            elif f.type == FormField.Type.PASSWORD:
+                if password is None:
+                    password = rng.getPassword()
+                value = password
             elif f.type == FormField.Type.TEXTAREA:
                 value = rng.getWords(10)
             else:
