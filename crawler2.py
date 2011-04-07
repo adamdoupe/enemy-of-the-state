@@ -2329,7 +2329,7 @@ class AppGraphGenerator(object):
             [rr.request.method] + list(rr.request.urlvector))]
             for rr in absreq.reqresps]
         debugstop = False
-        self.logger.debug("SCORES %s", scores)
+#        self.logger.debug("SCORES %s", scores)
         return max(max(scores))[0]
 
     def pagescore(self, counter, req, dist):
@@ -2368,7 +2368,7 @@ class AppGraphGenerator(object):
                         self.logger.debug("stopping at %s", req)
                         scores = [(self.reqstatechangescore(pp.req, i), pp)
                             for i, pp in enumerate(pastpages)]
-                        self.logger.debug("PASTPAGES %s", '\n'.join(str(i) for i in scores))
+#                        self.logger.debug("PASTPAGES %s", '\n'.join(str(i) for i in scores))
                         bestcand = max(scores)[1]
                         self.logger.debug("BESTCAND %s", bestcand)
                         #if str(bestcand).find("review") != -1:
