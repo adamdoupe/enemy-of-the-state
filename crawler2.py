@@ -843,7 +843,7 @@ class Links(object):
 
     @lazyproperty
     def _str(self):
-        return "Links(%s, %s, %s)" % (self.nAnchors, self.nForms, self.nRedirects)
+        return "Links(%s, %s, %s)" % (self.nAnchors(), self.nForms(), self.nRedirects())
 
     def __str__(self):
         return self._str
@@ -914,7 +914,7 @@ class AbstractLinks(object):
                         for lll in ll)
 
     def tryMergeLinkstree(self, pagelinkstree):
-        # check if the linkstree pagelinkstree matches teh current linkstree for
+        # check if the linkstree pagelinkstree matches the current linkstree for
         # the current AbstractPage. If not, raise an exception and go back to
         # reclustering
         for t, c in [(Links.Type.ANCHOR, AbstractAnchor),
@@ -969,7 +969,17 @@ class AbstractLinks(object):
 
     def iteritems(self):
         for p, l in self.linkstree.iteridxleaves():
-            yield (LinkIdx(p[0], p[1:], None), l)
+            if isinstance(l, AbstractForm):
+                # return a form multiple times, iterating over all form parameters we have used so far
+                params = frozenset(b for a in l.targets.itervalues() for b in a.target.iterkeys())
+                if params:
+                    for pr in params:
+                        yield (LinkIdx(p[0], p[1:], pr), l)
+                else:
+                    yield (LinkIdx(p[0], p[1:], None), l)
+
+            else:
+                yield (LinkIdx(p[0], p[1:], None), l)
 
     def getUnvisited(self, state):
         #self.printInfo()
@@ -2789,8 +2799,8 @@ class Crawler(object):
 
             htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
             reqresp = self.newPage(htmlpage)
-            assert params
-            reqresp.request.formparams = FormFiller.Params(params)
+            assert isinstance(params, FormFiller.Params)
+            reqresp.request.formparams = params
 
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
@@ -2905,26 +2915,44 @@ class FormFiller(object):
     class Params(defaultdict):
 
         def __init__(self, init={}):
-            defaultdict.__init__(self)
+            defaultdict.__init__(self, list)
             self.update(init)
 
         def __hash__(self):
             return hash(tuple(sorted((i[0], tuple(i[1])) for i in self.iteritems())))
 
+        def __str__(self):
+            return defaultdict.__str__(self).replace("defaultdict", "Params")
+
+        def __repr__(self):
+            return defaultdict.__repr__(self).replace("defaultdict", "Params")
+
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.forms = {}
+        self.forms = defaultdict(list)
 
     def add(self, k):
-        self.forms[tuple(sorted(i for i in k.iterkeys() if i))] = k
+        keys = (key for key, vals in k.iteritems() for i in range(len(vals)) if key)
+        self.forms[tuple(sorted(keys))].append(k)
 
     def __getitem__(self, k):
         return self.forms[tuple(sorted([i.name for i in k if i.name]))]
 
-    def randfill(self, keys):
-        self.logger.debug("random filling from")
-        res = defaultdict(list)
+    def emptyfill(self, keys):
+        self.logger.debug("empty filling")
+        res = FormFiller.Params()
+        for f in keys:
+            if f.type == FormField.Type.HIDDEN:
+                value = f.value
+            else:
+                res[f.name].append("")
+        return res
+
+    def randfill(self, keys, samepass=False):
+        self.logger.debug("random filling from (samepass=%s)", samepass)
+        res = FormFiller.Params()
         password = None
+        multiplepass = False
         for f in keys:
             if f.type == FormField.Type.CHECKBOX:
                 value = rng.choice([f.value, ''])
@@ -2933,15 +2961,24 @@ class FormFiller(object):
             elif f.type == FormField.Type.TEXT:
                 value = rng.getWords()
             elif f.type == FormField.Type.PASSWORD:
-                if password is None:
+                if password is None or not samepass:
                     password = rng.getPassword()
+                else:
+                    multiplepass = True
                 value = password
             elif f.type == FormField.Type.TEXTAREA:
                 value = rng.getWords(10)
             else:
                 value = ''
             res[f.name].append(value)
+        if samepass and not multiplepass:
+            # if we were asked to use the same password, but there were no muitple password fields, return None
+            return None
         return res
+
+    def getrandparams(self, keys):
+        return rng.choice(self[keys])
+
 
 
 class ParamDefaultDict(defaultdict):
@@ -3111,6 +3148,8 @@ class Engine(object):
 #            pdb.set_trace()
 #        if mincost[1].path[1:] in debug_set:
 #            pdb.set_trace()
+#        if not mincost[1].params and mincost[1].params is not None:
+#            pdb.set_trace()
         heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
@@ -3152,13 +3191,17 @@ class Engine(object):
                                 not nextabsreq in recentlyseen:
                             # this is a page known to be revealing of possible state change
                             # go there first, priority=-1 !
-                            formidx = LinkIdx(idx.type, idx.path, formparams)
+                            # do not pass form parameters, as this is an
+                            # unvisited link and we want to pick random values
+                            formidx = LinkIdx(idx.type, idx.path, None)
                             self.addUnvisisted(dist, head, state, headpath,
                                     [(formidx, link)], candidates, -1)
                         # the request associated to this link has never been
                         # made in the current state, add it as unvisited
                         if state not in nextabsreq.targets:
-                            formidx = LinkIdx(idx.type, idx.path, formparams)
+                            # do not pass form parameters, as this is an
+                            # unvisited link and we want to pick random values
+                            formidx = LinkIdx(idx.type, idx.path, None)
                             self.addUnvisisted(dist, head, state, headpath,
                                     [(formidx, link)], candidates, 0)
                             continue
@@ -3220,7 +3263,8 @@ class Engine(object):
                 if nexthop.idx is None:
                     assert not self.pathtofollow
                 else:
-                    return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx])
+                    # pass the index too, in case there are some form parameters specified
+                    return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
         if self.followingpath and not self.pathtofollow:
             self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
             self.followingpath = False
@@ -3306,7 +3350,8 @@ class Engine(object):
                 assert nexthop.abspage == reqresp.response.page.abspage
                 assert nexthop.state == self.state
                 debug_set.add(nexthop.idx.path[1:])
-                return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx])
+                # pass the index too, in case there are some form parameters specified
+                return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
             elif self.ag and float(nvisited)/len(self.ag.abspages) > 0.9:
                 # we can reach almost everywhere form the current page, still we cannot find unvisited links
                 # very likely we visited all the pages or we can no longer go back to some older states anyway
@@ -3315,17 +3360,25 @@ class Engine(object):
         # no path found, step back
         return (Engine.Actions.BACK, )
 
-    def submitForm(self, form):
-        formkeys = form.elems
-        self.logger.debug("form keys %s", formkeys)
-        # TODO properly support multiple set of possible values for form submission
-        try:
-            params = self.formfiller[formkeys]
-        except KeyError:
-            params = self.formfiller.randfill(formkeys)
-            # record this set of form parameters for later use
-            self.formfiller.add(params)
-        return self.cr.submitForm(form, params)
+    def submitForm(self, form, params):
+        if params is None:
+            formkeys = form.elems
+            self.logger.debug("form keys %s", formkeys)
+            try:
+                submitparams = self.formfiller.getrandparams(formkeys)
+            except IndexError:
+                for p in [self.formfiller.emptyfill(formkeys), \
+                        self.formfiller.randfill(formkeys),
+                        self.formfiller.randfill(formkeys, samepass=True)]:
+                    # record this set of form parameters for later use
+                    if p is not None:
+                        self.formfiller.add(p)
+                submitparams = self.formfiller.getrandparams(formkeys)
+        else:
+            self.logger.debug("specified form params %s", params)
+            submitparams = params
+#            pdb.set_trace()
+        return self.cr.submitForm(form, submitparams)
 
     def tryMergeInGraph(self, reqresp):
         if self.pc:
@@ -3380,7 +3433,8 @@ class Engine(object):
                     reqresp = cr.click(nextAction[1])
                 elif nextAction[0] == Engine.Actions.FORM:
                     try:
-                        reqresp = self.submitForm(nextAction[1])
+                        # pass form and parameters
+                        reqresp = self.submitForm(nextAction[1], nextAction[2].params)
                     except Crawler.UnsubmittableForm:
                         nextAction[1].skip = True
                         nextAction = self.getNextAction(reqresp)
