@@ -2763,7 +2763,8 @@ class Crawler(object):
             for i, v in zip(iform.getInputsByName(k), vv):
                 if htmlunit.HtmlCheckBoxInput.instance_(i):
                     if v:
-                        assert i.getValueAttribute() == v
+                        # XXX if we really care, we should move the value of input checkboxes into the key name
+                        #assert i.getValueAttribute() == v
                         i.setChecked(True)
                     else:
                         i.setChecked(False)
