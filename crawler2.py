@@ -1592,7 +1592,6 @@ class AppGraphGenerator(object):
     class AddToAbstractRequestException(PageMergeException):
         def __init__(self, msg=None):
             PageMergeException.__init__(self, msg)
-        pass
 
     class AddToAppGraphException(PageMergeException):
         def __init__(self, msg=None):
@@ -1732,12 +1731,13 @@ class AppGraphGenerator(object):
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 newtgt = ReqTarget(nextabsreq, laststate, nvisits=1)
                 if chosenlink.type == Links.Type.FORM:
+#                    pdb.set_trace()
                     chosenlink = LinkIdx(chosenlink.type, chosenlink.path,
                             curr.next.request.formparams)
                     ## TODO: for now assume that different FORM requests are not clustered
                     #assert len(set(tuple(sorted((j[0], tuple(j[1])) for j in i.request.formparams.iteritems())) for i in nextabsreq.reqresps)) == 1
                     #tgtdict = {nextabsreq.reqresps[0].request.formparams: newtgt}
-                    # we should get the form parameters from the chosenlink
+                    # we should get the form parameters from the chosenlink, 
                     assert chosenlink.params != None
                     tgtdict = {chosenlink.params: newtgt}
                     newtgt = FormTarget(tgtdict, laststate, nvisits=1)
@@ -2637,7 +2637,8 @@ class Crawler(object):
         else:
             fqurl = redirect.location
         try:
-            htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(fqurl))
+            page = self.webclient.getPage(fqurl)
+            htmlpage = htmlunit.HtmlPage.cast_(page)
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
         except TypeError, e:
@@ -2739,7 +2740,8 @@ class Crawler(object):
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
-            htmlpage = htmlunit.HtmlPage.cast_(anchor.internal.click())
+            page = anchor.internal.click()
+            htmlpage = htmlunit.HtmlPage.cast_(page)
             reqresp = self.newPage(htmlpage)
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
@@ -2801,13 +2803,13 @@ class Crawler(object):
             htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
             reqresp = self.newPage(htmlpage)
             assert isinstance(params, FormFiller.Params)
-            reqresp.request.formparams = params
 
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
         except TypeError, e:
             reqresp = self.handleNavigationException(e)
 
+        reqresp.request.formparams = params
         form.to.append(reqresp)
         assert reqresp.request.fullpath.split('?')[0][-len(form.action):] == form.action.split('?')[0], \
                 "Unhandled redirect %s !sub %s" % (form.action, reqresp.request.fullpath)
@@ -2928,13 +2930,31 @@ class FormFiller(object):
         def __repr__(self):
             return defaultdict.__repr__(self).replace("defaultdict", "Params")
 
+        @lazyproperty
+        def sortedkeys(self):
+            keys = (key for key, vals in self.iteritems() for i in range(len(vals)) if key)
+            return tuple(sorted(keys))
+
+    class ValuesList(list):
+
+        @lazyproperty
+        def generator(self):
+            while True:
+                values = self[:]
+                rng.shuffle(values)
+                for p in values:
+                    yield p
+
+        def getnext(self):
+            #pdb.set_trace()
+            return self.generator.next()
+
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.forms = defaultdict(list)
+        self.forms = defaultdict(FormFiller.ValuesList)
 
     def add(self, k):
-        keys = (key for key, vals in k.iteritems() for i in range(len(vals)) if key)
-        self.forms[tuple(sorted(keys))].append(k)
+        self.forms[k.sortedkeys].append(k)
 
     def __getitem__(self, k):
         return self.forms[tuple(sorted([i.name for i in k if i.name]))]
@@ -2978,7 +2998,10 @@ class FormFiller(object):
         return res
 
     def getrandparams(self, keys):
-        return rng.choice(self[keys])
+        values = self[keys]
+        if not values:
+            return None
+        return values.getnext()
 
 
 
@@ -3160,13 +3183,11 @@ class Engine(object):
         candidates = []
         while heads:
             dist, head, state, headpath = heapq.heappop(heads)
-            self.logger.debug(output.yellow("H %s %s %s %s" % (dist, head, state, headpath)))
-#            if maxstate >= 297 and (str(head).find(r"view.php\?picid=") != -1 or
-#                    str(head).find(r"action=add\?picid=") != -1 or
-#                    str(head).find(r"recent.php") != -1):
-#                pdb.set_trace()
             if (head, state) in seen:
                 continue
+            self.logger.debug(output.yellow("H %s %s %s %s" % (dist, head, state, headpath)))
+#            if maxstate >= 89 and str(head).find(r"GET /users/login.php") != -1:
+#                pdb.set_trace()
             seen.add((head, state))
             #head.abslinks.printInfo()
             unvlinks_added = False
@@ -3180,6 +3201,8 @@ class Engine(object):
                 if state in link.targets:
                     linktgt = link.targets[state]
                     if isinstance(linktgt, FormTarget):
+#                        if maxstate >= 89 and str(head).find(r"GET /users/login.php") != -1:
+#                            pdb.set_trace()
                         nextabsrequests = [(p, i.target) for p, i in linktgt.target.iteritems()]
                     else:
                         nextabsrequests = [(None, linktgt.target)]
@@ -3365,9 +3388,8 @@ class Engine(object):
         if params is None:
             formkeys = form.elems
             self.logger.debug("form keys %s", formkeys)
-            try:
-                submitparams = self.formfiller.getrandparams(formkeys)
-            except IndexError:
+            submitparams = self.formfiller.getrandparams(formkeys)
+            if not submitparams:
                 for p in [self.formfiller.emptyfill(formkeys), \
                         self.formfiller.randfill(formkeys),
                         self.formfiller.randfill(formkeys, samepass=True)]:
@@ -3375,6 +3397,7 @@ class Engine(object):
                     if p is not None:
                         self.formfiller.add(p)
                 submitparams = self.formfiller.getrandparams(formkeys)
+                assert submitparams
         else:
             self.logger.debug("specified form params %s", params)
             submitparams = params
@@ -3641,13 +3664,13 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.DEBUG)
 
     ff = FormFiller()
-    login = {'username': ['ludo'], 'password': ['ludoludo']}
+    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo']})
     ff.add(login)
-    login = {'adminname': ['admin'], 'password': ['admin']}
+    login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
     ff.add(login)
-    login = {'user': ['ludo'], 'pass': ['ludo']}
+    login = FormFiller.Params({'user': ['ludo'], 'pass': ['ludo']})
     ff.add(login)
-    login = {'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]}
+    login = FormFiller.Params({'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]})
     ff.add(login)
     e = Engine(ff)
     try:
