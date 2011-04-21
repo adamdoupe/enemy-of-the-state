@@ -2912,6 +2912,18 @@ class FormField(object):
         return "FormField(%s %s=%s)" % (self.type, self.name, self.value)
 
 
+class FormDB(dict):
+
+    class Submitted(object):
+
+        def __init__(self, values, action):
+            self.values = values
+            self.action = action
+
+        def add(self, formfields, action):
+            self[formfields.sortedkeys] = FormDB.Submitted(formfields, action)
+
+
 
 class FormFiller(object):
 
