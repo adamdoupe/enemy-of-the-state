@@ -1159,12 +1159,16 @@ class FormTarget(Target):
     class Dict(dict):
 
         def __init__(self, outer, d):
+            self.outer = outer
             self.targets = FormTarget.MultiDict(outer)
             assert all(isinstance(i, FormFiller.Params) for i in d)
             dict.__init__(self, d)
 
         def __setitem__(self, k, v):
             assert isinstance(k, FormFiller.Params)
+            assert isinstance(v, ReqTarget)
+            # a ReqTarget should never cause a state transition
+            assert self.outer.transition == v.tranistion
             return dict.__setitem__(k, v)
 
 
@@ -2513,10 +2517,17 @@ class AppGraphGenerator(object):
 
     def collapseNode(self, nodes, statemap):
         for aa in nodes:
+#            if maxstate >= 58 and str(aa).find("POST /users/login.php") != -1:
+#                pdb.set_trace()
             statereduce = [(st, statemap[st]) for st in aa.targets]
             for st, goodst in statereduce:
                 if st == goodst:
                     aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
+                    if isinstance(aa, AbstractForm):
+                        intgt = aa.targets[goodst].target
+                        for rt in intgt.itervalues():
+                            assert isinstance(rt, ReqTarget)
+                            rt.transition = statemap[rt.transition]
                 else:
                     if goodst in aa.targets:
                         if isinstance(aa, AbstractForm):
@@ -2534,6 +2545,13 @@ class AppGraphGenerator(object):
                                                 statemap[aa.targets[goodst].transition])
                             aa.targets[goodst].nvisits += aa.targets[st].nvisits
                             aa.targets[goodst].target.update(aa.targets[st].target)
+                            # in this case, as we are merging the ReqTargets in the FormTarget
+                            # we need to update the ReqTarget.transition fields
+                            intgt = aa.targets[goodst].target
+                            for rt in intgt.itervalues():
+                                assert isinstance(rt, ReqTarget)
+                                rt.transition = statemap[rt.transition]
+
                         else:
                             assert aa.targets[st].target == aa.targets[goodst].target, \
                                     "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
@@ -2549,6 +2567,11 @@ class AppGraphGenerator(object):
                         aa.targets[goodst] = aa.targets[st]
                         # also map transition state to the reduced one
                         aa.targets[goodst].transition = statemap[aa.targets[goodst].transition]
+                        if isinstance(aa, AbstractForm):
+                            intgt = aa.targets[goodst].target
+                            for rt in intgt.itervalues():
+                                assert isinstance(rt, ReqTarget)
+                                rt.transition = statemap[rt.transition]
                     del aa.targets[st]
 
     def collapseGraph(self, statemap):
@@ -2833,7 +2856,8 @@ class Crawler(object):
         return self.currreqresp != self.lastreqresp
 
 
-def linkweigh(link, nvisits, othernvisits=0, statechange=0):
+def linkweigh(link, nvisits, othernvisits=0, statechange=False):
+        statechange = 1 if statechange else 0
         if link.type == Links.Type.ANCHOR:
             if link.hasquery:
                 dist = Dist((statechange, 0, 0, 0, 0, nvisits, othernvisits, 0, 0, 0, 0))
@@ -3065,10 +3089,10 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
-#        if maxstate >= 37 and \
-#                str(linkidx).find("search") != -1:
+#        if maxstate >= 300 and \
+#                str(linkidx).find("add_comment") != -1:
 #                pdb.set_trace()
-        statechange = 0
+        statechange = False
         tgt = None
         # must be > 0, as it will also mark the kond of query in the dist vector
         nvisits = 1
@@ -3097,7 +3121,8 @@ class Engine(object):
                     pagetarget = targets[state]
                     assert isinstance(pagetarget, PageTarget)
                     nvisits += pagetarget.nvisits
-                    statechange = pagetarget.transition != state
+                    if pagetarget.transition != state:
+                        statechange = True
 
         # must be > 0, as it will also mark the kind of query in the dist
         # vector, in case nvisits == 0
@@ -3125,6 +3150,8 @@ class Engine(object):
                     # current state
                     for rt in t.target.itervalues():
                         assert isinstance(rt, ReqTarget)
+                        # a ReqTarget should never cause a state transition
+                        assert rt.transition == s
                         if rt.target in finalabsreqs:
                             othernvisits += rt.nvisits
                 else:
