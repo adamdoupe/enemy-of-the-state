@@ -3089,7 +3089,7 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
-#        if maxstate >= 300 and \
+#        if maxstate >= 414 and \
 #                str(linkidx).find("add_comment") != -1:
 #                pdb.set_trace()
         statechange = False
@@ -3167,14 +3167,16 @@ class Engine(object):
             # also add visit count for the subsequent request in different states
 
             if linkidx.params != None:
-                tgt2 = tgt[linkidx.params].target
+                tgt2 = [tgt[linkidx.params].target]
             elif not isinstance(linktarget, FormTarget):
-                tgt2 = tgt
+                tgt2 = [tgt]
             else:
-                tgt2 = None
+                # iterate over all AbstractRequests in ReqTargets
+                tgt2 = (i.target for i in tgt.itervalues())
 
-            if tgt2:
-                for s, t in tgt2.targets.iteritems():
+            for tgt3 in tgt2:
+                assert isinstance(tgt3, AbstractRequest)
+                for s, t in tgt3.targets.iteritems():
                     if s != state:
                         othernvisits += t.nvisits
                     # if the request has ever caused a change in state, consider it
