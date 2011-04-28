@@ -1371,7 +1371,7 @@ class PageClusterer(object):
 
                 # require some diversity in the dom path in order to create a link
 #                self.logger.debug("========", n, len(k), k, level)
-                if nleaves >= med and nleaves > 330*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
+                if nleaves >= med and nleaves > 15*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
                         and v.depth <= n:
                     v.clusterable = True
                     level.clusterable = False
@@ -1390,7 +1390,7 @@ class PageClusterer(object):
             # requrire more than X pages in a cluster
 
             # require some diversity in the dom path in order to create a link
-            if nleaves >= med and nleaves > 330*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
+            if nleaves >= med and nleaves > 15*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
                     and v.depth <= n:
                 v.newclusterable = True
                 level.newclusterable = False
@@ -3493,6 +3493,7 @@ class Engine(object):
             self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
             statechangescores = None
             nextAction = self.getNextAction(reqresp)
+            sinceclustered = 0
             while nextAction[0] != Engine.Actions.DONE:
                 if nextAction[0] == Engine.Actions.ANCHOR:
                     reqresp = cr.click(nextAction[1])
@@ -3513,14 +3514,16 @@ class Engine(object):
                 self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
                 if not nextAction[0] == Engine.Actions.BACK:
                     try:
-                        if nextAction[0] == Engine.Actions.FORM:
+                        if nextAction[0] == Engine.Actions.FORM or sinceclustered > 15:
                             # do not even try to merge forms
                             raise PageMergeException()
                         self.state = self.tryMergeInGraph(reqresp)
                         maxstate += 1
                         self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
+                        sinceclustered += 1
                     except PageMergeException:
                         self.logger.info("need to recompute graph")
+                        sinceclustered = 0
                         pc = PageClusterer(cr.headreqresp)
                         self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages())))
                         ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(), statechangescores)
