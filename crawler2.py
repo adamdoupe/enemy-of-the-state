@@ -860,9 +860,10 @@ class Links(object):
         if val.nleaves > 1:
             self.logger.debug(output.red("******** PICKING ONE *******"))
             pdb.set_trace()
-        assert val.value
+        if not val.value:
+            self.logger.debug(output.red("******** INCOMPLETE PATH %s *******"), linkidx)
         ret = val.iterleaves().next()
-        assert val.value == ret
+        assert not val.value or val.value == ret
         assert isinstance(ret, list)
         if len(ret) > 1:
             self.logger.debug(output.red("******** PICKING ONE *******"))
@@ -3114,7 +3115,7 @@ class Engine(object):
             tgt = linktarget.target
             # also add visit count for the subsequent request
             if isinstance(linktarget, FormTarget):
-                if linkidx.params != None:
+                if linkidx.params != None and linkidx.params in tgt:
                     # if we have form parameters, limits the visit count to
                     # froms submitted with that set of parameters
                     targetlist = [tgt[linkidx.params].target.targets]
@@ -3176,7 +3177,7 @@ class Engine(object):
 
             # also add visit count for the subsequent request in different states
 
-            if linkidx.params != None:
+            if linkidx.params != None and linkidx.params in tgt:
                 tgt2 = [tgt[linkidx.params].target]
             elif not isinstance(linktarget, FormTarget):
                 tgt2 = [tgt]
@@ -3478,6 +3479,9 @@ class Engine(object):
                 #self.logger.debug("STATEHINT %s", reqresp.request)
                 reqresp.request.statehint = True
                 self.logger.info(output.red("Unable to add page to current application graph, reclustering. %s" % e))
+                raise
+            except AppGraphGenerator.MergeLinksTreeException, e:
+                self.logger.info(output.red("Unable to merge page into current linkstree, reclustering. %s" % e))
                 raise
             except PageMergeException, e:
                 raise RuntimeError("uncaught PageMergeException %s" % e)
