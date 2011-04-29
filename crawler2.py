@@ -113,13 +113,14 @@ class Constants(object):
             setattr(self, a, a)
 
 class RecursiveDict(defaultdict):
-    def __init__(self, nleavesfunc=lambda x: 1, nleavesaggregator=sum):
+    def __init__(self, nleavesfunc=lambda x: 1 if x else 0, nleavesaggregator=sum):
         # when counting leaves, apply this function to non RecursiveDict objects
         self.nleavesfunc = nleavesfunc
         self.nleavesaggregator = nleavesaggregator
         self._nleaves = None
         # XXX no more general :(
         self.abspages = {}
+        self.value = None
 
     def __missing__(self, key):
         v = RecursiveDict(nleavesfunc=self.nleavesfunc, nleavesaggregator=self.nleavesaggregator)
@@ -131,8 +132,12 @@ class RecursiveDict(defaultdict):
     @property
     def nleaves(self):
         if self._nleaves is None:
-            self._nleaves = self.nleavesaggregator(i.nleaves if isinstance(i, RecursiveDict) else self.nleavesfunc(i)
-                    for i in self.itervalues())
+            iters = (i.nleaves for i in self.itervalues())
+            if self.value:
+                iters = itertools.chain(
+                    iters, iter([self.nleavesfunc(self.value)]))
+            self._nleaves = self.nleavesaggregator(iters)
+        assert self._nleaves
         return self._nleaves
 
     def getpath(self, path):
@@ -150,13 +155,11 @@ class RecursiveDict(defaultdict):
                 break
             else:
                 i = i[p]
-                if not isinstance(i, RecursiveDict):
-                    yield i
-                    break
                 yield i.nleaves
 
 
     def setpath(self, path, value):
+        assert value
         i = self
         # invalidate leaves count
         i._nleaves = None
@@ -166,9 +169,10 @@ class RecursiveDict(defaultdict):
             i._nleaves = None
 #        if str(path[-1]).find("logout") != -1 and debugstop:
 #            pdb.set_trace()
-        i[path[-1]] = value
+        i[path[-1]].value = value
 
     def applypath(self, path, func):
+        """ apply func to the node pointed to by path """
         i = self
         # invalidate leaves count
         i._nleaves = None
@@ -179,8 +183,12 @@ class RecursiveDict(defaultdict):
 #        if str(path[-1]).find("logout") != -1 and debugstop:
 #            pdb.set_trace()
         i[path[-1]] = func(i[path[-1]])
+        assert i[path[-1]]
 
-    def setapplypath(self, path, value, func):
+    def setapplypathvalue(self, path, value, func):
+        """ apply func to the value of the node pointed to by path,
+        or assign value if the path does not exist """
+        assert value
         i = self
         # invalidate leaves count
         i._nleaves = None
@@ -191,9 +199,10 @@ class RecursiveDict(defaultdict):
 #        if str(path[-1]).find("logout") != -1 and debugstop:
 #            pdb.set_trace()
         if path[-1] in i:
-            i[path[-1]] = func(i[path[-1]])
+            i[path[-1]].value = func(i[path[-1]].value)
         else:
-            i[path[-1]] = value
+            i[path[-1]].value = value
+        assert i[path[-1]].value
 
     def iterlevels(self):
         if self:
@@ -203,50 +212,45 @@ class RecursiveDict(defaultdict):
                 levelkeys = []
                 children = []
                 for c in l:
-                    if isinstance(c, RecursiveDict):
-                        levelkeys.extend(c.iterkeys())
-                        children.extend(c.itervalues())
-                    else:
-                        levelkeys.append(self.nleavesfunc(c))
+                    if c.value:
+                        levelkeys.append(self.nleavesfunc(c.value))
+                    levelkeys.extend(c.iterkeys())
+                    children.extend(c.itervalues())
                 if children:
                     queue.append(children)
                 #self.logger.debug("LK", len(queue), levelkeys, queue)
                 yield levelkeys
 
     def iterleaves(self):
-        if self:
-            for c in self.itervalues():
-                if isinstance(c, RecursiveDict):
-                    for i in c.iterleaves():
-                        yield i
-                else:
-                    yield c
+        if self.value:
+            yield self.value
+        for c in self.itervalues():
+            for i in c.iterleaves():
+                yield i
 
     def iteridxleaves(self):
         for k, v in defaultdict.iteritems(self):
-            if not isinstance(v, RecursiveDict):
-                yield ((k, ), v)
-            else:
-                for kk, vv in v.iteridxleaves():
-                    yield (tuple([k] + list(kk)), vv)
+            if v.value:
+                yield ((k, ), v.value)
+            for kk, vv in v.iteridxleaves():
+                yield (tuple([k] + list(kk)), vv)
 
     @lazyproperty
     def depth(self):
-        return max(i.depth+1 if isinstance(i, RecursiveDict) else 1
-                for i in self.itervalues())
+        return 1+max([0] + [i.depth for i in self.itervalues()])
 
     def __str__(self, level=0):
         out = ""
+        if self.value:
+            out += " %s" % (self.value, )
         for k, v in sorted(self.items()):
             out += "\n%s%s:"  % ("\t"*level, k)
-            if isinstance(v, RecursiveDict):
-                out += "%s%s" % (v.nleaves, v.__str__(level+1))
-            else:
-                out += "%s" % (v, )
+            out += "%s%s" % (v.nleaves, v.__str__(level+1))
         return out
 
     def equals(self, o):
         return len(self) == len(o) \
+                and self.value == o.value \
                 and set(self.keys()) == set(o.keys()) \
                 and all(self[k].equals(o[k]) if hasattr(self[k], 'equals') else 
                         self[k] == o[k] for k in self.iterkeys())
@@ -788,6 +792,7 @@ class Links(object):
     Type = Constants("ANCHOR", "FORM", "REDIRECT")
 
     def __init__(self, anchors=[], forms=[], redirects=[]):
+        self.logger = logging.getLogger(self.__class__.__name__)
         # leaves in linkstree are counter of how many times that url occurred
         # therefore use that counter when compuing number of urls with "nleaves"
         linkstree = RecursiveDict(lambda x: len(x))
@@ -804,7 +809,7 @@ class Links(object):
                 #self.logger.debug("LINKSTREE", linkstree)
         if not linkstree:
             # all pages with no links will end up in the same special bin
-            linkstree.setapplypath(("<EMPTY>", ), [None], lambda x: x+[None])
+            linkstree.setapplypathvalue(("<EMPTY>", ), [None], lambda x: x+[None])
         self.linkstree = linkstree
 
     def addlink(self, v, l):
@@ -851,15 +856,18 @@ class Links(object):
     def __getitem__(self, linkidx):
         idx = [linkidx.type] + list(linkidx.path)
         val = self.linkstree.getpath(idx)
-        if hasattr(val, "nleaves"):
+        assert val.nleaves == len(list(val.iterleaves()))
+        if val.nleaves > 1:
             self.logger.debug(output.red("******** PICKING ONE *******"))
             pdb.set_trace()
-            val = val.iterleaves().next()[0]
-        assert isinstance(val, list)
-        if len(val) > 1:
+        assert val.value
+        ret = val.iterleaves().next()
+        assert val.value == ret
+        assert isinstance(ret, list)
+        if len(ret) > 1:
             self.logger.debug(output.red("******** PICKING ONE *******"))
             pdb.set_trace()
-        return val[0]
+        return ret[0]
 
     def __iter__(self):
         for l in self.linkstree.iterleaves():
@@ -887,18 +895,27 @@ class AbstractLinks(object):
         for t, c in [(Links.Type.ANCHOR, AbstractAnchor),
                 (Links.Type.FORM, AbstractForm),
                 (Links.Type.REDIRECT, AbstractRedirect)]:
-            self.buildtree(self.linkstree, t, [lt[t] for lt in linktrees], c)
+            if any(t in lt for lt in linktrees):
+                self.buildtree(self.linkstree, t, [lt[t] for lt in linktrees], c)
         #pdb.set_trace()
 
     def buildtree(self, level, key, ltval, c):
         assert all(isinstance(i, list) for i in ltval) or \
                 all(not isinstance(i, list) for i in ltval)
         if isinstance(ltval[0], list):
+            assert False
             # we have reached the leaves without encountering a cluster
             # create an abstract object with all the objects in all the leaves
             # ltval is a list of leaves, ie a list of lists containing abstractlinks
             level[key] = c(i for j in ltval for i in j)
-        else: #isinstance(ltval[0], RecursiveDict)
+        if not ltval[0]:
+            # we have reached the leaves without encountering a cluster
+            # create an abstract object with all the objects in all the leaves
+            # ltval is a list of leaves, ie a list of lists containing abstractlinks
+            assert all(j.value for j in ltval)
+            level[key].value = c(i for j in ltval for i in j.value)
+        else: # we have descendants
+            assert ltval[0].value is None
             keys = sorted(ltval[0].keys())
             if all(sorted(i.keys()) == keys for i in ltval):
                 # the linkstree for all the pages in the current subtree match,
@@ -910,7 +927,7 @@ class AbstractLinks(object):
                 # stop here and make a node containing all descending
                 # abstractlinks
                 # leaves are lists, so iterate teie to get links
-                level[key] = c(lll for l in ltval for ll in l.iterleaves()
+                level[key].value = c(lll for l in ltval for ll in l.iterleaves()
                         for lll in ll)
 
     def tryMergeLinkstree(self, pagelinkstree):
@@ -920,7 +937,8 @@ class AbstractLinks(object):
         for t, c in [(Links.Type.ANCHOR, AbstractAnchor),
                 (Links.Type.FORM, AbstractForm),
                 (Links.Type.REDIRECT, AbstractRedirect)]:
-            self.tryMergeLinkstreeRec(pagelinkstree[t], self.linkstree[t])
+            if t in pagelinkstree or t in self.linkstree:
+                self.tryMergeLinkstreeRec(pagelinkstree[t], self.linkstree[t])
 
     def tryMergeLinkstreeRec(self, pagelinkstree, baselinkstree):
         if isinstance(baselinkstree, RecursiveDict) and \
@@ -947,12 +965,12 @@ class AbstractLinks(object):
         idx = [linkidx.type] + list(linkidx.path)
         i = self.linkstree
         for p in idx:
-            if isinstance(i, RecursiveDict) and p in i:
-                i = i[p]
-            else:
-                break
+            assert p in i
+            i = i[p]
         else:
-            return i
+            assert i.value and not i
+            return i.value
+        assert False
         return i
         items = [j for j in i.iterleaves()]
         self.logger.debug("path does not match exactly; %d leaves" % len(items))
@@ -1311,7 +1329,7 @@ class Classifier(RecursiveDict):
     def add(self, obj):
         featvect = self.featuresextractor(obj)
         # hack to use lambda function instead of def func(x); x.append(obj); return x
-        self.setapplypath(featvect, [obj], lambda x: (x.append(obj), x)[1])
+        self.setapplypathvalue(featvect, [obj], lambda x: (x.append(obj), x)[1])
 
     def addall(self, it):
         for i in it:
@@ -1360,12 +1378,12 @@ class PageClusterer(object):
         self.logger.debug("%d abstract pages generated", len(self.abspages))
 
     def scanlevels(self, level, n=0):
-        med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
+        med = median((i.nleaves for i in level.itervalues()))
         #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
-            nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
+            nleaves = v.nleaves
             #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
-            if hasattr(v, "nleaves"):
+            if v: # if there are descendants
                 # XXX magic number
                 # requrire more than X pages in a cluster
 
@@ -1380,12 +1398,12 @@ class PageClusterer(object):
                 self.scanlevels(v, n+1)
 
     def scanlevelspath(self, level, path, n=0):
-        med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
+        med = median((i.nleaves for i in level.itervalues()))
         #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         v = level[path[0]]
         nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
         #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
-        if hasattr(v, "nleaves"):
+        if v: # if there are descendants
             # XXX magic number
             # requrire more than X pages in a cluster
 
@@ -1402,20 +1420,16 @@ class PageClusterer(object):
 
 
     def printlevelstat(self, level, n=0):
-        med = median((i.nleaves if hasattr(i, "nleaves") else len(i) for i in level.itervalues()))
+        med = median((i.nleaves for i in level.itervalues()))
         self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
-            if hasattr(v, "nleaves"):
-                nleaves = v.nleaves
-                depth = v.depth
-            else:
-                nleaves = len(v)
-                depth = 1
-            if hasattr(v, "nleaves") and v.clusterable:
+            nleaves = v.nleaves
+            depth = v.depth
+            if v and v.clusterable:
                 self.logger.debug(output.yellow(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
             else:
                 self.logger.debug(output.green(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
-            if hasattr(v, "nleaves"):
+            if v:
                 self.printlevelstat(v, n+1)
 
     def makeabspages(self, classif):
@@ -1425,7 +1439,7 @@ class PageClusterer(object):
 
     def makeabspagesrecursive(self, level):
         for k, v in level.iteritems():
-            if hasattr(v, "nleaves"):
+            if v:
                 if v.clusterable:
                     abspage = AbstractPage(reduce(lambda a, b: a + b, v.iterleaves()))
                     self.abspages.append(abspage)
@@ -1433,13 +1447,13 @@ class PageClusterer(object):
                 else:
                     self.makeabspagesrecursive(v)
             else:
-                abspage = AbstractPage(v)
+                abspage = AbstractPage(v.value)
                 self.abspages.append(abspage)
                 level.abspages[k] = abspage
 
     def addabstractpagepath(self, level, reqresp, path):
         v = level[path[0]]
-        if hasattr(v, "nleaves"):
+        if v:
             if v.clusterable:
                 abspage = level.abspages[path[0]]
                 abspage.addPage(reqresp)
@@ -1448,7 +1462,7 @@ class PageClusterer(object):
                 self.addabstractpagepath(v, reqresp, path[1:])
         else:
             if path[0] not in level.abspages:
-                abspage = AbstractPage(v)
+                abspage = AbstractPage(v.value)
                 level.abspages[path[0]] = abspage
                 self.abspages.append(abspage)
             else:
@@ -3549,7 +3563,7 @@ class Engine(object):
                             #    self.logger.debug(output.turquoise("%d(%d)->%d(%d) %s %s" % (rr.request.reducedstate,)
                             #        rr.request.state, rr.response.page.reducedstate, rr.response.page.state,
                             #        rr.request, rr.response))
-                            statechangescores.setapplypath([rr.request.method] + list(rr.request.urlvector),
+                            statechangescores.setapplypathvalue([rr.request.method] + list(rr.request.urlvector),
                                     (1, changing), lambda x: (x[0] + 1, x[1] + changing))
                             rr.request.state = -1
                             rr.response.page.state = -1
