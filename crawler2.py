@@ -823,21 +823,21 @@ class Links(object):
 
 
     def nAnchors(self):
-        try:
+        if Links.Type.ANCHOR in self.linkstree:
             return self.linkstree[Links.Type.ANCHOR].nleaves
-        except KeyError:
+        else:
             return 0
 
     def nForms(self):
-        try:
+        if Links.Type.FORM in self.linkstree:
             return self.linkstree[Links.Type.FORM].nleaves
-        except KeyError:
+        else:
             return 0
 
     def nRedirects(self):
-        try:
+        if Links.Type.REDIRECT in self.linkstree:
             return self.linkstree[Links.Type.REDIRECT].nleaves
-        except KeyError:
+        else:
             return 0
 
     def __len__(self):
@@ -948,7 +948,7 @@ class AbstractLinks(object):
             basekeys = set(baselinkstree.keys())
             if pagekeys != basekeys:
                 # there is difference, abort and go back reclustering
-                pdb.set_trace()
+                #pdb.set_trace()
                 raise AppGraphGenerator.MergeLinksTreeException()
             for k in pagekeys:
                 # descend into tree
@@ -965,19 +965,12 @@ class AbstractLinks(object):
         idx = [linkidx.type] + list(linkidx.path)
         i = self.linkstree
         for p in idx:
-            assert p in i
-            i = i[p]
-        else:
-            assert i.value and not i
-            return i.value
-        assert False
-        return i
-        items = [j for j in i.iterleaves()]
-        self.logger.debug("path does not match exactly; %d leaves" % len(items))
-        if len(items) > 1:
-            self.logger.debug(output.red("******** PICKING ONE *******"))
-            pdb.set_trace()
-        return items[0]
+            if p in i:
+                i = i[p]
+            else:
+                break
+        assert i.value and not i
+        return i.value
 
     def __iter__(self):
         return self.linkstree.iterleaves()
@@ -1324,7 +1317,7 @@ class Classifier(RecursiveDict):
     def __init__(self, featuresextractor):
         self.featuresextractor = featuresextractor
         # leaves should return the number of elements in the list for nleaves
-        RecursiveDict.__init__(self, lambda x: len(x))
+        RecursiveDict.__init__(self, lambda x: 1)
 
     def add(self, obj):
         featvect = self.featuresextractor(obj)
@@ -1378,7 +1371,6 @@ class PageClusterer(object):
         self.logger.debug("%d abstract pages generated", len(self.abspages))
 
     def scanlevels(self, level, n=0):
-        med = median((i.nleaves for i in level.itervalues()))
         #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
             nleaves = v.nleaves
@@ -1389,8 +1381,11 @@ class PageClusterer(object):
 
                 # require some diversity in the dom path in order to create a link
 #                self.logger.debug("========", n, len(k), k, level)
-                if nleaves >= med and nleaves > 15*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
-                        and v.depth <= n:
+#                if nleaves >= 15 and nleaves >= med and str(k).find("date") != -1:
+#                    pdb.set_trace()
+                med = median((i.nleaves for i in v.itervalues()))
+                if nleaves > med and nleaves > 15*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
+                        and v.depth <= 6 and n >= 3:
                     v.clusterable = True
                     level.clusterable = False
                 else:
@@ -1398,7 +1393,6 @@ class PageClusterer(object):
                 self.scanlevels(v, n+1)
 
     def scanlevelspath(self, level, path, n=0):
-        med = median((i.nleaves for i in level.itervalues()))
         #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         v = level[path[0]]
         nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
@@ -1408,8 +1402,9 @@ class PageClusterer(object):
             # requrire more than X pages in a cluster
 
             # require some diversity in the dom path in order to create a link
-            if nleaves >= med and nleaves > 15*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
-                    and v.depth <= n:
+            med = median((i.nleaves for i in v.itervalues()))
+            if nleaves > med and nleaves > 15*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
+                    and v.depth <= 6 and n >= 3:
                 v.newclusterable = True
                 level.newclusterable = False
             else:
@@ -2376,11 +2371,12 @@ class AppGraphGenerator(object):
                 if sstarget.target == currtarget.target:
                     assert len(sstarget.target.statereqrespsmap[sstarget.transition]) == 1
                     assert len(currtarget.target.statereqrespsmap[currtarget.transition]) == 1
-                    if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
-                        continue
-                    else:
-                        #self.logger.debug("DIFFSTATES")
-                        pass
+                    continue
+                    #if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
+                    #    continue
+                    #else:
+                    #    #self.logger.debug("DIFFSTATES")
+                    #    pass
                 self.logger.debug(output.teal("need to split state for request %s -> %s")
                         % (currreq, currtarget))
                 self.logger.debug("\t%d(%d)->%s %d(%d)"
