@@ -3758,6 +3758,8 @@ if __name__ == "__main__":
     ff = FormFiller()
     login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo']})
     ff.add(login)
+    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off'], 'login': ['']})
+    ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
     ff.add(login)
     login = FormFiller.Params({'user': ['ludo'], 'pass': ['ludo']})
