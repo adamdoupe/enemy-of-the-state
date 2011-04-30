@@ -418,6 +418,14 @@ class Link(object):
 
 class Anchor(Link):
 
+    def __init__(self, internal, reqresp):
+        # TODO: properly support it
+        attrs = list(internal.getAttributesMap().keySet())
+        for a in attrs:
+            if a.startswith("on") or a == "target":
+                internal.removeAttribute(a)
+        super(Anchor, self).__init__(internal, reqresp)
+
     @lazyproperty
     def href(self):
         return self.internal.getHrefAttribute()
@@ -502,7 +510,7 @@ class Form(Link):
         # TODO: properly support it
         attrs = list(e.getAttributesMap().keySet())
         for a in attrs:
-            if a.startswith("on"):
+            if a.startswith("on") or a == "target":
                 e.removeAttribute(a)
 
         return FormField(type, name, value)
@@ -2845,8 +2853,10 @@ class Crawler(object):
 #                        pdb.set_trace()
 
                     # TODO: properly support it
-                    if iform.getOnSubmitAttribute():
-                        iform.removeAttribute("onSubmit")
+                    attrs = list(iform.getAttributesMap().keySet())
+                    for a in attrs:
+                        if a.startswith("on") or a == "target":
+                            iform.removeAttribute(a)
 
                     newpage = submitter.click()
                     if newpage == htmlpage:
