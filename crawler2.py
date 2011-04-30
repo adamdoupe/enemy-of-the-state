@@ -565,8 +565,8 @@ class StateSet(frozenset):
 
 
 def validanchor(a):
-    href = a.getHrefAttribute()
-    return href and href.find('://') == -1 and href.strip()[:7] != "mailto:" and href.strip()[:8] != "emailto:"
+    href = a.getHrefAttribute().strip()
+    return href and href.find('://') == -1 and not href.startswith("mailto:") and not href.startswith("emailto:") and not href.startswith("javascript:")
 
 class Page(object):
 
