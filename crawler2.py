@@ -566,7 +566,7 @@ class StateSet(frozenset):
 
 def validanchor(a):
     href = a.getHrefAttribute()
-    return href.find('://') == -1 and href.strip()[:7] != "mailto:"
+    return href and href.find('://') == -1 and href.strip()[:7] != "mailto:" and href.strip()[:8] != "emailto:"
 
 class Page(object):
 
@@ -2604,13 +2604,15 @@ class AppGraphGenerator(object):
                     rr.request.changingstate = True
 
 
-class DeferringRefreshHandler(htmlunit.RefreshHandler):
+class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
 
     def __init__(self, refresh_urls=[]):
+        super(DeferringRefreshHandler, self).__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.refresh_urls = refresh_urls
 
     def handleRefresh(self, page, url, seconds):
+#        pdb.set_trace()
         self.logger.debug("%s refrsh to %s in %d s", page, url, seconds)
         self.refresh_urls.append(url)
 
@@ -2751,7 +2753,7 @@ class Crawler(object):
                 self.logger.info("%s" % httpex)
                 statuscode = httpex.getStatusCode()
                 message = httpex.getMessage()
-                if statuscode == 303:
+                if statuscode == 303 or statuscode == 302:
                     response = httpex.getResponse()
                     location = response.getResponseHeaderValue("Location")
                     self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
@@ -2774,6 +2776,8 @@ class Crawler(object):
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
+#            if str(anchor).find('index.php?mark=forums') != -1:
+#                pdb.set_trace()
             page = anchor.internal.click()
             htmlpage = htmlunit.HtmlPage.cast_(page)
             reqresp = self.newPage(htmlpage)
