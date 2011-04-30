@@ -284,11 +284,22 @@ class Request(object):
         return self.webrequest.getUrl().getQuery()
 
     @lazyproperty
+    def ref(self):
+        return self.webrequest.getUrl().getRef()
+
+    @lazyproperty
     def fullpath(self):
         fullpath = self.path
         if self.query:
             fullpath += "?" + self.query
         return fullpath
+
+    @lazyproperty
+    def fullpathref(self):
+        fullpathref = self.fullpath
+        if self.ref:
+            fullpathref += "#" + self.ref
+        return fullpathref
 
     @lazyproperty
     def params(self):
@@ -304,7 +315,7 @@ class Request(object):
 
     @lazyproperty
     def _str(self):
-        return "Request(%s %s)" % (self.method, self.fullpath)
+        return "Request(%s %s)" % (self.method, self.fullpathref)
 
     @lazyproperty
     def shortstr(self):
@@ -488,6 +499,12 @@ class Form(Link):
         else:
             raise RuntimeError("unexpcted form field tag %s" % tag)
 
+        # TODO: properly support it
+        attrs = list(e.getAttributesMap().keySet())
+        for a in attrs:
+            if a.startswith("on"):
+                e.removeAttribute(a)
+
         return FormField(type, name, value)
 
 
@@ -566,7 +583,7 @@ class StateSet(frozenset):
 
 def validanchor(a):
     href = a.getHrefAttribute().strip()
-    return href and href.find('://') == -1 and not href.startswith("mailto:") and not href.startswith("emailto:") and not href.startswith("javascript:")
+    return href and href.find('://') == -1 and not href.startswith("mailto:") and not href.startswith("emailto:") and not href.startswith("javascript:") and not href.startswith("#")
 
 class Page(object):
 
@@ -1041,7 +1058,7 @@ class AbstractPage(object):
     def __str__(self):
         if self._str is None:
             self._str =  "AbstractPage(#%d, %s)%s" % (len(self.reqresps),
-                    set("%s %s" % (i.request.method, i.request.fullpath) for i in self.reqresps), self.instance)
+                    set("%s %s" % (i.request.method, i.request.fullpathref) for i in self.reqresps), self.instance)
         return self._str
 
     def __repr__(self):
@@ -2776,7 +2793,7 @@ class Crawler(object):
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
-#            if str(anchor).find('index.php?mark=forums') != -1:
+#            if str(anchor).find('#') != -1:
 #                pdb.set_trace()
             page = anchor.internal.click()
             htmlpage = htmlunit.HtmlPage.cast_(page)
@@ -2786,8 +2803,8 @@ class Crawler(object):
         except TypeError, e:
             reqresp = self.handleNavigationException(e)
         anchor.to.append(reqresp)
-        assert reqresp.request.fullpath[-len(anchor.href):] == anchor.href, \
-                "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpath)
+        assert reqresp.request.fullpathref[-len(anchor.href):] == anchor.href, \
+                "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpathref)
         return reqresp
 
     def submitForm(self, form, params):
@@ -2824,7 +2841,20 @@ class Crawler(object):
                 try:
                     submitter = iform.getOneHtmlElementByAttribute(*submittable)
                     self.logger.debug("SUBMITTER %s", submitter)
-                    htmlpage = submitter.click()
+#                    if str(form).find("viewforum.php") != -1:
+#                        pdb.set_trace()
+
+                    # TODO: properly support it
+                    if iform.getOnSubmitAttribute():
+                        iform.removeAttribute("onSubmit")
+
+                    newpage = submitter.click()
+                    if newpage == htmlpage:
+                        # submit did not work
+                        self.logger.warn("unable to submit form %s %r in page",
+                                form.method,
+                                form.action)
+                        raise Crawler.UnsubmittableForm()
                     break
                 except htmlunit.JavaError, e:
                     javaex = e.getJavaException()
@@ -2849,8 +2879,8 @@ class Crawler(object):
 
         reqresp.request.formparams = params
         form.to.append(reqresp)
-        assert reqresp.request.fullpath.split('?')[0][-len(form.action):] == form.action.split('?')[0], \
-                "Unhandled redirect %s !sub %s" % (form.action, reqresp.request.fullpath)
+        assert reqresp.request.fullpathref.split('?')[0][-len(form.action):] == form.action.split('?')[0], \
+                "Unhandled redirect %s !sub %s" % (form.action, reqresp.request.fullpathref)
         return reqresp
 
     def back(self):
