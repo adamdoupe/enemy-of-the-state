@@ -16,6 +16,13 @@ LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
 QUERY_BOOST=0.1
 
+ignoreUrlParts = [
+        re.compile(r'&sid=[a-f0-9]{32}'),
+        re.compile(r'sid=[a-f0-9]{32}&'),
+        re.compile(r'\?sid=[a-f0-9]{32}$'),
+        re.compile(r'^sid=[a-f0-9]{32}$'),
+        ]
+
 class RandGen(random.Random):
 
     SMALLCASE = ''.join(chr(i) for i in range(ord('a'), ord('z')+1))
@@ -281,7 +288,11 @@ class Request(object):
 
     @lazyproperty
     def query(self):
-        return self.webrequest.getUrl().getQuery()
+        query = self.webrequest.getUrl().getQuery()
+        if query:
+            for i in ignoreUrlParts:
+                query = i.sub('', query)
+        return query if query else None
 
     @lazyproperty
     def ref(self):
@@ -428,7 +439,10 @@ class Anchor(Link):
 
     @lazyproperty
     def href(self):
-        return self.internal.getHrefAttribute()
+        href = self.internal.getHrefAttribute()
+        for i in ignoreUrlParts:
+            href = i.sub('', href)
+        return href
 
     @lazyproperty
     def hrefurl(self):
@@ -2801,7 +2815,7 @@ class Crawler(object):
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
-#            if str(anchor).find('#') != -1:
+#            if str(anchor).find('posting.php?mode=smilies') != -1:
 #                pdb.set_trace()
             page = anchor.internal.click()
             htmlpage = htmlunit.HtmlPage.cast_(page)
