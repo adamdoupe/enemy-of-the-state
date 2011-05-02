@@ -1109,6 +1109,8 @@ class AbstractPage(object):
             return "Page(%d)" % self.instance
 
     def __cmp__(self, o):
+        if o is None:
+            return 1
         return cmp(self.instance, o.instance)
 
 
