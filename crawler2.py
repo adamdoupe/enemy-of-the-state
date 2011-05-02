@@ -92,6 +92,14 @@ def signalhandler(signum, frame):
 #signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
 
+def all_same(iterable):
+    it = iter(iterable)
+    try:
+        first = it.next()
+    except StopIteration:
+        return True
+    return all(i == first for i in it)
+
 def median(l):
     s = sorted(l)
     ln = len(s)
@@ -1125,6 +1133,7 @@ class AbstractRequest(object):
             self.outer = outer
 
         def append(self, rr):
+            assert rr.response.page
             if self.outer._requestset is not None:
                 self.outer._requestset.add(rr.request.shortstr)
             self.outer.changingstate = self.outer.changingstate or rr.request.changingstate
@@ -1289,26 +1298,39 @@ class AbstractMap(dict):
 
     def getAbstract(self, obj):
         h = self.h(obj)
-        if h in self:
+        if dict.__contains__(self, h):
             v = self[h]
         else:
             v = self.absobj(obj)
             self[h] = v
         #self.logger.debug(output.yellow("%s (%s) -> %s" % (h, obj, v)))
+        assert all(self.h(i.request) if i.request else True
+                for i in v.reqresps)
         return v
 
     def getAbstractOrDefault(self, obj, default):
         h = self.h(obj)
-        if h in self:
+        if dict.__contains__(self, h):
             v = self[h]
         else:
             v = default
             if v:
                 self[h] = v
+        assert all(self.h(i.request) if i.request else True
+                for i in v.reqresps)
         return v
 
     def __iter__(self):
         return self.itervalues()
+
+    def setAbstract(self, obj, v):
+        h = self.h(obj)
+        self[h] = v
+
+    def __contains__(self, obj):
+        h = self.h(obj)
+        return dict.__contains__(self, h)
+
 
 def urlvector(request):
     """ /path/to/path.html?p1=v1&p2=v2
@@ -1672,45 +1694,53 @@ class AppGraphGenerator(object):
         # "trap.php" test case, because pages are clustered but requests are not
         # compromise: cluster based on abstract pages only if also the previous abspage is the same
 
-        # first map all request based on method, path, and previous and next abstratc pages
-        contextreqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path, x.reqresp.response.page.abspage, x.reqresp.prev.response.page.abspage if x.reqresp.prev else None))
+
+        ################
+
+        # cluster together all requests that are exactly the same
+        fullurireqmap = AbstractMap(AbstractRequest,
+                lambda x: (x.method, x.path, x.query))
+        contextreqmap = AbstractMap(AbstractRequest,
+                lambda x: (x.method, x.path,
+                    x.reqresp.response.page.abspage,
+                    x.reqresp.prev.response.page.abspage
+                    if x.reqresp.prev else None))
 
         mappedrequests = defaultdict(list)
 
+        # cluster together all requests which are exactly the same
         for rr in self.reqrespshead:
-            mappedrequests[contextreqmap.getAbstract(rr.request)].append(rr)
-
-        self.contextreqmap =  contextreqmap
-
-        # if there are multiple requests that were assigned to the same abstractrequest
-        # in the preious mapping, consider assignment final, otherwise do mapping
-        # using the full path but not the next and previous pages
-
-        reqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path, x.query))
+            mappedrequests[fullurireqmap.getAbstract(rr.request)].append(rr)
 
         absrequests = set()
 
-        for ar, rrs in sorted(mappedrequests.iteritems()):
-            #if ar.instance == 481:
-            #    pdb.set_trace()
-            if len(rrs) > 1 and len(set(rr.request.query for rr in rrs)) > 1:
+        for ar, rrs in mappedrequests.iteritems():
+            if all_same(contextreqmap.h(x.request) for x in rrs):
+                # these requests have all the same previous and following abstract pages
+                # we can cluster them together with other requests that share the same property
+                absreq = None
+                for rr in rrs:
+                    newar = contextreqmap.getAbstractOrDefault(rr.request, ar)
+                    assert absreq is None or newar == absreq
+                    absreq = newar
+                    rr.request.absrequest = absreq
+                    absreq.reqresps.append(rr)
+                absrequests.add(absreq)
+                fullurireqmap.setAbstract(rrs[0].request, newar)
+            else:
+                # these requests do *not* have all the same previous and following abstract pages
+                # do not perform further clustering
                 for rr in rrs:
                     rr.request.absrequest = ar
                     ar.reqresps.append(rr)
-                    absrequests.add(ar)
-            else:
-                for rr in rrs:
-                    absreq = reqmap.getAbstractOrDefault(rr.request, ar)
-                    rr.request.absrequest = absreq
-                    absreq.reqresps.append(rr)
-                    absrequests.add(absreq)
-
-        self.mappedrequests = mappedrequests
-        self.reqmap = reqmap
+                absrequests.add(ar)
 
         for r in sorted(absrequests):
             self.logger.debug(output.turquoise("%s" % r))
 
+        self.fullurireqmap = fullurireqmap
+        self.contextreqmap = contextreqmap
+        self.mappedrequests = mappedrequests
         self.absrequests = absrequests
 
     def addtorequestclusters(self, rr):
@@ -1718,22 +1748,67 @@ class AppGraphGenerator(object):
         #    pdb.set_trace()
         #if maxstate == 47:
         #    pdb.set_trace()
-        mappedreq = self.contextreqmap.getAbstract(rr.request)
+        mappedreq = self.fullurireqmap.getAbstract(rr.request)
         reqs = self.mappedrequests[mappedreq]
-        if len(reqs) >= 1 and mappedreq not in self.absrequests \
-                and len(frozenset(self.reqmap.getAbstractOrDefault(i.request, None) for i in reqs)) > 1 :
-            # failing, because we would need to break another cluster
-            #pdb.set_trace()
-            raise AppGraphGenerator.AddToAbstractRequestException()
-
-        if mappedreq not in self.absrequests:
-            absreq = self.reqmap.getAbstract(rr.request)
-            self.absrequests.add(absreq)
+        if len(reqs) > 1:
+            oldrr = reqs[0]
+            if oldrr.request in self.contextreqmap:
+#                if rr.response.page.abspage != oldrr.response.page.abspage \
+#                        or not ((rr.prev is None and oldrr.prev is None) \
+#                        or (rr.prev is not None and oldrr.prev is not None \
+#                        and rr.prev.response.page.abspage == oldrr.prev.response.page.abspage)):
+                if self.contextreqmap.h(rr.request) != self.contextreqmap.h(oldrr.request):
+                    # failing, because we would need to break another cluster
+                    #pdb.set_trace()
+                    raise AppGraphGenerator.AddToAbstractRequestException()
+                else:
+                    # ok, we can merge them
+                    oldctxabsreq = self.contextreqmap.getAbstract(rr.request)
+                    assert oldctxabsreq == oldrr.request.absrequest
+                    finalmappedar = oldctxabsreq
+            else:
+                # the previous requests cannot go in contextreqmap anyway
+                finalmappedar = mappedreq
+        elif len(reqs) == 1:
+            oldrr = reqs[0]
+            assert oldrr.request in self.contextreqmap
+            if self.contextreqmap.h(rr.request) != self.contextreqmap.h(oldrr.request):
+                # we need to remove oldrr from contextreqmap
+                raise AppGraphGenerator.AddToAbstractRequestException()
+            else:
+                # ok, we can merge them
+                oldctxabsreq = self.contextreqmap.getAbstract(rr.request)
+                assert oldctxabsreq == oldrr.request.absrequest
+                finalmappedar = oldctxabsreq
+#                    # we can merge them together abd create a cluster based on abspages context
+#                    oldmappedreq = self.fullurireqmap.getAbstract(oldrr.request)
+#                    assert oldmappedreq == oldrr.request.absrequest
+#                    newar = self.contextreqmap.getAbstractOrDefault(oldrr.request, oldmappedreq)
+#                    assert newar == oldmappedreq
+#                    newar = self.contextreqmap.getAbstractOrDefault(rr.request, mappedreq)
+#                    assert newar == oldmappedreq
+#                    rr.request.absrequest = oldmappedreq
+#                    oldmappedreq.reqresps.append(rr)
+#                    assert len(self.mappedrequests[oldmappedreq]) == 1
+#                    self.mappedrequests[oldmappedreq].append(rr)
         else:
-            absreq = mappedreq
-        rr.request.absrequest = absreq
-        absreq.reqresps.append(rr)
-        self.logger.debug(output.turquoise("%s" % absreq))
+            assert len(reqs) == 0
+            ctxasbreq = self.contextreqmap.getAbstractOrDefault(rr.request, mappedreq)
+            if mappedreq == ctxasbreq:
+                # no other pages maps together with rr.request accoring to the context
+                finalmappedar = mappedreq
+                self.absrequests.add(finalmappedar)
+            else:
+                oldrr = ctxasbreq.reqresps[0]
+                assert self.contextreqmap.h(rr.request) == self.contextreqmap.h(oldrr.request)
+                finalmappedar = ctxasbreq
+
+        rr.request.absrequests = finalmappedar
+        finalmappedar.reqresps.append(rr)
+        reqs.append(rr)
+        rr.request.absrequest = finalmappedar
+
+        self.logger.debug(output.turquoise("%s" % finalmappedar))
 
 
     def generateAppGraph(self):
@@ -1909,22 +1984,13 @@ class AppGraphGenerator(object):
 
         self.updateSeenStates()
 
-        # create a map from all requests to their AbstractRequest
-        # XXX using the following hash function, requests may overlap
-        # we should actually have an heuristic to choose the good one...
-        self.fillreqmap = CustomDict([(rr.request, ar)
-            for ar in sorted(self.absrequests)
-            for rr in ar.reqresps], AbstractRequest,
-            h=lambda r: (r.method, r.path, r.query))
-
-#        self.buildTmpReqMap()
-
         for ap in self.abspages:
             self.fillPageMissingRequests(ap)
 
-        self.allabsrequests = set(self.fillreqmap.itervalues())
+        self.allabsrequests = set(self.fullurireqmap.itervalues())
         # fillreqmap may not include all requests, i.e. in case of multiple
         # requests with same hashed value
+        # XXX probably no longer true
         self.allabsrequests |= self.absrequests
         self.absrequests = self.allabsrequests
 
@@ -1936,22 +2002,6 @@ class AppGraphGenerator(object):
         #self.fillPageMissingRequests(reqresp.response.page.abspage)
 
         self.fillMissingRequests()
-
-
-    def buildTmpReqMap(self):
-        # build a map from any Request(.method, .path, .query) to a pre-exiting
-        # AbstractRequest
-        tmpreqmap = AbstractMap(AbstractRequest,
-                lambda x: (x.method, x.path, x.query))
-        for ar in itertools.chain(self.contextreqmap.itervalues(), self.reqmap.itervalues()):
-            hashes = set(tmpreqmap.h(rr.request) for rr in ar.reqresps)
-            for h in hashes:
-                # there should not be overlap between contextreqmap and reqmap,
-                # but not sure about that...
-                assert not h in tmpreqmap
-                tmpreqmap[h] = ar
-
-        self.tmpreqmap = tmpreqmap
 
 
     def fillPageMissingRequests(self, ap):
@@ -1978,13 +2028,11 @@ class AppGraphGenerator(object):
                             request = Request(newwebrequest)
                             #if maxstate >= 11 and str(request).find("upload"):
                             #    pdb.set_trace()
-                            if request in self.fillreqmap:
-                                newrequest = self.fillreqmap[request]
-                            else:
-                                newrequest = self.reqmap.getAbstract(request)
+                            newrequest = self.fullurireqmap.getAbstract(request)
+                            assert newrequest
                             #newrequest = self.fillreqmap[request]
                             #self.logger.debug("NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest))
-                            newrequest.reqresps.append(RequestResponse(request, None))
+                            #newrequest.reqresps.append(RequestResponse(request, None))
                         newrequestbuilt = True
                     if newrequest:
                         newtgt = ReqTarget(newrequest, transition=s, nvisits=0)
