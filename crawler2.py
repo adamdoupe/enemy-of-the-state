@@ -381,10 +381,12 @@ class Response(object):
         return "Response(%d %s)" % (self.code, self.message)
 
     def __cmp__(self, o):
-        return cmp(self.InstanceCounter, o.InstanceCounter)
+        return cmp(self.instance, o.instance)
 
 
 class RequestResponse(object):
+
+    InstanceCounter = 1
 
     def __init__(self, request, response):
         request.reqresp = self
@@ -394,6 +396,8 @@ class RequestResponse(object):
         self.next = None
         # how many pages we went back before performing this new request
         self.backto = None
+        self.instance = Response.InstanceCounter
+        Response.InstanceCounter += 1
 
     def __iter__(self):
         curr = self
@@ -406,6 +410,9 @@ class RequestResponse(object):
 
     def __repr__(self):
         return str(self)
+
+    def __cmp__(self, o):
+        return cmp(self.instance, o.instance)
 
 class Link(object):
 
@@ -1714,22 +1721,23 @@ class AppGraphGenerator(object):
 
         absrequests = set()
 
-        for rrs in ctxmappedrequests.itervalues():
-            print "RRS", rrs
+        for rrs in sorted(ctxmappedrequests.itervalues()):
 #            pdb.set_trace()
+#            self.logger.debug("RRS: %s" % rrs)
             mergedctx = {}
             fullabsreqset = frozenset(fullurireqmap.getAbstract(rr.request)
                     for rr in rrs)
             fullabsreqs = sorted(fullabsreqset)
+#            self.logger.debug("FAR: %s" % fullabsreqs)
             mappedrrs = [mappedrequests[ar] for ar in fullabsreqs]
             abspages = [frozenset(rr.response.page.abspage
                     for rr in mrrs) for mrrs in mappedrrs]
             maxapslen = max(len(i) for i in abspages)
             totabspages = frozenset.union(*abspages)
             if len(totabspages) > maxapslen:
-                for ar, reqs in zip(fullabsreqset, mappedrrs):
+                for ar, reqs in zip(fullabsreqs, mappedrrs):
                     absrequests.add(ar)
-                    self.logger.debug("SEP: %s" % ar)
+#                    self.logger.debug("SEP: %s" % ar)
                     for rr in reqs:
                         ar.reqresps.append(rr)
                         rr.request.absrequest = ar
@@ -1738,7 +1746,7 @@ class AppGraphGenerator(object):
 
             chosenar = fullabsreqs[0]
             absrequests.add(chosenar)
-            self.logger.debug("CLU: %s" % chosenar)
+#            self.logger.debug("CLU: %s" % chosenar)
             for rr in rrs:
                 chosenar.reqresps.append(rr)
                 rr.request.absrequest = chosenar
@@ -1916,10 +1924,11 @@ class AppGraphGenerator(object):
     def updateSeenStates(self):
         for ar in self.absrequests:
             for t in ar.targets.itervalues():
-                #if t.target.instance == 3297:
-                #    pdb.set_trace()
+#                if t.target.instance == 2542:
+#                    pdb.set_trace()
                 t.target.seenstates.add(t.transition)
 
+        # Removing the following assert, as if fails for the new abstract requests
         for ap in self.abspages:
             allstates = set(s for l in ap.abslinks for s in l.targets)
             # allstates empty when we step back from a page
@@ -3517,7 +3526,7 @@ class Engine(object):
                     if p is not None:
                         self.formfiller.add(p)
                 submitparams = self.formfiller.getrandparams(formkeys)
-                assert submitparams
+                assert submitparams is not None
         else:
             self.logger.debug("specified form params %s", params)
             submitparams = params
