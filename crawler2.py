@@ -1769,11 +1769,14 @@ class AppGraphGenerator(object):
         mappedreq = self.fullurireqmap.getAbstract(rr.request)
         reqs = self.mappedrequests[mappedreq]
 
-        dests = frozenset(r.response.page.abspage for r in reqs)
-        if rr.response.page.abspage in dests:
-            finalmappedar = reqs[0].request.absrequest
+        if reqs:
+            dests = frozenset(r.response.page.abspage for r in reqs)
+            if rr.response.page.abspage in dests:
+                finalmappedar = reqs[0].request.absrequest
+            else:
+                raise AppGraphGenerator.AddToAbstractRequestException()
         else:
-            raise AppGraphGenerator.AddToAbstractRequestException()
+            finalmappedar = mappedreq
 
         rr.request.absrequests = finalmappedar
         finalmappedar.reqresps.append(rr)
