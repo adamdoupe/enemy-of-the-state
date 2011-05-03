@@ -2894,8 +2894,9 @@ class Crawler(object):
                         if a.startswith("on") or a == "target":
                             iform.removeAttribute(a)
 
-                    newpage = submitter.click()
-                    if newpage == htmlpage:
+                    page = submitter.click()
+                    htmlpage = htmlunit.HtmlPage.cast_(page)
+                    if htmlpage == self.lastreqresp.response.page.internal:
                         # submit did not work
                         self.logger.warn("unable to submit form %s %r in page",
                                 form.method,
