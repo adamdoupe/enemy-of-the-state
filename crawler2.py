@@ -213,7 +213,7 @@ class RecursiveDict(defaultdict):
             i._nleaves = None
 #        if str(path[-1]).find("logout") != -1 and debugstop:
 #            pdb.set_trace()
-        if path[-1] in i:
+        if path[-1] in i and i[path[-1]].value is not None:
             i[path[-1]].value = func(i[path[-1]].value)
         else:
             i[path[-1]].value = value
@@ -2930,8 +2930,9 @@ class Crawler(object):
 
         reqresp.request.formparams = params
         form.to.append(reqresp)
-        assert reqresp.request.fullpathref.split('?')[0][-len(form.action):] == form.action.split('?')[0], \
-                "Unhandled redirect %s !sub %s" % (form.action, reqresp.request.fullpathref)
+        act = form.action.split('?')[0]
+        assert reqresp.request.fullpathref.split('?')[0][-len(act):] == act, \
+                "Unhandled redirect %s !sub %s" % (act, reqresp.request.fullpathref)
         return reqresp
 
     def back(self):
