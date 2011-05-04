@@ -490,7 +490,10 @@ class Form(Link):
 
     @lazyproperty
     def action(self):
-        return self.internal.getActionAttribute()
+        action = self.internal.getActionAttribute()
+        for i in ignoreUrlParts:
+            action = i.sub('', action)
+        return action
 
     @lazyproperty
     def actionurl(self):
