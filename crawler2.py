@@ -288,7 +288,7 @@ class Request(object):
 
     @lazyproperty
     def isPOST(self):
-        return self.method == htmlunit.HttpMethod.POST
+        return self.method == str(htmlunit.HttpMethod.POST)
 
     @lazyproperty
     def path(self):
@@ -2456,6 +2456,8 @@ class AppGraphGenerator(object):
                             for i, pp in enumerate(pastpages)]
 #                        self.logger.debug("PASTPAGES %s", '\n'.join(str(i) for i in scores))
                         bestcand = max(scores)[1]
+#                        if str(bestcand).find("calendar") != -1:
+#                            pdb.set_trace()
                         self.logger.debug("BESTCAND %s", bestcand)
                         #if str(bestcand).find("review") != -1:
                         #    self.logger.debug(self.statechangescores)
@@ -2857,6 +2859,8 @@ class Crawler(object):
         self.logger.info(output.fuscia("submitting form %s %r and params: %r"),
                 form.method.upper(), form.action,
                 params)
+#        if str(form.action).find("comment") != -1:
+#            pdb.set_trace()
 
         iform = form.internal
 
