@@ -23,6 +23,13 @@ ignoreUrlParts = [
         re.compile(r'^sid=[a-f0-9]{32}$'),
         ]
 
+def filterIgnoreUrlParts(s):
+    if s:
+        for i in ignoreUrlParts:
+            s = i.sub('', s)
+    return s
+
+
 class RandGen(random.Random):
 
     SMALLCASE = ''.join(chr(i) for i in range(ord('a'), ord('z')+1))
@@ -297,9 +304,7 @@ class Request(object):
     @lazyproperty
     def query(self):
         query = self.webrequest.getUrl().getQuery()
-        if query:
-            for i in ignoreUrlParts:
-                query = i.sub('', query)
+        query = filterIgnoreUrlParts(query)
         return query if query else None
 
     @lazyproperty
@@ -455,8 +460,7 @@ class Anchor(Link):
     @lazyproperty
     def href(self):
         href = self.internal.getHrefAttribute()
-        for i in ignoreUrlParts:
-            href = i.sub('', href)
+        href = filterIgnoreUrlParts(href)
         return href
 
     @lazyproperty
@@ -491,8 +495,7 @@ class Form(Link):
     @lazyproperty
     def action(self):
         action = self.internal.getActionAttribute()
-        for i in ignoreUrlParts:
-            action = i.sub('', action)
+        action = filterIgnoreUrlParts(action)
         return action
 
     @lazyproperty
@@ -624,8 +627,7 @@ class Redirect(Link):
     @lazyproperty
     def location(self):
         location = self.internal
-        for i in ignoreUrlParts:
-            location = i.sub('', location)
+        location = filterIgnoreUrlParts(location)
         return location
 
     def __str__(self):
@@ -2711,7 +2713,9 @@ class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
 
     def handleRefresh(self, page, url, seconds):
 #        pdb.set_trace()
-        self.logger.debug("%s refrsh to %#s in %d s", page.getUrl(), url, seconds)
+        pageUrl = filterIgnoreUrlParts(str(page.getUrl()))
+        rurl = filterIgnoreUrlParts(str(url))
+        self.logger.debug("%s refrsh to %s in %d s", pageUrl, rurl, seconds)
         self.refresh_urls.append(url)
 
 
@@ -2854,6 +2858,8 @@ class Crawler(object):
                 if statuscode == 303 or statuscode == 302:
                     response = httpex.getResponse()
                     location = response.getResponseHeaderValue("Location")
+                    location = filterIgnoreUrlParts(location)
+                    message = filterIgnoreUrlParts(message)
                     self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
                     reqresp = self.newHttpRedirect(response)
                 elif statuscode == 404:
