@@ -3052,7 +3052,7 @@ class FormField(object):
 
     Tag = Constants("INPUT", "BUTTON", "TEXTAREA")
 
-    Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "TEXTAREA", "SUBMIT", "IMAGE", "BUTTON", "OTHER")
+    Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "SUBMIT", "IMAGE", "BUTTON", "OTHER")
 
     def __init__(self, tag, type, name, value=None):
         self.tag = tag
@@ -3148,22 +3148,22 @@ class FormFiller(object):
         password = None
         multiplepass = False
         for f in keys:
-            if f.type == FormField.Type.CHECKBOX:
-                value = rng.choice([f.value, ''])
-            elif f.type == FormField.Type.HIDDEN:
-                value = f.value
-            elif f.type == FormField.Type.TEXT:
-                value = rng.getWords()
-            elif f.type == FormField.Type.PASSWORD:
-                if password is None or not samepass:
-                    password = rng.getPassword()
-                else:
-                    multiplepass = True
-                value = password
-            elif f.type == FormField.Type.TEXTAREA:
+            value = ''
+            if f.tag == FormField.Tag.INPUT:
+                if f.type == FormField.Type.CHECKBOX:
+                    value = rng.choice([f.value, ''])
+                elif f.type == FormField.Type.HIDDEN:
+                    value = f.value
+                elif f.type == FormField.Type.TEXT:
+                    value = rng.getWords()
+                elif f.type == FormField.Type.PASSWORD:
+                    if password is None or not samepass:
+                        password = rng.getPassword()
+                    else:
+                        multiplepass = True
+                    value = password
+            elif f.tag == FormField.Tag.TEXTAREA:
                 value = rng.getWords(10)
-            else:
-                value = ''
             res[f.name].append(value)
         if samepass and not multiplepass:
             # if we were asked to use the same password, but there were no muitple password fields, return None
@@ -3569,8 +3569,8 @@ class Engine(object):
         if params is None:
             formkeys = form.elems
             self.logger.debug("form keys %s", formkeys)
-            if str(form).find("posting.php") != -1:
-                pdb.set_trace()
+#            if str(form).find("posting.php") != -1:
+#                pdb.set_trace()
             submitparams = self.formfiller.getrandparams(formkeys)
             if not submitparams:
                 for p in [self.formfiller.emptyfill(formkeys, submitter=s) for s in form.submittables] + \
