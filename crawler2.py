@@ -478,7 +478,7 @@ class Anchor(Link):
 class Form(Link):
     SUBMITTABLES = [("input", "type", "submit"),
                     ("input", "type", "image"),
-                    ("input", "type", "button"),
+#                    ("input", "type", "button"),
                     ("button", "type", "submit")]
     GET, POST = ("GET", "POST")
 
@@ -516,8 +516,8 @@ class Form(Link):
         return self.inputs + self.textareas + self.selects
 
     def buildFormField(self, e):
-        tag = e.getTagName().lower()
-        if tag == "input":
+        tag = e.getTagName().upper()
+        if tag == FormField.Tag.INPUT:
             etype = e.getAttribute('type').lower()
             name = e.getAttribute('name')
             value = e.getAttribute('value')
@@ -529,13 +529,24 @@ class Form(Link):
                 type = FormField.Type.PASSWORD
             elif etype == "checkbox":
                 type = FormField.Type.CHECKBOX
+            elif etype == "submit":
+                type = FormField.Type.SUBMIT
+            elif etype == "image":
+                type = FormField.Type.IMAGE
+            elif etype == "button":
+                type = FormField.Type.BUTTON
             else:
                 type = FormField.Type.OTHER
-        elif tag == "textarea":
-            type = FormField.Type.TEXTAREA
+        elif tag == FormField.Tag.TEXTAREA:
+            type = None
             name = e.getAttribute('name')
             textarea = htmlunit.HtmlTextArea.cast_(e)
             value = textarea.getText()
+        elif tag == FormField.Tag.BUTTON and \
+                e.getAttribute('type').upper() == FormField.Type.SUBMIT:
+            type = FormField.Type.SUBMIT
+            name = e.getAttribute('name')
+            value = e.getAttribute('value')
         else:
             raise RuntimeError("unexpcted form field tag %s" % tag)
 
@@ -545,7 +556,7 @@ class Form(Link):
             if a.startswith("on") or a == "target":
                 e.removeAttribute(a)
 
-        return FormField(type, name, value)
+        return FormField(tag, type, name, value)
 
 
     @lazyproperty
@@ -569,7 +580,7 @@ class Form(Link):
         return [self.buildFormField(e)
                 for e in (htmlunit.HtmlElement.cast_(i)
                     for i in self.internal.getHtmlElementsByTagName('input'))
-                if e.getAttribute('type').lower() != "hidden"]
+                if e.getAttribute('type').lower() not in ["hidden", "button", "submit"] ]
 
     @lazyproperty
     def hiddens(self):
@@ -588,6 +599,24 @@ class Form(Link):
     def selects(self):
         # TODO
         return []
+
+    @lazyproperty
+    def submittables(self):
+        result = []
+        for submittable in Form.SUBMITTABLES:
+            try:
+                submitters = self.internal.getElementsByAttribute(*submittable)
+                #self.logger.debug("SUBMITTERS %s", submitters)
+
+                result.extend(self.buildFormField(
+                    htmlunit.HtmlElement.cast_(i)) for i in submitters)
+
+            except htmlunit.JavaError, e:
+                javaex = e.getJavaException()
+                if not htmlunit.ElementNotFoundException.instance_(javaex):
+                    raise
+                continue
+        return result
 
 
 class Redirect(Link):
@@ -2679,7 +2708,7 @@ class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
 
     def handleRefresh(self, page, url, seconds):
 #        pdb.set_trace()
-        self.logger.debug("%s refrsh to %s in %d s", page, url, seconds)
+        self.logger.debug("%s refrsh to %#s in %d s", page.getUrl(), url, seconds)
         self.refresh_urls.append(url)
 
 
@@ -2857,7 +2886,7 @@ class Crawler(object):
         return reqresp
 
     def submitForm(self, form, params):
-        htmlpage = None
+        assert isinstance(params, FormFiller.Params)
 
         self.logger.info(output.fuscia("submitting form %s %r and params: %r"),
                 form.method.upper(), form.action,
@@ -2866,6 +2895,12 @@ class Crawler(object):
 #            pdb.set_trace()
 
         iform = form.internal
+
+        # TODO add proper support for on* and target=
+        attrs = list(iform.getAttributesMap().keySet())
+        for a in attrs:
+            if a.startswith("on") or a == "target":
+                iform.removeAttribute(a)
 
         for k, vv in params.iteritems():
             for i, v in zip(iform.getInputsByName(k), vv):
@@ -2886,45 +2921,42 @@ class Crawler(object):
                 self.logger.debug("VALUE %s %s %s" % (i, i.getText(), v))
 
         try:
-            # find an element to click in order to submit the form
             # TODO: explore clickable regions in input type=image
-            for submittable in Form.SUBMITTABLES:
-                try:
-                    submitter = iform.getOneHtmlElementByAttribute(*submittable)
-                    self.logger.debug("SUBMITTER %s", submitter)
-#                    if str(form).find("viewforum.php") != -1:
-#                        pdb.set_trace()
+            submitter = params.submitter
+            if submitter is None:
+                if not form.submittables:
+                    self.logger.warn("no submittable item found for form %s %r",
+                            form.method,
+                            form.action)
+                    raise Crawler.UnsubmittableForm()
+                submitter = form.submittables[0]
+            isubmitters = list(htmlunit.HtmlElement.cast_(i)
+                    for i in iform.getElementsByAttribute(
+                    submitter.tag, "type", submitter.type.lower()))
+            assert isubmitters
+            if len(isubmitters) == 1:
+                isubmitter = isubmitters[0]
+            else:
+                assert submitter.name
+                isubmitter = None
+                for i in isubmitters:
+                    if i.getAttribute("name") == submitter.name:
+                        assert isubmitter is None
+                        isubmitter = i
+                assert isubmitter
 
-                    # TODO: properly support it
-                    attrs = list(iform.getAttributesMap().keySet())
-                    for a in attrs:
-                        if a.startswith("on") or a == "target":
-                            iform.removeAttribute(a)
+            self.logger.debug("SUBMITTER %s", isubmitter)
 
-                    page = submitter.click()
-                    htmlpage = htmlunit.HtmlPage.cast_(page)
-                    if htmlpage == self.lastreqresp.response.page.internal:
-                        # submit did not work
-                        self.logger.warn("unable to submit form %s %r in page",
-                                form.method,
-                                form.action)
-                        raise Crawler.UnsubmittableForm()
-                    break
-                except htmlunit.JavaError, e:
-                    javaex = e.getJavaException()
-                    if not htmlunit.ElementNotFoundException.instance_(javaex):
-                        raise
-                    continue
-
-            if not htmlpage:
-                self.logger.warn("could not find submit button for form %s %r in page",
+            page = isubmitter.click()
+            htmlpage = htmlunit.HtmlPage.cast_(page)
+            if htmlpage == self.lastreqresp.response.page.internal:
+                # submit did not work
+                self.logger.warn("unable to submit form %s %r in page",
                         form.method,
                         form.action)
                 raise Crawler.UnsubmittableForm()
 
-            htmlpage = htmlunit.HtmlPage.cast_(htmlpage)
             reqresp = self.newPage(htmlpage)
-            assert isinstance(params, FormFiller.Params)
 
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
@@ -3018,9 +3050,12 @@ class Dist(object):
 
 class FormField(object):
 
-    Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "TEXTAREA", "OTHER")
+    Tag = Constants("INPUT", "BUTTON", "TEXTAREA")
 
-    def __init__(self, type, name, value=None):
+    Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "TEXTAREA", "SUBMIT", "IMAGE", "BUTTON", "OTHER")
+
+    def __init__(self, tag, type, name, value=None):
+        self.tag = tag
         self.type = type
         self.name = name
         self.value = value
@@ -3033,7 +3068,7 @@ class FormField(object):
 
     @lazyproperty
     def _str(self):
-        return "FormField(%s %s=%s)" % (self.type, self.name, self.value)
+        return "FormField(%s %s %s=%s)" % (self.tag, self.type, self.name, self.value)
 
 
 class FormDB(dict):
@@ -3056,6 +3091,7 @@ class FormFiller(object):
         def __init__(self, init={}):
             defaultdict.__init__(self, list)
             self.update(init)
+            self.submitter = None
 
         def __hash__(self):
             return hash(tuple(sorted((i[0], tuple(i[1])) for i in self.iteritems())))
@@ -3095,7 +3131,7 @@ class FormFiller(object):
     def __getitem__(self, k):
         return self.forms[tuple(sorted([i.name for i in k if i.name]))]
 
-    def emptyfill(self, keys):
+    def emptyfill(self, keys, submitter=None):
         self.logger.debug("empty filling")
         res = FormFiller.Params()
         for f in keys:
@@ -3103,9 +3139,10 @@ class FormFiller(object):
                 value = f.value
             else:
                 res[f.name].append("")
+        res.submitter = submitter
         return res
 
-    def randfill(self, keys, samepass=False):
+    def randfill(self, keys, samepass=False, submitter=None):
         self.logger.debug("random filling from (samepass=%s)", samepass)
         res = FormFiller.Params()
         password = None
@@ -3131,9 +3168,12 @@ class FormFiller(object):
         if samepass and not multiplepass:
             # if we were asked to use the same password, but there were no muitple password fields, return None
             return None
+        res.submitter = submitter
         return res
 
     def getrandparams(self, keys):
+        if not keys:
+            return FormFiller.Params()
         values = self[keys]
         if not values:
             return None
@@ -3529,11 +3569,13 @@ class Engine(object):
         if params is None:
             formkeys = form.elems
             self.logger.debug("form keys %s", formkeys)
+            if str(form).find("posting.php") != -1:
+                pdb.set_trace()
             submitparams = self.formfiller.getrandparams(formkeys)
             if not submitparams:
-                for p in [self.formfiller.emptyfill(formkeys), \
-                        self.formfiller.randfill(formkeys),
-                        self.formfiller.randfill(formkeys, samepass=True)]:
+                for p in [self.formfiller.emptyfill(formkeys, submitter=s) for s in form.submittables] + \
+                        [self.formfiller.randfill(formkeys, submitter=s) for s in form.submittables] + \
+                        [self.formfiller.randfill(formkeys, samepass=True, submitter=s) for s in form.submittables]:
                     # record this set of form parameters for later use
                     if p is not None:
                         self.formfiller.add(p)
@@ -3813,7 +3855,7 @@ if __name__ == "__main__":
     ff = FormFiller()
     login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo']})
     ff.add(login)
-    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off'], 'login': ['']})
+    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off']})
     ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
     ff.add(login)
