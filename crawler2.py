@@ -2852,7 +2852,8 @@ class Crawler(object):
             javaex = e.getJavaException()
             if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
                 httpex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
-                self.logger.info("%s" % httpex)
+                strhttpex = filterIgnoreUrlParts(str(httpex))
+                self.logger.info("%s" % strhttpex)
                 statuscode = httpex.getStatusCode()
                 message = httpex.getMessage()
                 if statuscode == 303 or statuscode == 302:
