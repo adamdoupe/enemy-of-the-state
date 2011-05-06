@@ -621,9 +621,12 @@ class Form(Link):
 
 class Redirect(Link):
 
-    @property
+    @lazyproperty
     def location(self):
-        return self.internal
+        location = self.internal
+        for i in ignoreUrlParts:
+            location = i.sub('', location)
+        return location
 
     def __str__(self):
         return "Redirect(%s)" % (self.location)
