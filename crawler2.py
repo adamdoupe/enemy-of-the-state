@@ -327,7 +327,8 @@ class Request(object):
 
     @lazyproperty
     def params(self):
-        raise NotImplemented
+        return tuple(sorted((nv.getName(), nv.getValue())
+                for nv in self.webrequest.getRequestParameters()))
 
     @lazyproperty
     def cookies(self):
@@ -516,7 +517,7 @@ class Form(Link):
 
     @lazyproperty
     def elems(self):
-        return self.inputs + self.textareas + self.selects
+        return self.inputs + self.textareas + self.selects + self.submittables
 
     def buildFormField(self, e):
         tag = e.getTagName().upper()
@@ -695,61 +696,6 @@ class Page(object):
     def links(self):
         return Links(self.anchors, self.forms, self.redirects)
 
-    def getNewRequest(self, idx, link):
-#        if str(idx).find("guestbook") != -1:
-#            pdb.set_trace()
-        if isinstance(link, AbstractAnchor):
-            if len(link.hrefs) == 1:
-                href = iter(link.hrefs).next()
-                if not href.strip().lower().startswith("javascript:"):
-                    url = self.internal.getFullyQualifiedUrl(href)
-                    return htmlunit.WebRequest(url)
-        elif isinstance(link, AbstractRedirect):
-            if len(link.locations) == 1:
-                href = iter(link.locations).next()
-                if not href.strip().lower().startswith("javascript:"):
-                    url = htmlunit.URL(self.internal.getWebRequest().getUrl(),
-                            href)
-                    return htmlunit.WebRequest(url)
-        elif isinstance(link, AbstractForm):
-            if len(link.methods) == 1:
-                submitter = None
-                iform = self.links[idx].internal
-                for submittable in Form.SUBMITTABLES:
-                    try:
-                        submitter = iform.getOneHtmlElementByAttribute(*submittable)
-                        #self.logger.debug("SUBMITTER", submitter, submitter.getPage())
-                        break
-                    except htmlunit.JavaError, e:
-                        javaex = e.getJavaException()
-                        if not htmlunit.ElementNotFoundException.instance_(javaex):
-                            raise
-                        continue
-                if submitter:
-                    #self.logger.debug("CASTING?")
-                    newreq = iform.getWebRequest(submitter)
-                    if htmlunit.HtmlImageInput.instance_(submitter):
-                        #pdb.set_trace()
-                        url = newreq.getUrl()
-                        #self.logger.debug("CASTING!", url.getQuery(), url.getPath())
-                        urlstr = url.getPath()
-                        if urlstr.find('?') == -1:
-                            urlstr += "?"
-                        query = url.getQuery()
-                        if query:
-                            urlstr += query
-                            if query.endswith('&='):
-                                # htmlunits generate a spurios &= at the end...
-                                urlstr = urlstr[:-2]
-                            urlstr += '&'
-                        urlstr += "x=0&y=0"
-                        newurl = htmlunit.URL(url, urlstr)
-                        newreq.setUrl(newurl)
-                    #self.logger.debug("NEWFORMREQ %s %s" % (newreq, self))
-                    return newreq
-        return None
-
-
 class AbstractLink(object):
 
     def __init__(self, links):
@@ -824,13 +770,17 @@ class AbstractForm(AbstractLink):
         if not isinstance(forms, list):
             forms = list(forms)
         AbstractLink.__init__(self, forms)
+        self.forms = forms
         self.methods = set(i.method for i in forms)
         self.actions = set(i.action for i in forms)
         self.type = Links.Type.FORM
+        self._elemset = None
 
     def update(self, forms):
+        self.forms = forms
         self.methods = set(i.method for i in forms)
         self.actions = set(i.action for i in forms)
+        self._elemset = None
 
     @property
     def _str(self):
@@ -848,6 +798,14 @@ class AbstractForm(AbstractLink):
         # XXX multiple hrefs not supported yet
         assert len(self.actions) == 1
         return iter(self.actions).next()
+
+    @property
+    def elemset(self):
+        if self._elemset is None:
+            elemnamesets = [frozenset(i.elemnames) for i in self.forms]
+            assert all_same(elemnamesets)
+            self._elemset = frozenset(self.forms[0].elems)
+        return self._elemset
 
 class AbstractRedirect(AbstractLink):
 
@@ -1722,12 +1680,14 @@ class AppGraphGenerator(object):
         def __init__(self, msg=None):
             PageMergeException.__init__(self, msg)
 
-    def __init__(self, reqrespshead, abspages, statechangescores):
+    def __init__(self, reqrespshead, abspages, statechangescores, formfiller, crawler):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.reqrespshead = reqrespshead
         self.abspages = abspages
         self.absrequests = None
         self.statechangescores = statechangescores
+        self.formfiller = formfiller
+        self.crawler = crawler
 
     def updatepageclusters(self, abspages):
         self.abspages = abspages
@@ -1745,7 +1705,7 @@ class AppGraphGenerator(object):
 
         # cluster together all requests that are exactly the same
         fullurireqmap = AbstractMap(AbstractRequest,
-                lambda x: (x.method, x.path, x.query))
+                lambda x: (x.method, x.path, x.query, x.params))
 
         mappedrequests = defaultdict(list)
         ctxmappedrequests = CustomDict([], missing=(lambda x: []),
@@ -2032,29 +1992,47 @@ class AppGraphGenerator(object):
             for s in sorted(allstates):
                 #if s not in l.targets or l.targets[s].nvisits == 0:
                 if s not in l.targets:
-                    if not newrequestbuilt:
-                        newwebrequest = ap.reqresps[0].response.page.getNewRequest(idx, l)
-                        #self.logger.debug("NEWWR %s %d %s %s" % (ap, s, l, newwebrequest))
-                        if newwebrequest:
-                            request = Request(newwebrequest)
-                            #if maxstate >= 11 and str(request).find("upload"):
-                            #    pdb.set_trace()
-                            newrequest = self.fullurireqmap.getAbstract(request)
-                            assert newrequest
-                            #newrequest = self.fillreqmap[request]
-                            #self.logger.debug("NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest))
-                            #newrequest.reqresps.append(RequestResponse(request, None))
-                        newrequestbuilt = True
-                    if newrequest:
-                        newtgt = ReqTarget(newrequest, transition=s, nvisits=0)
-                        if isinstance(l, AbstractForm):
-                            # TODO: for now assume that different FORM requests are not clustered
-                            tgtdict = {FormFiller.Params(): newtgt}
+                    if isinstance(l, AbstractForm):
+                        if not newrequestbuilt:
+                            newwebrequests, requestparams = \
+                                    self.crawler.getNewFormRequests(
+                                    ap.reqresps[0].response.page,
+                                    idx, l, self.formfiller)
+                            if newwebrequests:
+                                requests = [Request(i) for i in newwebrequests]
+                                newrequest = [
+                                        self.fullurireqmap.getAbstract(i)
+                                        for i in requests]
+                                assert all(i for i in newrequest)
+                            newrequestbuilt = True
+                        if newrequest:
+                            newtgts = [ReqTarget(i, transition=s, nvisits=0)
+                                    for i in newrequest]
+                            tgtdict = dict((rp, ar) for rp, ar 
+                                    in zip(requestparams, newtgts))
                             newtgt = FormTarget(tgtdict, s, nvisits=0)
-                        l.targets[s] = newtgt
-                        #self.logger.debug(output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest)))
-                        #for ss, tt in newrequest.targets.iteritems():
-                        #    self.logger.debug(output.purple("\t %s %s" % (ss, tt)))
+                            l.targets[s] = newtgt
+                    else:
+                        if not newrequestbuilt:
+                            newwebrequest = self.crawler.getNewRequest(
+                                    ap.reqresps[0].response.page, idx, l)
+                            #self.logger.debug("NEWWR %s %d %s %s" % (ap, s, l, newwebrequest))
+                            if newwebrequest:
+                                request = Request(newwebrequest)
+                                #if maxstate >= 11 and str(request).find("upload"):
+                                #    pdb.set_trace()
+                                newrequest = self.fullurireqmap.getAbstract(request)
+                                assert newrequest
+                                #newrequest = self.fillreqmap[request]
+                                #self.logger.debug("NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest))
+                                #newrequest.reqresps.append(RequestResponse(request, None))
+                            newrequestbuilt = True
+                        if newrequest:
+                            newtgt = ReqTarget(newrequest, transition=s, nvisits=0)
+                            l.targets[s] = newtgt
+                            #self.logger.debug(output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest)))
+                            #for ss, tt in newrequest.targets.iteritems():
+                            #    self.logger.debug(output.purple("\t %s %s" % (ss, tt)))
                 else:
                     assert l.targets[s].target is not None
 
@@ -2704,6 +2682,8 @@ class AppGraphGenerator(object):
                     rr.request.changingstate = True
 
 
+
+
 class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
 
     def __init__(self, refresh_urls=[]):
@@ -2875,9 +2855,8 @@ class Crawler(object):
 
     def click(self, anchor):
         self.logger.debug(output.purple("clicking on %s"), anchor)
-        if str(anchor).find("action=add&picid=4") != -1:
-            global cond
-            cond += 1
+#        if str(anchor).find("viewtopic.php?p=2#2") != -1:
+#            pdb.set_trace()
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
@@ -2895,17 +2874,9 @@ class Crawler(object):
                 "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpathref)
         return reqresp
 
-    def submitForm(self, form, params):
-        assert isinstance(params, FormFiller.Params)
 
-        self.logger.info(output.fuscia("submitting form %s %r and params: %r"),
-                form.method.upper(), form.action,
-                params)
-#        if str(form.action).find("comment") != -1:
-#            pdb.set_trace()
-
-        iform = form.internal
-
+    @staticmethod
+    def fillForm(iform, params, logger):
         # TODO add proper support for on* and target=
         attrs = list(iform.getAttributesMap().keySet())
         for a in attrs:
@@ -2923,12 +2894,46 @@ class Crawler(object):
                         i.setChecked(False)
                 else:
                     i.setValueAttribute(v)
-                self.logger.debug("VALUE %s %s %s" % (i, i.getValueAttribute(), v))
+                logger.debug("VALUE %s %s %s" % (i, i.getValueAttribute(), v))
 
             for i, v in zip(iform.getTextAreasByName(k), vv):
                 textarea = htmlunit.HtmlTextArea.cast_(i)
                 textarea.setText(v)
-                self.logger.debug("VALUE %s %s %s" % (i, i.getText(), v))
+                logger.debug("VALUE %s %s %s" % (i, i.getText(), v))
+
+
+    @staticmethod
+    def getInternalSubmitter(iform, submitter):
+        isubmitters = list(htmlunit.HtmlElement.cast_(i)
+                for i in iform.getElementsByAttribute(
+                submitter.tag, "type", submitter.type.lower()))
+        assert isubmitters
+        if len(isubmitters) == 1:
+            isubmitter = isubmitters[0]
+        else:
+            assert submitter.name or submitter.value
+            isubmitter = None
+            for i in isubmitters:
+                if (submitter.name and i.getAttribute("name") == submitter.name) \
+                        or (not submitter.name and
+                            i.getAttribute("value") == submitter.value):
+                    assert isubmitter is None
+                    isubmitter = i
+            assert isubmitter
+        return isubmitter
+
+    def submitForm(self, form, params):
+        assert isinstance(params, FormFiller.Params)
+
+        self.logger.info(output.fuscia("submitting form %s %r and params: %r"),
+                form.method.upper(), form.action,
+                params)
+#        if str(form.action).find("comment") != -1:
+#            pdb.set_trace()
+
+        iform = form.internal
+
+        self.fillForm(iform, params, self.logger)
 
         try:
             # TODO: explore clickable regions in input type=image
@@ -2940,20 +2945,8 @@ class Crawler(object):
                             form.action)
                     raise Crawler.UnsubmittableForm()
                 submitter = form.submittables[0]
-            isubmitters = list(htmlunit.HtmlElement.cast_(i)
-                    for i in iform.getElementsByAttribute(
-                    submitter.tag, "type", submitter.type.lower()))
-            assert isubmitters
-            if len(isubmitters) == 1:
-                isubmitter = isubmitters[0]
-            else:
-                assert submitter.name
-                isubmitter = None
-                for i in isubmitters:
-                    if i.getAttribute("name") == submitter.name:
-                        assert isubmitter is None
-                        isubmitter = i
-                assert isubmitter
+
+            isubmitter = self.getInternalSubmitter(iform, submitter)
 
             self.logger.debug("SUBMITTER %s", isubmitter)
 
@@ -2997,6 +2990,74 @@ class Crawler(object):
     def steppingback(self):
         return self.currreqresp != self.lastreqresp
 
+    def getNewRequest(self, page, idx, link):
+#        if str(idx).find("guestbook") != -1:
+#            pdb.set_trace()
+        if isinstance(link, AbstractAnchor):
+            if len(link.hrefs) == 1:
+                href = iter(link.hrefs).next()
+                if not href.strip().lower().startswith("javascript:"):
+                    url = page.internal.getFullyQualifiedUrl(href)
+                    return htmlunit.WebRequest(url)
+        elif isinstance(link, AbstractRedirect):
+            if len(link.locations) == 1:
+                href = iter(link.locations).next()
+                if not href.strip().lower().startswith("javascript:"):
+                    url = htmlunit.URL(page.internal.getWebRequest().getUrl(),
+                            href)
+                    return htmlunit.WebRequest(url)
+        assert not isinstance(link, AbstractForm)
+        return None
+
+    def getNewFormRequests(self, page, idx, link, formfiller):
+        assert isinstance(link, AbstractForm)
+        newrequests = []
+        requestparams = []
+        # XXX why??? set a breakpoint to understand
+        if len(link.methods) != 1:
+            pdb.set_trace()
+        if len(link.methods) == 1:
+#            pdb.set_trace()
+            # XXX no garantee link.forms[0] is a good one
+            form = link.forms[0]
+            for f in formfiller.get(link.elemset, form):
+                iform = htmlunit.HtmlForm.cast_(
+                        page.links[idx].internal.cloneNode(True))
+                self.fillForm(iform, f, self.logger)
+
+                if f.submitter is None:
+                    if not form.submittables:
+                        self.logger.warn("no submittable item found for form %s %r",
+                                form.method,
+                                form.action)
+                        raise Crawler.UnsubmittableForm()
+                    submitter = form.submittables[0]
+                else:
+                    submitter = f.submitter
+
+                isubmitter = Crawler.getInternalSubmitter(iform, submitter)
+                newreq = iform.getWebRequest(isubmitter)
+                if htmlunit.HtmlImageInput.instance_(isubmitter):
+                    #pdb.set_trace()
+                    url = newreq.getUrl()
+                    #self.logger.debug("CASTING!", url.getQuery(), url.getPath())
+                    urlstr = url.getPath()
+                    if urlstr.find('?') == -1:
+                        urlstr += "?"
+                    query = url.getQuery()
+                    if query:
+                        urlstr += query
+                        if query.endswith('&='):
+                            # htmlunits generate a spurios &= at the end...
+                            urlstr = urlstr[:-2]
+                        urlstr += '&'
+                    urlstr += "x=0&y=0"
+                    newurl = htmlunit.URL(url, urlstr)
+                    newreq.setUrl(newurl)
+                newrequests.append(newreq)
+                requestparams.append(f)
+#        pdb.set_trace()
+        return (newrequests, requestparams)
 
 def linkweigh(link, nvisits, othernvisits=0, statechange=False):
         statechange = 1 if statechange else 0
@@ -3080,6 +3141,16 @@ class FormField(object):
     def _str(self):
         return "FormField(%s %s %s=%s)" % (self.tag, self.type, self.name, self.value)
 
+    def __hash__(self):
+        return self.hash
+
+    @lazyproperty
+    def hash(self):
+        return hash(self._str)
+
+    def __cmp__(self, o):
+        return cmp(self.hash, o.hash)
+
 
 class FormDB(dict):
 
@@ -3104,13 +3175,15 @@ class FormFiller(object):
             self.submitter = None
 
         def __hash__(self):
-            return hash(tuple(sorted((i[0], tuple(i[1])) for i in self.iteritems())))
+            vals = sorted((i[0], tuple(i[1])) for i in self.iteritems())
+            vals.append(str(self.submitter))
+            return hash(tuple(vals))
 
         def __str__(self):
-            return defaultdict.__str__(self).replace("defaultdict", "Params")
+            return "Params(%s, %s)" % (self.submitter, self.items())
 
         def __repr__(self):
-            return defaultdict.__repr__(self).replace("defaultdict", "Params")
+            return str(self)
 
         @lazyproperty
         def sortedkeys(self):
@@ -3138,8 +3211,19 @@ class FormFiller(object):
     def add(self, k):
         self.forms[k.sortedkeys].append(k)
 
-    def __getitem__(self, k):
-        return self.forms[tuple(sorted([i.name for i in k if i.name]))]
+    def get(self, k, form):
+        keys = tuple(sorted([i.name for i in k if i.name]))
+        if keys not in self.forms:
+            for p in [self.emptyfill(k, submitter=s)
+                        for s in form.submittables] + \
+                    [self.randfill(k, submitter=s)
+                        for s in form.submittables] + \
+                    [self.randfill(k, samepass=True, submitter=s)
+                        for s in form.submittables]:
+                # record this set of form parameters for later use
+                if p is not None:
+                    self.add(p)
+        return self.forms[keys]
 
     def emptyfill(self, keys, submitter=None):
         self.logger.debug("empty filling")
@@ -3181,10 +3265,10 @@ class FormFiller(object):
         res.submitter = submitter
         return res
 
-    def getrandparams(self, keys):
+    def getrandparams(self, keys, form):
         if not keys:
             return FormFiller.Params()
-        values = self[keys]
+        values = self.get(keys, form)
         if not values:
             return None
         return values.getnext()
@@ -3377,12 +3461,13 @@ class Engine(object):
             if (head, state) in seen:
                 continue
             self.logger.debug(output.yellow("H %s %s %s %s" % (dist, head, state, headpath)))
-#            if maxstate >= 89 and str(head).find(r"GET /users/login.php") != -1:
-#                pdb.set_trace()
             seen.add((head, state))
             #head.abslinks.printInfo()
             unvlinks_added = False
             for idx, link in head.abslinks.iteritems():
+                if maxstate >= 367 and str(link).find(r"posting.php") != -1 \
+                        and idx.type == Links.Type.FORM:
+                    pdb.set_trace()
                 if link.skip:
                     continue
                 newpath = [PathStep(head, idx, state)] + headpath
@@ -3577,20 +3662,13 @@ class Engine(object):
 
     def submitForm(self, form, params):
         if params is None:
+#            pdb.set_trace()
             formkeys = form.elems
             self.logger.debug("form keys %s", formkeys)
 #            if str(form).find("posting.php") != -1:
 #                pdb.set_trace()
-            submitparams = self.formfiller.getrandparams(formkeys)
-            if not submitparams:
-                for p in [self.formfiller.emptyfill(formkeys, submitter=s) for s in form.submittables] + \
-                        [self.formfiller.randfill(formkeys, submitter=s) for s in form.submittables] + \
-                        [self.formfiller.randfill(formkeys, samepass=True, submitter=s) for s in form.submittables]:
-                    # record this set of form parameters for later use
-                    if p is not None:
-                        self.formfiller.add(p)
-                submitparams = self.formfiller.getrandparams(formkeys)
-                assert submitparams is not None
+            submitparams = self.formfiller.getrandparams(formkeys, form)
+            assert submitparams is not None
         else:
             self.logger.debug("specified form params %s", params)
             submitparams = params
@@ -3680,8 +3758,10 @@ class Engine(object):
                         self.logger.info("need to recompute graph")
                         sinceclustered = 0
                         pc = PageClusterer(cr.headreqresp)
-                        self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) for i in pc.getAbstractPages())))
-                        ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(), statechangescores)
+                        self.logger.debug(output.blue("AP %s" % '\n'.join(str(i)
+                                for i in pc.getAbstractPages())))
+                        ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(),
+                                statechangescores, self.formfiller, cr)
                         maxstate = ag.generateAppGraph()
                         self.state = ag.reduceStates()
                         ag.markChangingState()
@@ -3865,7 +3945,7 @@ if __name__ == "__main__":
     ff = FormFiller()
     login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo']})
     ff.add(login)
-    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off']})
+    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off'], 'login': ['Log in']})
     ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
     ff.add(login)
