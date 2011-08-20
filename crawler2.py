@@ -490,6 +490,8 @@ class Form(Link):
     @lazyproperty
     def method(self):
         methodattr = self.internal.getMethodAttribute().upper()
+        if not methodattr:
+              methodattr = "GET"
         assert methodattr in ("GET", "POST")
         return methodattr
 
