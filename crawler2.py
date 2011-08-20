@@ -1884,7 +1884,9 @@ class AppGraphGenerator(object):
             if tgt.nvisits:
                 if tgt.target != nextabsreq:
                     # cannot map the page to the current state, need to redo clustering
-                    raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, nextabsreq))
+                    if maxstate >= 577:
+                        pdb.set_trace()
+                    raise AppGraphGenerator.AddToAppGraphException("%s != %s [1]" % (tgt.target, nextabsreq))
                 tgt.nvisits += 1
             else:
                 chosenlink.targets[state] = ReqTarget(nextabsreq, state, nvisits=1)
@@ -1903,7 +1905,9 @@ class AppGraphGenerator(object):
             tgt = currabsreq.targets[state]
             if tgt.target != currabspage:
                 # cannot map the page to the current state, need to redo clustering
-                raise AppGraphGenerator.AddToAppGraphException("%s != %s" % (tgt.target, currabspage))
+                #if maxstate >= 577:
+                #    pdb.set_trace()
+                raise AppGraphGenerator.AddToAppGraphException("%s != %s [2]" % (tgt.target, currabspage))
             tgt.nvisits += 1
         else:
             # if this request is know to change state changes, do not propagate the current state, but recluster
@@ -2141,13 +2145,34 @@ class AppGraphGenerator(object):
                                 #self.logger.debug("DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)]))
                                 differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
 
-    def assignColor(self, assignments, edges, node, maxused):
+    def assignColor(self, assignments, edges, node, maxused, statereqrespmap):
+        # Assign to node "node" the highest color not already assigned to one of his neighbors
         neighs = [(n, assignments[n]) for n in edges[node] if n in assignments]
         neighcolors = frozenset(n[1] for n in neighs)
+        tostate = -1
+        if node != 0:
+            rr = statereqrespmap[node]
+            ar = rr.request.absrequest
+            assert node not in ar.colorassignstatepagemap
+            assignedfrom = assignments[rr.request.reducedstate]
+            if assignedfrom in ar.colorassignstatepagemap:
+                # check if the abstract request that lead to this state (node)
+                # has already marked to lead to some abstract page (abspage) in
+                # an already colored state (tostate)
+                toabspage, tostate = ar.colorassignstatepagemap[assignedfrom]
+                assert toabspage == rr.response.page.abspage
+                if tostate not in neighcolors:
+                    # pick the tostate color directly, as it is the only one
+                    # which will not generate a new state split
+                    assignments[node] = tostate
+                    return maxused
+
         for i in range(maxused, -1, -1) + [maxused+1]:
             if i not in neighcolors:
                 #self.logger.debug("ASSIGN %d %d <%s>" % (node, i, sorted(neighs)))
                 assignments[node] = i
+                if node != 0:
+                    ar.colorassignstatepagemap[assignedfrom] = (rr.response.page.abspage, i)
                 maxused = max(maxused, i)
                 break
             else:
@@ -2158,7 +2183,7 @@ class AppGraphGenerator(object):
         return maxused
 
 
-    def colorStateGraph(self, differentpairs, allstates):
+    def colorStateGraph(self, differentpairs, allstates, statereqrespmap):
         # XXX HOTSPOT
         #ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
 
@@ -2177,9 +2202,11 @@ class AppGraphGenerator(object):
 
         maxused = 0
 
+        for ar in self.absrequests:
+            ar.colorassignstatepagemap = {}
         for node in allstates:
             assert node not in assignments
-            maxused = self.assignColor(assignments, edges, node, maxused)
+            maxused = self.assignColor(assignments, edges, node, maxused, statereqrespmap)
 
         return assignments
 
@@ -2230,7 +2257,7 @@ class AppGraphGenerator(object):
         nstates = len(set(statemap))
         return nstates
 
-    def mergeStatesGreedyColoring(self, statemap):
+    def mergeStatesGreedyColoring(self, statemap, statereqrespmap):
 
         seentogether = PairCounter()
         differentpairs = PairCounter(False)
@@ -2242,28 +2269,23 @@ class AppGraphGenerator(object):
 
         olddifferentpairslen = -1
 
+#        if maxstate >= 321:
+#            self.logger.debug("DIFF %s", differentpairs)
         while True:
-
             self.propagateDifferestTargetStates(differentpairs)
-
-
             differentpairslen = len(differentpairs)
+#            if maxstate >= 321:
+#                self.logger.debug("DIFF %s", differentpairs)
             assert differentpairslen >= olddifferentpairslen
             if differentpairslen == olddifferentpairslen:
                 break
             else:
                 olddifferentpairslen = differentpairslen
-
             #writeColorableStateGraph(allstates, differentpairs)
-
-            assignments = self.colorStateGraph(differentpairs, allstates)
-
+            assignments = self.colorStateGraph(differentpairs, allstates, statereqrespmap)
             bins = self.createColorBins(lenallstates, assignments)
-
             self.updateStatemapFromColorBins(bins, assignments, statemap)
-
             self.logger.debug(output.darkred("almost final states %s"), sorted(bins))
-
             differentpairs.addallcombinations(bins)
 
 
@@ -2567,7 +2589,9 @@ class AppGraphGenerator(object):
 
         self.mergeStateReqRespMaps(statemap)
 
-        self.mergeStatesGreedyColoring(statemap)
+        statereqrespmap = self.assignReducedStateCreateStateReqRespMap(statemap)
+
+        self.mergeStatesGreedyColoring(statemap, statereqrespmap)
         #self.mergeStates(statemap)
 
         #self.logger.debug(statemap)
@@ -2576,7 +2600,7 @@ class AppGraphGenerator(object):
 
         self.mergeStateReqRespMaps(statemap)
 
-        self.assign_reduced_state(statemap)
+        self.assignReducedState(statemap)
 
 #        for ar in self.absrequests:
 #            if str(ar).find("users/home") != -1:
@@ -2587,7 +2611,7 @@ class AppGraphGenerator(object):
         # return last current state
         return statemap[-1]
 
-    def assign_reduced_state(self, statemap):
+    def assignReducedState(self, statemap):
         rr = self.reqrespshead
         while rr:
             assert rr.request.state != -1
@@ -2596,7 +2620,23 @@ class AppGraphGenerator(object):
             rr.response.page.reducedstate = statemap[rr.response.page.state]
             rr = rr.next
 
+    def assignReducedStateCreateStateReqRespMap(self, statemap):
+        rr = self.reqrespshead
+        statereqrespmap = {}
+        prevstate = -1
+        while rr:
+            assert rr.request.state != -1
+            assert rr.response.page.state != -1
+            rr.request.reducedstate = statemap[rr.request.state]
+            rr.response.page.reducedstate = statemap[rr.response.page.state]
+            if rr.request.reducedstate != rr.response.page.reducedstate:
+                assert rr.response.page.reducedstate not in statereqrespmap
+                statereqrespmap[rr.response.page.reducedstate] = rr
+            rr = rr.next
+        return statereqrespmap
+
     def mergeStateReqRespMaps(self, statemap):
+        # update the state to ReqResp map for AbstractPages
         for ap in self.abspages:
             newstatereqrespmap = defaultdict(list)
             for s, p in ap.statereqrespsmap.iteritems():
@@ -3465,9 +3505,9 @@ class Engine(object):
             #head.abslinks.printInfo()
             unvlinks_added = False
             for idx, link in head.abslinks.iteritems():
-                if maxstate >= 367 and str(link).find(r"posting.php") != -1 \
-                        and idx.type == Links.Type.FORM:
-                    pdb.set_trace()
+#                if maxstate >= 367 and str(link).find(r"posting.php") != -1 \
+#                        and idx.type == Links.Type.FORM:
+#                    pdb.set_trace()
                 if link.skip:
                     continue
                 newpath = [PathStep(head, idx, state)] + headpath

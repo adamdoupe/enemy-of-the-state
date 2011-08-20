@@ -16,7 +16,9 @@ colmap = {
         }
 
 MAX_LINES = 100000
+#MAX_LINES = 30000
 CHUNK_SIZE = 102400
+MAX_LINE_LEN=5000
 
 class LogReader(object):
 
@@ -48,7 +50,7 @@ class LogReader(object):
         colorre = re.compile(r'\x1b\x5b[^m]*m')
         valsre = re.compile(r'\x1b\x5b([0-9]+)(?:;([0-9]+))*m')
         nlines = 0
-        text = ""
+        lines = []
         with open(logfile, 'r') as f:
             while True:
                 newtext = f.read(CHUNK_SIZE)
@@ -63,13 +65,13 @@ class LogReader(object):
                 if len(newtext) == 0:
                     break
 
-            text = newtext[(p+1):]
+            lines.append(newtext[(p+1):])
             nlines = newnlines - still_needed
 
             while len(newtext) and nlines < MAX_LINES:
                 newtext = f.read(CHUNK_SIZE)
                 nlines += newtext.count('\n')
-                text += newtext
+                lines.append(newtext)
                 if len(newtext) == 0:
                     break
 
@@ -80,9 +82,18 @@ class LogReader(object):
         start = 0
         nexttag = None
         it = textbuffer.get_iter_at_offset(0)
+        text = ''.join(lines)
         lines = 0
         for m in colorre.finditer(text):
             newtext = text[start:m.start()]
+            startpos = 0
+            nlpos = newtext.find('\n')
+            while nlpos >= 0:
+                if nlpos-startpos > MAX_LINE_LEN:
+                    #print "cut", lines, nlpos
+                    newtext = newtext[:startpos+MAX_LINE_LEN] + newtext[nlpos:]
+                startpos = min(nlpos, startpos+MAX_LINE_LEN)+1
+                nlpos = newtext.find('\n', startpos)
             lines += newtext.count('\n')
             if lines % 10000 == 0:
                 print lines
