@@ -5,12 +5,15 @@ def handleError(self, record):
       raise
 logging.Handler.handleError = handleError
 
+import errno
+import os
 import urlparse
 import re
 import heapq
 import itertools
 import random
 import math
+import shutil
 
 LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
@@ -700,6 +703,9 @@ class Page(object):
     def content(self):
         return self.internal.asXml()
 
+    @lazyproperty
+    def isHtmlPage(self):
+        return htmlunit.HtmlPage.instance_(self)
 
 class AbstractLink(object):
 
@@ -2757,8 +2763,10 @@ class Crawler(object):
     class UnsubmittableForm(ActionFailure):
         pass
 
-    def __init__(self):
+    def __init__(self, dumpdir):
         self.logger = logging.getLogger(self.__class__.__name__)
+        # where to dump HTTP requests and responses
+        self.dumpdir = dumpdir
         #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.INTERNET_EXPLORER_6)
         #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.FIREFOX_3)
         #bw = htmlunit.BrowserVersion(
@@ -2780,6 +2788,18 @@ class Crawler(object):
         self.currreqresp = None
         # first RequestResponse object
         self.headreqresp = None
+
+    def dumpReqResp(self, reqresp):
+        assert self.dumpdir
+        basedir = "%s/%d" % (self.dumpdir, reqresp.instance)
+        os.mkdir(basedir)
+        with open("%s/request" % basedir, "w") as f:
+            f.write(str(reqresp.request))
+        with open("%s/response" % basedir, "w") as f:
+            f.write(reqresp.response.content.encode('utf8'))
+        if reqresp.response.page.isHtmlPage:
+            with open("%s/page" % basedir, "w") as f:
+                f.write(reqresp.response.page.content.encode('utf8'))
 
     def open(self, url):
         del self.refresh_urls[:]
@@ -2818,6 +2838,8 @@ class Crawler(object):
         response = Response(webresponse, page=page)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
+        if self.dumpdir:
+            self.dumpReqResp(reqresp)
         request.reqresp = reqresp
         page.reqresp = reqresp
 
@@ -2829,6 +2851,8 @@ class Crawler(object):
         response = Response(webresponse, page=redirect)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
+        if self.dumpdir:
+            self.dumpReqResp(reqresp)
         request.reqresp = reqresp
         redirect.reqresp = reqresp
 
@@ -2840,6 +2864,8 @@ class Crawler(object):
         response = Response(webresponse, page=error)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
+        if self.dumpdir:
+            self.dumpReqResp(reqresp)
         request.reqresp = reqresp
         error.reqresp = reqresp
 
@@ -2851,6 +2877,8 @@ class Crawler(object):
         response = Response(webresponse, page=error)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
+        if self.dumpdir:
+            self.dumpReqResp(reqresp)
         request.reqresp = reqresp
         error.reqresp = reqresp
 
@@ -3342,12 +3370,14 @@ class Engine(object):
 
     Actions = Constants("BACK", "ANCHOR", "FORM", "REDIRECT", "DONE")
 
-    def __init__(self, formfiller=None):
+    def __init__(self, formfiller=None, dumpdir=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.state = -1
         self.followingpath = False
         self.pathtofollow = []
         self.formfiller = formfiller
+        # where to dump HTTP requests and responses
+        self.dumpdir = dumpdir
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -3765,7 +3795,7 @@ class Engine(object):
     def main(self, urls):
         self.pc = None
         self.ag = None
-        cr = Crawler()
+        cr = Crawler(self.dumpdir)
         self.cr = cr
         global maxstate
 
@@ -3980,11 +4010,10 @@ def writeColorableStateGraph(allstates, differentpairs):
     with open('colorablestategraph.dot', 'w') as f:
         f.write(dot.to_string())
 
-
 if __name__ == "__main__":
     import sys
     import getopt
-    optslist, args = getopt.getopt(sys.argv[1:], "l:")
+    optslist, args = getopt.getopt(sys.argv[1:], "l:d:")
     opts = dict(optslist) if optslist else {}
     try:
         handler = logging.FileHandler(opts['-l'], 'w')
@@ -3992,6 +4021,20 @@ if __name__ == "__main__":
                 filemode='w')
     except KeyError:
         logging.basicConfig(level=logging.DEBUG)
+
+    try:
+        dumpdir = opts['-d']
+        # where to dump HTTP requests and responses
+        os.makedirs(dumpdir)
+    except KeyError:
+        pass
+    except OSError, e:
+        if e.errno != errno.EEXIST:
+            raise
+        num_re = re.compile(r"\d+")
+        for d in os.listdir(dumpdir):
+            if num_re.match(d):
+                shutil.rmtree("%s/%s" % (dumpdir, d))
 
     ff = FormFiller()
     login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo']})
@@ -4004,7 +4047,7 @@ if __name__ == "__main__":
     ff.add(login)
     login = FormFiller.Params({'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]})
     ff.add(login)
-    e = Engine(ff)
+    e = Engine(ff, dumpdir)
     try:
         e.main(args)
     except:
