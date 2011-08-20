@@ -377,7 +377,7 @@ class Response(object):
 
     @lazyproperty
     def content(self):
-        raise NotImplemented
+        return self.webresponse.getContentAsString()
 
     @lazyproperty
     def cookies(self):
@@ -697,6 +697,11 @@ class Page(object):
     @lazyproperty
     def links(self):
         return Links(self.anchors, self.forms, self.redirects)
+
+    @lazyproperty
+    def content(self):
+        return self.internal.asXml()
+
 
 class AbstractLink(object):
 
@@ -2166,6 +2171,8 @@ class AppGraphGenerator(object):
                 if tostate not in neighcolors:
                     # pick the tostate color directly, as it is the only one
                     # which will not generate a new state split
+                    #self.logger.debug("%d(%d) -> %d(%d), %s -> %s", rr.request.reducedstate, assignedfrom, node, tostate, rr.request.absrequest, rr.response.page.abspage)
+                    assert node == rr.response.page.reducedstate
                     assignments[node] = tostate
                     return maxused
 
@@ -2907,6 +2914,10 @@ class Crawler(object):
             page = anchor.internal.click()
             htmlpage = htmlunit.HtmlPage.cast_(page)
             reqresp = self.newPage(htmlpage)
+            #if reqresp.request.path.find("index.php") != -1 and \
+            #        reqresp.response.content.find(
+            #                "The newest registered user") == -1:
+            #    pdb.set_trace()
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
         except TypeError, e:
