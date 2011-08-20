@@ -696,6 +696,11 @@ class Page(object):
     def links(self):
         return Links(self.anchors, self.forms, self.redirects)
 
+    @lazyproperty
+    def content(self):
+        return self.internal.asXml()
+
+
 class AbstractLink(object):
 
     def __init__(self, links):
