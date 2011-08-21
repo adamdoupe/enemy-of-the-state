@@ -359,6 +359,24 @@ class Request(object):
     def __repr__(self):
         return str(self)
 
+    @lazyproperty
+    def dump(self):
+        lines = []
+        lines.append(self.method + " " + self.fullpathref)
+        for h in self.webrequest.getAdditionalHeaders().entrySet():
+            me = htmlunit.Map.Entry.cast_(h)
+            lines.append("%s: %s" % (me.key, me.value))
+        body = self.webrequest.getRequestBody()
+        if body:
+            lines.append("")
+            lines.append(body)
+        if self.params:
+            lines.append("\n\nParams:")
+            for p in self.params:
+                lines.append("%s=%s" % p)
+        lines.append("")
+        return '\n'.join(lines)
+
 
 class Response(object):
 
@@ -415,7 +433,7 @@ class RequestResponse(object):
             curr = curr.next
 
     def __str__(self):
-        return "%s -> %s" % (self.request, self.response)
+        return "%s -> %s %d" % (self.request, self.response, self.instance)
 
     def __repr__(self):
         return str(self)
@@ -705,7 +723,7 @@ class Page(object):
 
     @lazyproperty
     def isHtmlPage(self):
-        return htmlunit.HtmlPage.instance_(self)
+        return htmlunit.HtmlPage.instance_(self.internal)
 
 class AbstractLink(object):
 
@@ -2794,7 +2812,7 @@ class Crawler(object):
         basedir = "%s/%d" % (self.dumpdir, reqresp.instance)
         os.mkdir(basedir)
         with open("%s/request" % basedir, "w") as f:
-            f.write(str(reqresp.request))
+            f.write(reqresp.request.dump.encode('utf8'))
         with open("%s/response" % basedir, "w") as f:
             f.write(reqresp.response.content.encode('utf8'))
         if reqresp.response.page.isHtmlPage:
@@ -2971,14 +2989,16 @@ class Crawler(object):
                         i.setChecked(True)
                     else:
                         i.setChecked(False)
+                elif htmlunit.HtmlSubmitInput.instance_(i):
+                    pass
                 else:
                     i.setValueAttribute(v)
-                logger.debug("VALUE %s %s %s" % (i, i.getValueAttribute(), v))
+                logger.debug("VALUE %s '%s'=='%s'" % (i, i.getValueAttribute(), v))
 
             for i, v in zip(iform.getTextAreasByName(k), vv):
                 textarea = htmlunit.HtmlTextArea.cast_(i)
                 textarea.setText(v)
-                logger.debug("VALUE %s %s %s" % (i, i.getText(), v))
+                logger.debug("VALUE %s '%s'=='%s'" % (i, i.getText(), v))
 
 
     @staticmethod
