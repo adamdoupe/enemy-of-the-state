@@ -4044,6 +4044,7 @@ if __name__ == "__main__":
     except KeyError:
         logging.basicConfig(level=logging.DEBUG)
 
+    dumpdir = None
     try:
         dumpdir = opts['-d']
         # where to dump HTTP requests and responses
