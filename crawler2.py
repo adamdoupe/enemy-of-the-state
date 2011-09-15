@@ -3049,6 +3049,8 @@ class Crawler(object):
 
             isubmitter = self.getInternalSubmitter(iform, submitter)
 
+            attrs = list(iform.getAttributesMap().keySet())
+            self.logger.debug("FORM ATTRS %s", attrs)
             self.logger.debug("SUBMITTER %s", isubmitter)
 
             page = isubmitter.click()
