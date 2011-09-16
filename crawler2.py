@@ -1380,7 +1380,7 @@ def urlvector(request):
     query = request.query
     if query:
         querytoks = request.query.split('&')
-        keys, values = zip(*(i.split('=', 1) for i in querytoks))
+        keys, values = zip(*(i.split('=', 1) for i in querytoks if i))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     return tuple(urltoks)
@@ -1390,7 +1390,7 @@ def formvector(method, action, inputs, hiddens):
     query = action.query
     if query:
         querytoks = action.query.split('&')
-        keys, values = zip(*(i.split('=', 1) for i in querytoks))
+        keys, values = zip(*(i.split('=', 1) for i in querytoks if i))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     if inputs:
