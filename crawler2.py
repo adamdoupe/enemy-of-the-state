@@ -2798,6 +2798,9 @@ class Crawler(object):
         #self.webclient = htmlunit.WebClient(bw)
         self.webclient = htmlunit.WebClient()
         self.webclient.setThrowExceptionOnScriptError(True);
+
+        # We don't care if we crash the server, keep sending stuff
+        self.webclient.setThrowExceptionOnFailingStatusCode(False);
         self.webclient.setUseInsecureSSL(True)
         self.webclient.setRedirectEnabled(False)
         self.refresh_urls = []
