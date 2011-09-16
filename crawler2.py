@@ -76,6 +76,7 @@ from collections import defaultdict, deque, namedtuple
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
 import pdb
+import utils
 
 cond = 0
 debugstop = False
@@ -3310,6 +3311,22 @@ class FormFiller(object):
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.forms = defaultdict(FormFiller.ValuesList)
+        self.namedparams = defaultdict()
+
+    def add_named_params(self, names, values):
+        """ Add a named parameter to the FormFiller.
+        name can be a string or a list of strings
+        values can be a string of a list of strings        
+        """
+        assert values and names
+        name_list = utils.string_or_list_into_list(names)
+        values_list = utils.string_or_list_into_list(values)
+        for name in name_list:
+            if name in self.namedparams:
+                self.namedparams[name].extend(values_list)
+            else:
+                self.namedparams[name] = values_list[:]
+
 
     def add(self, k):
         self.forms[k.sortedkeys].append(k)
@@ -3352,7 +3369,10 @@ class FormFiller(object):
                 elif f.type == FormField.Type.HIDDEN:
                     value = f.value
                 elif f.type == FormField.Type.TEXT:
-                    value = rng.getWords()
+                    if f.name in self.namedparams:
+                        value = self.namedparams[f.name]
+                    else:
+                        value = rng.getWords()
                 elif f.type == FormField.Type.PASSWORD:
                     if password is None or not samepass:
                         password = rng.getPassword()
@@ -3360,8 +3380,11 @@ class FormFiller(object):
                         multiplepass = True
                     value = password
             elif f.tag == FormField.Tag.TEXTAREA:
-                value = rng.getWords(10)
-            res[f.name].append(value)
+                if f.name in self.namedparams:
+                    value = self.namedparams[f.name]
+                else:
+                    value = rng.getWords(10)
+            res[f.name].extend(utils.string_or_list_into_list(value))
         if samepass and not multiplepass:
             # if we were asked to use the same password, but there were no muitple password fields, return None
             return None
@@ -4072,6 +4095,7 @@ if __name__ == "__main__":
     ff.add(login)
     login = FormFiller.Params({'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]})
     ff.add(login)
+    ff.add_named_params(["email", "mail"], "adoupe@cs.ucsb.edu")
     e = Engine(ff, dumpdir)
     try:
         e.main(args)
