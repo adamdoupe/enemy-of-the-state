@@ -14,7 +14,6 @@ import itertools
 import random
 import math
 import shutil
-import urlparse
 
 LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
@@ -77,7 +76,6 @@ from collections import defaultdict, deque, namedtuple
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
 import pdb
-import utils
 
 cond = 0
 debugstop = False
@@ -681,37 +679,9 @@ class StateSet(frozenset):
         return str(self)
 
 
-
-def validanchor(current, href):
-    """ Returns true if the href on the current page is valid to visit.
-
-    current is the string URL of the current page and href is the string in the anchor.
-
-    We don't want to visit any other domains, mailto, emailto, javascript, and 
-    fragments of the current page (although that may help with executing JavaScript.
-    """
-
-    joined = urlparse.urljoin(current, href)
-
-    joined_parsed = urlparse.urlparse(joined)
-    current_parsed = urlparse.urlparse(current)
-
-    if joined_parsed.scheme != 'http':
-        return False
-
-    if joined_parsed.netloc != current_parsed.netloc:
-        return False
-
-    # valid if not the same path
-    if joined_parsed.path != current_parsed.path:
-        return True
-    # valid if not the same query string
-    # NOTE: could be in a different order, but don't worry about that for now
-    if joined_parsed.query != current_parsed.query:
-        return True
-
-    # This is just a link to the same page, so return false
-    return False
+def validanchor(a):
+    href = a.getHrefAttribute().strip()
+    return href and href.find('://') == -1 and not href.startswith("mailto:") and not href.startswith("emailto:") and not href.startswith("javascript:") and not href.startswith("#")
 
 class Page(object):
 
@@ -727,7 +697,7 @@ class Page(object):
 
     @lazyproperty
     def anchors(self):
-        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(self.internal.url.toString(), i.getHrefAttribute().strip())] if not self.redirect and not self.error else []
+        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(i)] if not self.redirect and not self.error else []
 
     @lazyproperty
     def forms(self):
@@ -1410,7 +1380,7 @@ def urlvector(request):
     query = request.query
     if query:
         querytoks = request.query.split('&')
-        keys, values = zip(*(i.split('=', 1) for i in querytoks if i))
+        keys, values = zip(*(i.split('=', 1) for i in querytoks))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     return tuple(urltoks)
@@ -1420,7 +1390,7 @@ def formvector(method, action, inputs, hiddens):
     query = action.query
     if query:
         querytoks = action.query.split('&')
-        keys, values = zip(*(i.split('=', 1) for i in querytoks if i))
+        keys, values = zip(*(i.split('=', 1) for i in querytoks))
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     if inputs:
@@ -2827,9 +2797,6 @@ class Crawler(object):
         #self.webclient = htmlunit.WebClient(bw)
         self.webclient = htmlunit.WebClient()
         self.webclient.setThrowExceptionOnScriptError(True);
-
-        # We don't care if we crash the server, keep sending stuff
-        self.webclient.setThrowExceptionOnFailingStatusCode(False);
         self.webclient.setUseInsecureSSL(True)
         self.webclient.setRedirectEnabled(False)
         self.refresh_urls = []
@@ -3002,8 +2969,8 @@ class Crawler(object):
         except TypeError, e:
             reqresp = self.handleNavigationException(e)
         anchor.to.append(reqresp)
-        # assert reqresp.request.fullpathref[-len(anchor.href):] == anchor.href, \
-        #         "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpathref)
+        assert reqresp.request.fullpathref[-len(anchor.href):] == anchor.href, \
+                "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpathref)
         return reqresp
 
 
@@ -3105,8 +3072,8 @@ class Crawler(object):
         reqresp.request.formparams = params
         form.to.append(reqresp)
         act = form.action.split('?')[0]
-        # assert reqresp.request.fullpathref.split('?')[0][-len(act):] == act, \
-        #         "Unhandled redirect %s !sub %s" % (act, reqresp.request.fullpathref)
+        assert reqresp.request.fullpathref.split('?')[0][-len(act):] == act, \
+                "Unhandled redirect %s !sub %s" % (act, reqresp.request.fullpathref)
         return reqresp
 
     def back(self):
@@ -3343,22 +3310,6 @@ class FormFiller(object):
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.forms = defaultdict(FormFiller.ValuesList)
-        self.namedparams = defaultdict()
-
-    def add_named_params(self, names, values):
-        """ Add a named parameter to the FormFiller.
-        name can be a string or a list of strings
-        values can be a string of a list of strings        
-        """
-        assert values and names
-        name_list = utils.string_or_list_into_list(names)
-        values_list = utils.string_or_list_into_list(values)
-        for name in name_list:
-            if name in self.namedparams:
-                self.namedparams[name].extend(values_list)
-            else:
-                self.namedparams[name] = values_list[:]
-
 
     def add(self, k):
         self.forms[k.sortedkeys].append(k)
@@ -3401,10 +3352,7 @@ class FormFiller(object):
                 elif f.type == FormField.Type.HIDDEN:
                     value = f.value
                 elif f.type == FormField.Type.TEXT:
-                    if f.name in self.namedparams:
-                        value = self.namedparams[f.name]
-                    else:
-                        value = rng.getWords()
+                    value = rng.getWords()
                 elif f.type == FormField.Type.PASSWORD:
                     if password is None or not samepass:
                         password = rng.getPassword()
@@ -3412,11 +3360,8 @@ class FormFiller(object):
                         multiplepass = True
                     value = password
             elif f.tag == FormField.Tag.TEXTAREA:
-                if f.name in self.namedparams:
-                    value = self.namedparams[f.name]
-                else:
-                    value = rng.getWords(10)
-            res[f.name].extend(utils.string_or_list_into_list(value))
+                value = rng.getWords(10)
+            res[f.name].append(value)
         if samepass and not multiplepass:
             # if we were asked to use the same password, but there were no muitple password fields, return None
             return None
@@ -4127,7 +4072,6 @@ if __name__ == "__main__":
     ff.add(login)
     login = FormFiller.Params({'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]})
     ff.add(login)
-    ff.add_named_params(["email", "mail"], "adoupe@cs.ucsb.edu")
     e = Engine(ff, dumpdir)
     try:
         e.main(args)
