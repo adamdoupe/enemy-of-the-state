@@ -32,7 +32,7 @@ class BaseCrawlerTest(unittest.TestCase):
         url = BASE_URL + '/single.html'
         e = self.e
         e.main([url])
-        self.assertTrue(len(e.reqresps) == 1)
+        self.assertTrue(e.cr.headreqresp.next is None)
         self.assertTrue(e.ag is None)
 
 if __name__ == '__main__':

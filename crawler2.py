@@ -3679,8 +3679,7 @@ class Engine(object):
             if unvisited:
                 self.logger.debug(output.green("unvisited in current page: %s"), unvisited)
                 return (Engine.Actions.ANCHOR, reqresp.response.page.links[unvisited])
-
-        if reqresp.response.page.abspage:
+        else:
             # if there is only one REDIRECT, follow it
             abspage = reqresp.response.page.abspage
             linksiter = abspage.abslinks.iteritems()
@@ -3762,7 +3761,11 @@ class Engine(object):
                 # very likely we visited all the pages or we can no longer go back to some older states anyway
                 return (Engine.Actions.DONE, )
 
-        # no path found, step back
+        if not reqresp.prev:
+            # no path found and at the first page
+            return (Engine.Actions.DONE, )
+
+        # no path found, step back, if not the first page
         return (Engine.Actions.BACK, )
 
     def submitForm(self, form, params):
