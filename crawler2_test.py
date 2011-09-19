@@ -3,6 +3,7 @@
 import crawler2 as crawler
 
 import BaseHTTPServer
+import logging
 import SimpleHTTPServer
 import threading
 import unittest
@@ -36,8 +37,10 @@ class LocalCrawlerTest(unittest.TestCase):
         url = BASE_URL + 'single/single.html'
         e = self.e
         e.main([url])
-        self.assertTrue(e.cr.headreqresp.next is None)
-        self.assertTrue(e.ag is None)
+        self.assertIsNone(e.cr.headreqresp.next)
+        self.assertIsInstance(e.cr.headreqresp.response.page, crawler.Page)
+        self.assertEqual(len(e.cr.headreqresp.response.page.links), 0)
+        self.assertIsNone(e.ag)
 
 class ExtCrawlerTest(unittest.TestCase):
     def setUp(self):
@@ -48,8 +51,25 @@ class ExtCrawlerTest(unittest.TestCase):
         url = EXT_BASE_URL + 'single/single.html'
         e = self.e
         e.main([url])
-        self.assertTrue(e.cr.headreqresp.next is None)
-        self.assertTrue(e.ag is None)
+        self.assertIsNone(e.cr.headreqresp.next)
+        self.assertIsInstance(e.cr.headreqresp.response.page, crawler.Page)
+        self.assertEqual(len(e.cr.headreqresp.response.page.links), 0)
+        self.assertIsNone(e.ag)
+
+    def test_simple(self):
+        url = EXT_BASE_URL + 'simple/'
+        e = self.e
+        e.main([url])
+        self.assertEqual(len(e.ag.abspages), 3)
+        self.assertEqual(len(e.ag.absrequests), 4)
+        urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
+        self.assertEqual(len(urls), 4)
+        self.assertEqual(set(['',
+                              'addpage.php',
+                              'index.php',
+                              'static.php']),
+                         urls)
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
     unittest.main()
