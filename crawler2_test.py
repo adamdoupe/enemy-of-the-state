@@ -9,7 +9,7 @@ import unittest
 
 LISTEN_ADDRESS = '127.0.0.1'
 LISTEN_PORT = 4566
-BASE_URL = 'http://%s:%d/' % (LISTEN_ADDRESS, LISTEN_PORT)
+BASE_URL = 'http://%s:%d/test/' % (LISTEN_ADDRESS, LISTEN_PORT)
 
 class BaseCrawlerTest(unittest.TestCase):
     @classmethod
@@ -29,7 +29,7 @@ class BaseCrawlerTest(unittest.TestCase):
         self.e = crawler.Engine(self.ff, None)
 
     def test_single_page(self):
-        url = BASE_URL + '/single.html'
+        url = BASE_URL + 'single/single.html'
         e = self.e
         e.main([url])
         self.assertTrue(e.cr.headreqresp.next is None)
