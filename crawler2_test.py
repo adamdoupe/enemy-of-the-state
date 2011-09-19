@@ -9,9 +9,13 @@ import unittest
 
 LISTEN_ADDRESS = '127.0.0.1'
 LISTEN_PORT = 4566
-BASE_URL = 'http://%s:%d/test/' % (LISTEN_ADDRESS, LISTEN_PORT)
+BASE_URL = 'http://%s:%d/test/sites/' % (LISTEN_ADDRESS, LISTEN_PORT)
 
-class BaseCrawlerTest(unittest.TestCase):
+EXT_LISTEN_ADDRESS = '127.0.0.1'
+EXT_LISTEN_PORT = 80
+EXT_BASE_URL = 'http://%s:%d/test/sites/' % (EXT_LISTEN_ADDRESS, EXT_LISTEN_PORT)
+
+class LocalCrawlerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server = BaseHTTPServer.HTTPServer(
@@ -30,6 +34,18 @@ class BaseCrawlerTest(unittest.TestCase):
 
     def test_single_page(self):
         url = BASE_URL + 'single/single.html'
+        e = self.e
+        e.main([url])
+        self.assertTrue(e.cr.headreqresp.next is None)
+        self.assertTrue(e.ag is None)
+
+class ExtCrawlerTest(unittest.TestCase):
+    def setUp(self):
+        self.ff = crawler.FormFiller()
+        self.e = crawler.Engine(self.ff, None)
+
+    def test_single_page(self):
+        url = EXT_BASE_URL + 'single/single.html'
         e = self.e
         e.main([url])
         self.assertTrue(e.cr.headreqresp.next is None)
