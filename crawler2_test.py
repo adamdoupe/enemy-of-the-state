@@ -4,6 +4,7 @@ import crawler2 as crawler
 
 import BaseHTTPServer
 import logging
+import os
 import SimpleHTTPServer
 import threading
 import unittest
@@ -58,8 +59,14 @@ class ExtCrawlerTest(unittest.TestCase):
 
     def test_simple(self):
         # Truncate status files
-        open('test/sites/simple/pages.data', 'w').close()
-        open('test/sites/simple/pages.lock', 'w').close()
+        fd = os.open('test/sites/simple/pages.data',
+                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.fchmod(fd, 0666)
+        os.close(fd)
+        fd = os.open('test/sites/simple/pages.lock',
+                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.fchmod(fd, 0666)
+        os.close(fd)
         url = EXT_BASE_URL + 'simple/index.php'
         e = self.e
         e.main([url])
