@@ -57,19 +57,22 @@ class ExtCrawlerTest(unittest.TestCase):
         self.assertIsNone(e.ag)
 
     def test_simple(self):
-        url = EXT_BASE_URL + 'simple/'
+        # Truncate status files
+        open('test/sites/simple/pages.data', 'w').close()
+        open('test/sites/simple/pages.lock', 'w').close()
+        url = EXT_BASE_URL + 'simple/index.php'
         e = self.e
         e.main([url])
-        self.assertEqual(len(e.ag.abspages), 3)
         self.assertEqual(len(e.ag.absrequests), 4)
         urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
-        self.assertEqual(len(urls), 4)
-        self.assertEqual(set(['',
-                              'addpage.php',
+        self.assertEqual(len(urls), 21)
+        self.assertEqual(set(['viewpage.php?id=%d' % i for i in range(18)] +
+                             ['addpage.php',
                               'index.php',
                               'static.php']),
                          urls)
+        self.assertEqual(len(e.ag.abspages), 4)
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
+    #logging.basicConfig(level=logging.DEBUG)
     unittest.main()

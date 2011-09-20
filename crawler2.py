@@ -443,7 +443,7 @@ class RequestResponse(object):
 
 class Link(object):
 
-    xpathsimplifier = re.compile(r"\[[^\]*]\]")
+    xpathsimplifier = re.compile(r"\[[^\]]*\]")
 
     def __init__(self, internal, reqresp):
         assert internal
@@ -939,7 +939,7 @@ class Links(object):
         assert val.nleaves == len(list(val.iterleaves()))
         if val.nleaves > 1:
             self.logger.debug(output.red("******** PICKING ONE *******"))
-            pdb.set_trace()
+            ret = rng.choice([i for i in val.iterleaves()])
         if not val.value:
             self.logger.debug(output.red("******** INCOMPLETE PATH %s *******"), linkidx)
         ret = val.iterleaves().next()
@@ -1513,14 +1513,30 @@ class PageClusterer(object):
 
     def printlevelstat(self, level, n=0):
         med = median((i.nleaves for i in level.itervalues()))
-        self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
+        self.logger.debug(output.green(' ' * n + "MED %f nleaves=%d len(k)=%d depth=%d"),
+                                       med,
+                                       level.nleaves,
+                                       len(level.keys()),
+                                       level.depth)
         for k, v in level.iteritems():
             nleaves = v.nleaves
             depth = v.depth
             if v and v.clusterable:
-                self.logger.debug(output.yellow(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
+                self.logger.debug(
+                        output.yellow(
+                            ' ' * n + "K %s nleaves=%d r=%.2f depth=%d"),
+                        k,
+                        nleaves,
+                        float(nleaves)/med,
+                        depth)
             else:
-                self.logger.debug(output.green(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
+                self.logger.debug(
+                        output.green(
+                            ' ' * n + "K %s nleaves=%d r=%.2f depth=%d"),
+                        k,
+                        nleaves,
+                        float(nleaves)/med,
+                        depth)
             if v:
                 self.printlevelstat(v, n+1)
 
@@ -3534,9 +3550,16 @@ class Engine(object):
         return dist
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
+#        if maxstate >= 100:
+#            import pdb; pdb.set_trace()
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
 #        self.logger.debug("COSTS", costs)
         #self.logger.debug("NCOST", [i[0].normalized for i in costs])
+        # Remove links with high penalty
+        costs = [i for i in costs if i[0].normalized[1] < 3]
+        if not costs:
+            # costs might be empty after this filtering
+            return
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         if priority == 0:
@@ -3633,6 +3656,8 @@ class Engine(object):
                             raise NotImplementedError
         nvisited = len(set(i[0] for i in seen))
         if candidates:
+#            if maxstate >= 100:
+#                import pdb; pdb.set_trace()
             self.logger.debug("CAND %s", candidates)
             return candidates[0].path, nvisited
         else:
@@ -3694,7 +3719,23 @@ class Engine(object):
                 # then follow it
                 if firstlink and firstlink[0].type == Links.Type.REDIRECT:
                     if self.cr.steppingback:
-                        self.logger.debug("page contains only a rediect, but we are stepping back; keep stepping back")
+                        if not reqresp.request.absrequest.changingstate:
+                            self.logger.debug("page contains only a rediect,"
+                                    " but we are stepping back; keep stepping"
+                                    "back")
+                            # reqresp.request.absrequest.changingstate should be
+                            # an OR of all
+                            # corresponding request.changingstate
+                            assert not reqresp.request.changingstate
+                            return (Engine.Actions.BACK, )
+                        else:
+                            self.logger.info("page contains only a rediect,"
+                                    " but we are stepping back; however the"
+                                    " last request caused a state transition,"
+                                    " so terminating")
+                            # cannot step back on a request that changed the state
+                            # (XXX actually we could... but we would need to refresh the previous page)
+                            return (Engine.Actions.DONE, )
                         return (Engine.Actions.BACK, )
                     else:
                         self.logger.debug("page contains only a rediect, following it")
@@ -3716,7 +3757,7 @@ class Engine(object):
                                     probablyseen == rr.request.absrequest
                             probablyseen = rr.request.absrequest
                         else:
-                            # XXX we are matching only of tragte and anot on
+                            # XXX we are matching only on target and not on
                             # source state, so it might detect that there was a
                             # state transition when there was none. it should
                             # not be an issue at this stage, but could it create
@@ -3726,6 +3767,8 @@ class Engine(object):
                             break
                 else:
                     # we should always be able to find the destination page in the target object
+#                    if not probablyseen:
+#                        import pdb; pdb.set_trace()
                     assert probablyseen
                     recentlyseen.add(probablyseen)
                 if found:
@@ -3765,8 +3808,21 @@ class Engine(object):
             # no path found and at the first page
             return (Engine.Actions.DONE, )
 
-        # no path found, step back, if not the first page
-        return (Engine.Actions.BACK, )
+        if not reqresp.request.absrequest.changingstate:
+            # reqresp.request.absrequest.changingstate should be an OR of all
+            # corresponding request.changingstate
+            assert not reqresp.request.changingstate
+            # no path found, step back
+            return (Engine.Actions.BACK, )
+        else:
+            self.logger.info("cannd find path to unvisited, we would like to"
+                    " step back; however the"
+                    " last request caused a state transition,"
+                    " so terminating")
+            # cannot step back on a request that changed the state
+            # (XXX actually we could... but we would need to refresh the previous page)
+            return (Engine.Actions.DONE, )
+
 
     def submitForm(self, form, params):
         if params is None:
