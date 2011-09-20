@@ -19,6 +19,9 @@ LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
 QUERY_BOOST=0.1
 
+# Stop exploring links with PENALTY_THRESHOLD or higher penalty
+PENALTY_THRESHOLD = 3
+
 ignoreUrlParts = [
         re.compile(r'&sid=[a-f0-9]{32}'),
         re.compile(r'sid=[a-f0-9]{32}&'),
@@ -3556,7 +3559,7 @@ class Engine(object):
 #        self.logger.debug("COSTS", costs)
         #self.logger.debug("NCOST", [i[0].normalized for i in costs])
         # Remove links with high penalty
-        costs = [i for i in costs if i[0].normalized[1] < 3]
+        costs = [i for i in costs if i[0].normalized[1] < PENALTY_THRESHOLD]
         if not costs:
             # costs might be empty after this filtering
             return
