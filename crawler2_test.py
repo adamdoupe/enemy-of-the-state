@@ -81,6 +81,7 @@ class ExtCrawlerTest(unittest.TestCase):
                               'static.php']),
                          urls)
         self.assertEqual(len(e.ag.abspages), 4)
+        self.assertTrue(e.ag.nstates > 10)
 
     def test_changing_state(self):
         os.chmod(TEST_BASE_PATH + '/changing_state', 0777)
@@ -104,6 +105,7 @@ class ExtCrawlerTest(unittest.TestCase):
                               'changestate.php']),
                          urls)
         self.assertEqual(len(e.ag.abspages), 4)
+        self.assertEqual(e.ag.nstates, 2)
 
 if __name__ == '__main__':
     #logging.basicConfig(level=logging.DEBUG)
