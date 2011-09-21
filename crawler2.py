@@ -19,12 +19,37 @@ LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
 QUERY_BOOST=0.1
 
+# Stop exploring links with PENALTY_THRESHOLD or higher penalty
+PENALTY_THRESHOLD = 3
+
+# Size of the running verage vector for deciding if we are doing progress
+RUNNING_AVG_SIZE = 10
+
 ignoreUrlParts = [
         re.compile(r'&sid=[a-f0-9]{32}'),
         re.compile(r'sid=[a-f0-9]{32}&'),
         re.compile(r'\?sid=[a-f0-9]{32}$'),
         re.compile(r'^sid=[a-f0-9]{32}$'),
         ]
+
+class RunningAverage(object):
+    def __init__(self, size):
+        self.vec = [0] * size
+        self.epoch = -1
+
+    # at every epoch increse, the history is reset to 0
+    def add(self, v, epoch=-1):
+        if epoch > self.epoch:
+            self.epoch = epoch
+            self.reset()
+        self.vec = self.vec[1:] + [v]
+
+    def average(self):
+        return sum(self.vec) / float(len(self.vec))
+
+    def reset(self):
+        self.vec = [0] * len(self.vec)
+
 
 def filterIgnoreUrlParts(s):
     if s:
@@ -443,7 +468,7 @@ class RequestResponse(object):
 
 class Link(object):
 
-    xpathsimplifier = re.compile(r"\[[^\]*]\]")
+    xpathsimplifier = re.compile(r"\[[^\]]*\]")
 
     def __init__(self, internal, reqresp):
         assert internal
@@ -939,7 +964,7 @@ class Links(object):
         assert val.nleaves == len(list(val.iterleaves()))
         if val.nleaves > 1:
             self.logger.debug(output.red("******** PICKING ONE *******"))
-            pdb.set_trace()
+            ret = rng.choice([i for i in val.iterleaves()])
         if not val.value:
             self.logger.debug(output.red("******** INCOMPLETE PATH %s *******"), linkidx)
         ret = val.iterleaves().next()
@@ -1101,10 +1126,6 @@ class AbstractPage(object):
         self.statereqrespsmap = defaultdict(list)
         self.seenstates = set()
         self._str = None
-        #self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in self.reqresps))]
-        #self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in self.reqresps))]
-        #self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in self.reqresps))]
-        #self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
         self.abslinks = AbstractLinks([rr.response.page.linkstree
                 for rr in self.reqresps])
 
@@ -1513,14 +1534,30 @@ class PageClusterer(object):
 
     def printlevelstat(self, level, n=0):
         med = median((i.nleaves for i in level.itervalues()))
-        self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
+        self.logger.debug(output.green(' ' * n + "MED %f nleaves=%d len(k)=%d depth=%d"),
+                                       med,
+                                       level.nleaves,
+                                       len(level.keys()),
+                                       level.depth)
         for k, v in level.iteritems():
             nleaves = v.nleaves
             depth = v.depth
             if v and v.clusterable:
-                self.logger.debug(output.yellow(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
+                self.logger.debug(
+                        output.yellow(
+                            ' ' * n + "K %s nleaves=%d r=%.2f depth=%d"),
+                        k,
+                        nleaves,
+                        float(nleaves)/med,
+                        depth)
             else:
-                self.logger.debug(output.green(' ' * n + "K %s %d %f depth %d"), k, nleaves, nleaves/med, depth)
+                self.logger.debug(
+                        output.green(
+                            ' ' * n + "K %s nleaves=%d r=%.2f depth=%d"),
+                        k,
+                        nleaves,
+                        float(nleaves)/med,
+                        depth)
             if v:
                 self.printlevelstat(v, n+1)
 
@@ -1719,6 +1756,7 @@ class AppGraphGenerator(object):
         self.statechangescores = statechangescores
         self.formfiller = formfiller
         self.crawler = crawler
+        self.nstates = 0
 
     def updatepageclusters(self, abspages):
         self.abspages = abspages
@@ -2322,156 +2360,10 @@ class AppGraphGenerator(object):
             differentpairs.addallcombinations(bins)
 
 
-        nstates = self.refreshStatemap(statemap)
+        self.nstates = self.refreshStatemap(statemap)
 
-        self.logger.debug(output.darkred("final states %d %s"), nstates, sorted(bins))
+        self.logger.debug(output.darkred("final states %d %s"), self.nstates, sorted(bins))
 
-
-
-
-    def mergeStates(self, statemap):
-        equalstates = set((StateSet(statemap), ))
-        seentogether = PairCounter()
-        differentpairs = PairCounter()
-
-        # try to detect which states are actually equivalent to older ones
-        # assume all staes are eqivalent, and split the set of states into bins
-        # when two states prove to be non equivalent
-        for ar in sorted(self.absrequests):
-            diffbins = defaultdict(set)
-            equalbins = defaultdict(set)
-            for s, t in ar.targets.iteritems():
-                diffbins[t.target].add(s)
-                # these quality-only bins are usful in the case the last examined pages caused a state transition:
-                # we need the latest state to appear in at least one bin!
-                equalbins[t.target].add(t.transition)
-            statebins = [StateSet(i) for i in diffbins.itervalues()]
-            equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
-
-            #self.logger.debug(output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar)))
-            #self.logger.debug(output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins))))
-
-            for sb in statebins:
-                seentogether.addset(sb)
-            for esb in equalstatebins:
-                seentogether.addset(esb)
-
-            differentpairs.addallcombinations(statebins)
-
-
-            equalstates = self.addStateBins(statebins, equalstates)
-            self.dropRedundantStateGroups(equalstates)
-
-            #self.logger.debug(output.darkred("ES %s" % sorted(equalstates)))
-
-
-        # in the previous step, we marked as different states that were leading to different target pages,
-        # regardless of the target state
-        # now that we know that some states are different for sure,
-        # let's do a second scan taking into considereation also the state of the target page
-        # marking as different state that lead to the the same target page, but in diferent states
-        again1 = True
-        while differentpairs:
-            again1 = False
-            again2 = True
-            while again2:
-                again2 = False
-                currentdifferentpairs = differentpairs
-                differentpairs = PairCounter()
-                for ar in sorted(self.absrequests):
-                    targetbins = defaultdict(set)
-                    targetstatebins = defaultdict(set)
-                    for s, t in ar.targets.iteritems():
-                        targetbins[t.target].add(t.transition)
-                        targetstatebins[(t.target, t.transition)].add(s)
-
-                    for t, states in sorted(targetbins.items()):
-                        if len(states) > 1:
-                            targetequalstates = set([StateSet(states)])
-                            #self.logger.debug("preTES", targetequalstates, ar, t)
-
-                            statelist = sorted(states)
-
-                            for i, a in enumerate(statelist):
-                                for b in statelist[i+1:]:
-                                    if currentdifferentpairs.get(a, b):
-                                        #self.logger.debug("DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)]))
-                                        differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
-                                        targetequalstates = self.addStateBins([StateSet([a]), StateSet([b])], targetequalstates)
-                                        targetequalstates = self.dropRedundantStateGroupsMild(targetequalstates)
-
-                            self.dropRedundantStateGroups(targetequalstates)
-                            #self.logger.debug("TES", targetequalstates, ar, t)
-
-                            startstatebins = set(reduce(lambda a, b: StateSet(a | b), (StateSet(targetstatebins[(t, ts)]) for ts in esb)) for esb in targetequalstates)
-
-                            #self.logger.debug("SSB", startstatebins, ar, t)
-
-                            newequalstates = self.addStateBins(startstatebins, equalstates)
-                            self.dropRedundantStateGroups(newequalstates)
-                            if newequalstates != equalstates:
-                                equalstates = newequalstates
-                                again2 = True
-                                #self.logger.debug(output.darkred("ES %s" % sorted(equalstates)))
-
-                assert len(differentpairs) > 0 or not again2, "%s %s %s" % (again2, differentpairs, (len(differentpairs) > 0))
-
-            differentpairs = PairCounter()
-
-            sumbinlen = sum(len(i) for i in equalstates)
-            while sumbinlen != len(set(statemap)):
-                again1 = True
-                self.logger.debug("unable to perform state allocation %d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates))
-
-                cntdict = defaultdict(int)
-                for es in equalstates:
-                    for s in es:
-                        cntdict[s] += 1
-                violating = sorted(((v, s) for s, v in cntdict.iteritems() if v > 1), key=lambda x: (-x[1], x[0]))
-                self.logger.debug("states in multiple groups %s" % violating)
-                assert violating, "%d %d\n\t%s" % (sumbinlen, len(set(statemap)), equalstates)
-
-                multiples = StateSet(i[1] for i in violating)
-
-                # if a state appras in multiple sets, choose the set that contains the elements
-                # it was seen together the biggest number of times
-                for m in multiples:
-                    containingsets = [i for i in sorted(equalstates) if m in i]
-                    reducedcontainingsets = [i - multiples for i in containingsets]
-                    containingsetscores = [sum(seentogether.get(m, i) for i in cs if i != m) for cs in reducedcontainingsets]
-
-                    bestset = max((score, s) for score, s in zip(containingsetscores, containingsets))[1]
-
-                    self.logger.debug("keep state %s in stateset %s" % (m, bestset))
-                    #self.logger.debug([i for i in zip(containingsetscores, containingsets, reducedcontainingsets)])
-
-                    for (cs, rcs) in zip(containingsets, reducedcontainingsets):
-                        if cs != bestset:
-                            equalstates.remove(cs)
-                            equalstates.add(StateSet(cs - frozenset([m])))
-                            for ds in rcs:
-                                if ds != m:
-                                    differentpairs.add(ds, m)
-                sumbinlen = sum(len(i) for i in equalstates)
-
-            self.logger.debug(output.darkred("almost-final state allocation %s" % equalstates))
-
-            assert again1 == (len(differentpairs) > 0), "%s %s %s" % (again1, differentpairs, (len(differentpairs) > 0))
-
-        self.logger.debug(output.darkred("final state allocation %s" % equalstates))
-
-        equalstatemap = {}
-        for es in equalstates:
-            mins = min(es)
-            for s in es:
-                equalstatemap[s] = mins
-
-
-        for i in range(len(statemap)):
-            statemap[i] = equalstatemap[statemap[i]]
-
-        nstates = len(set(statemap))
-        self.logger.debug("final states %d", nstates)
 
     def reqstatechangescore(self, absreq, dist):
 #        if str(absreq).find("action.php?action=add") != -1:
@@ -2611,9 +2503,9 @@ class AppGraphGenerator(object):
 
         self.minimizeStatemap(statemap)
 
-        nstates = lenstatemap
+        self.nstates = lenstatemap
 
-        self.logger.debug("statemap states %d", nstates)
+        self.logger.debug("statemap states %d", self.nstates)
         #self.logger.debug(statemap)
 
         self.collapseGraph(statemap)
@@ -2625,7 +2517,6 @@ class AppGraphGenerator(object):
         statereqrespmap = self.assignReducedStateCreateStateReqRespMap(statemap)
 
         self.mergeStatesGreedyColoring(statemap, statereqrespmap)
-        #self.mergeStates(statemap)
 
         #self.logger.debug(statemap)
 
@@ -3404,6 +3295,7 @@ class Engine(object):
         self.formfiller = formfiller
         # where to dump HTTP requests and responses
         self.dumpdir = dumpdir
+        self.running_visited_avg = RunningAverage(RUNNING_AVG_SIZE)
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -3423,7 +3315,9 @@ class Engine(object):
                 return None
 
         # find unvisited anchor
-        for i, aa in abspage.absanchors.links.iteritems():
+        # XXX looks like the following code is never reached
+        assert False
+        for i, aa in abspage.abslinks.iteritems():
             if i.type == Links.Type.ANCHOR:
                 if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
                     return i
@@ -3536,9 +3430,18 @@ class Engine(object):
         return dist
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
+#        if maxstate >= 100:
+#            import pdb; pdb.set_trace()
+#        if str(head).find('changestate') != -1:
+#            import pdb; pdb.set_trace()
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
 #        self.logger.debug("COSTS", costs)
         #self.logger.debug("NCOST", [i[0].normalized for i in costs])
+        # Remove links with high penalty
+        costs = [i for i in costs if i[0].normalized[1] < PENALTY_THRESHOLD]
+        if not costs:
+            # costs might be empty after this filtering
+            return
         mincost = min(costs)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         if priority == 0:
@@ -3560,6 +3463,8 @@ class Engine(object):
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
         # recentlyseen is the set of requests done since last state change
+#        if str(startpage).find("index.php") != -1 and maxstate > 170:
+#            import pdb; pdb.set_trace()
         heads = [(Dist(), startpage, startstate, [])]
         seen = set()
         candidates = []
@@ -3633,8 +3538,11 @@ class Engine(object):
                         else:
                             # TODO handle state changes
                             raise NotImplementedError
+        # get the number of abstract pages reachable from here
         nvisited = len(set(i[0] for i in seen))
         if candidates:
+#            if maxstate >= 100:
+#                import pdb; pdb.set_trace()
             self.logger.debug("CAND %s", candidates)
             return candidates[0].path, nvisited
         else:
@@ -3681,8 +3589,7 @@ class Engine(object):
             if unvisited:
                 self.logger.debug(output.green("unvisited in current page: %s"), unvisited)
                 return (Engine.Actions.ANCHOR, reqresp.response.page.links[unvisited])
-
-        if reqresp.response.page.abspage:
+        else:
             # if there is only one REDIRECT, follow it
             abspage = reqresp.response.page.abspage
             linksiter = abspage.abslinks.iteritems()
@@ -3697,8 +3604,23 @@ class Engine(object):
                 # then follow it
                 if firstlink and firstlink[0].type == Links.Type.REDIRECT:
                     if self.cr.steppingback:
-                        self.logger.debug("page contains only a rediect, but we are stepping back; keep stepping back")
-                        return (Engine.Actions.BACK, )
+                        if not reqresp.request.absrequest.changingstate:
+                            self.logger.debug("page contains only a rediect,"
+                                    " but we are stepping back; keep stepping"
+                                    "back")
+                            # reqresp.request.absrequest.changingstate should be
+                            # an OR of all
+                            # corresponding request.changingstate
+                            assert not reqresp.request.changingstate
+                            return (Engine.Actions.BACK, )
+                        else:
+                            self.logger.info("page contains only a rediect,"
+                                    " but we are stepping back; however the"
+                                    " last request caused a state transition,"
+                                    " so terminating")
+                            # cannot step back on a request that changed the state
+                            # (XXX actually we could... but we would need to refresh the previous page)
+                            return (Engine.Actions.DONE, )
                     else:
                         self.logger.debug("page contains only a rediect, following it")
                         return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
@@ -3719,7 +3641,7 @@ class Engine(object):
                                     probablyseen == rr.request.absrequest
                             probablyseen = rr.request.absrequest
                         else:
-                            # XXX we are matching only of tragte and anot on
+                            # XXX we are matching only on target and not on
                             # source state, so it might detect that there was a
                             # state transition when there was none. it should
                             # not be an issue at this stage, but could it create
@@ -3729,6 +3651,8 @@ class Engine(object):
                             break
                 else:
                     # we should always be able to find the destination page in the target object
+#                    if not probablyseen:
+#                        import pdb; pdb.set_trace()
                     assert probablyseen
                     recentlyseen.add(probablyseen)
                 if found:
@@ -3739,7 +3663,16 @@ class Engine(object):
             #self.logger.debug("recentlyseen", recentlyseen)
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
             if self.ag:
-                self.logger.debug("visited %d/%d abstract pages", nvisited, len(self.ag.abspages))
+                # the running average history will be reset at envery discovery
+                # of new abstract pages
+                self.running_visited_avg.add(
+                        float(nvisited)/len(self.ag.abspages),
+                        len(self.ag.abspages))
+                self.logger.debug("visited %d/%d (%f) abstract pages (avg %f)",
+                                  nvisited,
+                                  len(self.ag.abspages),
+                                  float(nvisited)/len(self.ag.abspages),
+                                  self.running_visited_avg.average())
             self.logger.debug(output.green("PATH %s"), path)
             if path:
                 # if there is a state change along the path, drop all following steps
@@ -3759,13 +3692,47 @@ class Engine(object):
                 debug_set.add(nexthop.idx.path[1:])
                 # pass the index too, in case there are some form parameters specified
                 return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
-            elif self.ag and float(nvisited)/len(self.ag.abspages) > 0.9:
-                # we can reach almost everywhere form the current page, still we cannot find unvisited links
+            elif (self.ag and  # we have an application graph
+                  # we are not doing progress
+                  float(nvisited)/len(self.ag.abspages) <= self.running_visited_avg.average()):
+                # we cannot find unvisited links and we cannot make progress
                 # very likely we visited all the pages or we can no longer go back to some older states anyway
                 return (Engine.Actions.DONE, )
+            else:
+                self.logger.info("no new path found, but we have not explored"
+                                 " enough")
+                unv_anchors = []
+                for idx, al in abspage.abslinks.iteritems():
+                    if idx.type == Links.Type.ANCHOR:
+                        assert self.state in al.targets
+                        if al.targets[self.state].nvisits == 0:
+                            unv_anchors.append(idx)
+                if unv_anchors:
+                    chosen = rng.choice(unv_anchors)
+                    self.logger.info("picking unvisited anchor %s", chosen)
+                    return (Engine.Actions.ANCHOR,
+                            reqresp.response.page.links[chosen])
 
-        # no path found, step back
-        return (Engine.Actions.BACK, )
+        if not reqresp.prev:
+            # no path found and at the first page
+            self.logger.info("stepped back to the first page, terminating")
+            return (Engine.Actions.DONE, )
+
+        if not reqresp.request.absrequest.changingstate:
+            # reqresp.request.absrequest.changingstate should be an OR of all
+            # corresponding request.changingstate
+            assert not reqresp.request.changingstate
+            # no path found, step back
+            return (Engine.Actions.BACK, )
+        else:
+            self.logger.info("cannd find path to unvisited, we would like to"
+                    " step back; however the"
+                    " last request caused a state transition,"
+                    " so terminating")
+            # cannot step back on a request that changed the state
+            # (XXX actually we could... but we would need to refresh the previous page)
+            return (Engine.Actions.DONE, )
+
 
     def submitForm(self, form, params):
         if params is None:
