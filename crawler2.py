@@ -22,12 +22,34 @@ QUERY_BOOST=0.1
 # Stop exploring links with PENALTY_THRESHOLD or higher penalty
 PENALTY_THRESHOLD = 3
 
+# Size of the running verage vector for deciding if we are doing progress
+RUNNING_AVG_SIZE = 10
+
 ignoreUrlParts = [
         re.compile(r'&sid=[a-f0-9]{32}'),
         re.compile(r'sid=[a-f0-9]{32}&'),
         re.compile(r'\?sid=[a-f0-9]{32}$'),
         re.compile(r'^sid=[a-f0-9]{32}$'),
         ]
+
+class RunningAverage(object):
+    def __init__(self, size):
+        self.vec = [0] * size
+        self.epoch = -1
+
+    # at every epoch increse, the history is reset to 0
+    def add(self, v, epoch=-1):
+        if epoch > self.epoch:
+            self.epoch = epoch
+            self.reset()
+        self.vec = self.vec[1:] + [v]
+
+    def average(self):
+        return sum(self.vec) / float(len(self.vec))
+
+    def reset(self):
+        self.vec = [0] * len(self.vec)
+
 
 def filterIgnoreUrlParts(s):
     if s:
@@ -1104,10 +1126,6 @@ class AbstractPage(object):
         self.statereqrespsmap = defaultdict(list)
         self.seenstates = set()
         self._str = None
-        #self.absanchors = [AbstractAnchor(i) for i in zip(*(rr.response.page.anchors for rr in self.reqresps))]
-        #self.absforms = [AbstractForm(i) for i in zip(*(rr.response.page.forms for rr in self.reqresps))]
-        #self.absredirects = [AbstractRedirect(i) for i in zip(*(rr.response.page.redirects for rr in self.reqresps))]
-        #self.abslinks = Links(self.absanchors, self.absforms, self.absredirects)
         self.abslinks = AbstractLinks([rr.response.page.linkstree
                 for rr in self.reqresps])
 
@@ -3421,6 +3439,7 @@ class Engine(object):
         self.formfiller = formfiller
         # where to dump HTTP requests and responses
         self.dumpdir = dumpdir
+        self.running_visited_avg = RunningAverage(RUNNING_AVG_SIZE)
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -3440,7 +3459,9 @@ class Engine(object):
                 return None
 
         # find unvisited anchor
-        for i, aa in abspage.absanchors.links.iteritems():
+        # XXX looks like the following code is never reached
+        assert False
+        for i, aa in abspage.abslinks.iteritems():
             if i.type == Links.Type.ANCHOR:
                 if self.state not in aa.targets or aa.targets[self.state].nvisits == 0:
                     return i
@@ -3555,6 +3576,8 @@ class Engine(object):
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
 #        if maxstate >= 100:
 #            import pdb; pdb.set_trace()
+#        if str(head).find('changestate') != -1:
+#            import pdb; pdb.set_trace()
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
 #        self.logger.debug("COSTS", costs)
         #self.logger.debug("NCOST", [i[0].normalized for i in costs])
@@ -3584,6 +3607,8 @@ class Engine(object):
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
         # recentlyseen is the set of requests done since last state change
+#        if str(startpage).find("index.php") != -1 and maxstate > 170:
+#            import pdb; pdb.set_trace()
         heads = [(Dist(), startpage, startstate, [])]
         seen = set()
         candidates = []
@@ -3657,6 +3682,7 @@ class Engine(object):
                         else:
                             # TODO handle state changes
                             raise NotImplementedError
+        # get the number of abstract pages reachable from here
         nvisited = len(set(i[0] for i in seen))
         if candidates:
 #            if maxstate >= 100:
@@ -3739,7 +3765,6 @@ class Engine(object):
                             # cannot step back on a request that changed the state
                             # (XXX actually we could... but we would need to refresh the previous page)
                             return (Engine.Actions.DONE, )
-                        return (Engine.Actions.BACK, )
                     else:
                         self.logger.debug("page contains only a rediect, following it")
                         return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
@@ -3782,7 +3807,16 @@ class Engine(object):
             #self.logger.debug("recentlyseen", recentlyseen)
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
             if self.ag:
-                self.logger.debug("visited %d/%d abstract pages", nvisited, len(self.ag.abspages))
+                # the running average history will be reset at envery discovery
+                # of new abstract pages
+                self.running_visited_avg.add(
+                        float(nvisited)/len(self.ag.abspages),
+                        len(self.ag.abspages))
+                self.logger.debug("visited %d/%d (%f) abstract pages (avg %f)",
+                                  nvisited,
+                                  len(self.ag.abspages),
+                                  float(nvisited)/len(self.ag.abspages),
+                                  self.running_visited_avg.average())
             self.logger.debug(output.green("PATH %s"), path)
             if path:
                 # if there is a state change along the path, drop all following steps
@@ -3802,13 +3836,30 @@ class Engine(object):
                 debug_set.add(nexthop.idx.path[1:])
                 # pass the index too, in case there are some form parameters specified
                 return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
-            elif self.ag and float(nvisited)/len(self.ag.abspages) > 0.9:
-                # we can reach almost everywhere form the current page, still we cannot find unvisited links
+            elif (self.ag and  # we have an application graph
+                  # we are not doing progress
+                  float(nvisited)/len(self.ag.abspages) <= self.running_visited_avg.average()):
+                # we cannot find unvisited links and we cannot make progress
                 # very likely we visited all the pages or we can no longer go back to some older states anyway
                 return (Engine.Actions.DONE, )
+            else:
+                self.logger.info("no new path found, but we have not explored"
+                                 " enough")
+                unv_anchors = []
+                for idx, al in abspage.abslinks.iteritems():
+                    if idx.type == Links.Type.ANCHOR:
+                        assert self.state in al.targets
+                        if al.targets[self.state].nvisits == 0:
+                            unv_anchors.append(idx)
+                if unv_anchors:
+                    chosen = rng.choice(unv_anchors)
+                    self.logger.info("picking unvisited anchor %s", chosen)
+                    return (Engine.Actions.ANCHOR,
+                            reqresp.response.page.links[chosen])
 
         if not reqresp.prev:
             # no path found and at the first page
+            self.logger.info("stepped back to the first page, terminating")
             return (Engine.Actions.DONE, )
 
         if not reqresp.request.absrequest.changingstate:
