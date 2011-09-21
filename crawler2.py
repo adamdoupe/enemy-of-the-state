@@ -1776,31 +1776,49 @@ class AppGraphGenerator(object):
         fullurireqmap = AbstractMap(AbstractRequest,
                 lambda x: (x.method, x.path, x.query, x.params))
 
-        mappedrequests = defaultdict(list)
+        # make another set of less strict clusters
         ctxmappedrequests = CustomDict([], missing=(lambda x: []),
                 h=lambda x: (x.method, x.path))
 
-        # cluster together all requests which are exactly the same
+        # fill the 2 sets of clusters
+        mappedrequests = defaultdict(list)
         for rr in self.reqrespshead:
             mappedrequests[fullurireqmap.getAbstract(rr.request)].append(rr)
             ctxmappedrequests[rr.request].append(rr)
 
         absrequests = set()
 
+        # iterate on the looser clusters
         for rrs in sorted(ctxmappedrequests.itervalues()):
 #            pdb.set_trace()
 #            self.logger.debug("RRS: %s" % rrs)
             mergedctx = {}
+            # get all abstract requests from the current looser cluster
             fullabsreqset = frozenset(fullurireqmap.getAbstract(rr.request)
                     for rr in rrs)
             fullabsreqs = sorted(fullabsreqset)
 #            self.logger.debug("FAR: %s" % fullabsreqs)
+            # get all sets of requests mapped to each abstract page in the loose
+            # cluster
             mappedrrs = [mappedrequests[ar] for ar in fullabsreqs]
+            # get all sets of abstract pages targeted by all the seits of
+            # abstract requests in the loose cluster
             abspages = [frozenset(rr.response.page.abspage
-                    for rr in mrrs) for mrrs in mappedrrs]
+                    for rr in mrrs) for mrrs in mappabstractedrrs]
+            # get the max number of distinct abstract page targeted by a single
+            # abstract request
             maxapslen = max(len(i) for i in abspages)
+            # get the set of distinct abstract pages target by all the requests
+            # in the loose cluster
             totabspages = frozenset.union(*abspages)
+            # if there is least one set of abstract pages targetd by one
+            # abstract request in the loose cluster which is superset of all the
+            # other set of abstract pages, than we can merge all requests in the
+            # loose cluster under the same abstract request
             if len(totabspages) > maxapslen:
+                # the condition in the previous comment is not satisfied, so we
+                # cannot merge all the requests in the loose cluster; keep all
+                # the abstract requests separate
                 for ar, reqs in zip(fullabsreqs, mappedrrs):
                     absrequests.add(ar)
 #                    self.logger.debug("SEP: %s" % ar)
@@ -1810,12 +1828,18 @@ class AppGraphGenerator(object):
                 continue
             assert len(totabspages) == maxapslen
 
+            # pick the first abstract request in the loose cluster and put all
+            # requests in the loose cluster under it
             chosenar = fullabsreqs[0]
             absrequests.add(chosenar)
 #            self.logger.debug("CLU: %s" % chosenar)
             for rr in rrs:
                 chosenar.reqresps.append(rr)
                 rr.request.absrequest = chosenar
+            # store the mapping the new mapping of each request to the
+            # corresponding abstract request in the fullurireqmap object, which
+            # will be later used to heuristically fill the unvisited links in
+            # the application graph
             for mrrs in mappedrrs:
                 fullurireqmap.setAbstract(mrrs[0].request, chosenar)
 
