@@ -74,7 +74,6 @@ class ExtCrawlerTest(unittest.TestCase):
         e.main([url])
         self.assertEqual(len(e.ag.absrequests), 4)
         urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
-        self.assertEqual(len(urls), 21)
         self.assertEqual(set(['viewpage.php?id=%d' % i for i in range(18)] +
                              ['addpage.php',
                               'index.php',
@@ -98,7 +97,6 @@ class ExtCrawlerTest(unittest.TestCase):
         e.main([url])
         self.assertEqual(len(e.ag.absrequests), 4)
         urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
-        self.assertEqual(len(urls), 4)
         self.assertEqual(set(['a.php',
                               'b.php',
                               'index.php',
@@ -106,6 +104,27 @@ class ExtCrawlerTest(unittest.TestCase):
                          urls)
         self.assertEqual(len(e.ag.abspages), 4)
         self.assertEqual(e.ag.nstates, 2)
+
+    def test_traps(self):
+        url = EXT_BASE_URL + '/traps/root.html'
+        e = self.e
+        e.main([url])
+        self.assertEqual(len(e.ag.absrequests), 14)
+        urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
+        self.assertEqual(set(['a.html',
+                              'a1.html',
+                              'a2.html',
+                              'b.html',
+                              'b1.html',
+                              'dead1.html',
+                              'dead2.html',
+                              'private.php',
+                              'root.html'] +
+                              ['trap.php?input=%d' % i for i in range(1, 21)] +
+                              ['trap2.php?input=%d' % i for i in range(1, 34)]),
+                         urls)
+        self.assertEqual(len(e.ag.abspages), 11)
+        self.assertEqual(e.ag.nstates, 1)
 
 if __name__ == '__main__':
     #logging.basicConfig(level=logging.DEBUG)

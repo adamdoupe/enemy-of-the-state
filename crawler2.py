@@ -1211,6 +1211,8 @@ class AbstractRequest(object):
         self.statehints = 0
         self._requestset = None
         self.changingstate = False
+#        if self.instance == 209:
+#            pdb.set_trace()
 
     def __str__(self):
         return "AbstractRequest(%s, %s)%d" % (self.requestset, self.targets, self.instance)
@@ -1804,44 +1806,72 @@ class AppGraphGenerator(object):
             # get all sets of abstract pages targeted by all the seits of
             # abstract requests in the loose cluster
             abspages = [frozenset(rr.response.page.abspage
-                    for rr in mrrs) for mrrs in mappabstractedrrs]
+                    for rr in mrrs) for mrrs in mappedrrs]
             # get the max number of distinct abstract page targeted by a single
             # abstract request
             maxapslen = max(len(i) for i in abspages)
             # get the set of distinct abstract pages target by all the requests
             # in the loose cluster
             totabspages = frozenset.union(*abspages)
-            # if there is least one set of abstract pages targetd by one
-            # abstract request in the loose cluster which is superset of all the
-            # other set of abstract pages, than we can merge all requests in the
-            # loose cluster under the same abstract request
-            if len(totabspages) > maxapslen:
-                # the condition in the previous comment is not satisfied, so we
-                # cannot merge all the requests in the loose cluster; keep all
-                # the abstract requests separate
-                for ar, reqs in zip(fullabsreqs, mappedrrs):
-                    absrequests.add(ar)
-#                    self.logger.debug("SEP: %s" % ar)
-                    for rr in reqs:
-                        ar.reqresps.append(rr)
-                        rr.request.absrequest = ar
-                continue
-            assert len(totabspages) == maxapslen
+            assert len(totabspages) >= maxapslen
+            if len(totabspages) == maxapslen:
+                # if there is least one set of abstract pages targetd by one
+                # abstract request in the loose cluster which is superset of all
+                # the other set of abstract pages, than we can merge all
+                # requests in the loose cluster under the same abstract request
 
-            # pick the first abstract request in the loose cluster and put all
-            # requests in the loose cluster under it
-            chosenar = fullabsreqs[0]
-            absrequests.add(chosenar)
-#            self.logger.debug("CLU: %s" % chosenar)
-            for rr in rrs:
-                chosenar.reqresps.append(rr)
-                rr.request.absrequest = chosenar
-            # store the mapping the new mapping of each request to the
-            # corresponding abstract request in the fullurireqmap object, which
-            # will be later used to heuristically fill the unvisited links in
-            # the application graph
-            for mrrs in mappedrrs:
-                fullurireqmap.setAbstract(mrrs[0].request, chosenar)
+                # pick the first abstract request in the loose cluster and put all
+                # requests in the loose cluster under it
+                chosenar = fullabsreqs[0]
+                absrequests.add(chosenar)
+#                self.logger.debug("CLU: %s" % chosenar)
+                for rr in rrs:
+                    chosenar.reqresps.append(rr)
+                    rr.request.absrequest = chosenar
+                # store the mapping the new mapping of each request to the
+                # corresponding abstract request in the fullurireqmap object, which
+                # will be later used to heuristically fill the unvisited links in
+                # the application graph
+                for mrrs in mappedrrs:
+                    fullurireqmap.setAbstract(mrrs[0].request, chosenar)
+            else:  # len(totabspages) > maxapslen
+                # we cannot merge all the requests in the loose cluster
+
+                # merge together all requests that go to the same exact set of
+                # abstract pages
+                assert len(abspages) == len(fullabsreqs)
+                # map each set of abstract pages to the list of abstract
+                # requests (and corresponding reqresps) which lead to that set
+                abspages_to_ar = defaultdict(list)
+                for aps, ar, mrrs in zip(abspages, fullabsreqs, mappedrrs):
+                    abspages_to_ar[aps].append((ar, mrrs))
+
+                # only used for consistency checks: set of reqresps we have seen
+                # so far in the loop
+                seenrrs = set()
+                for ar_rrs_list in abspages_to_ar.itervalues():
+#                    if str(ar_rrs_list).find("input=23") != -1:
+#                        pdb.set_trace()
+                    # pick the first abstract request and map all other requests
+                    # to it
+                    chosenar = ar_rrs_list[0][0]
+                    # set of all reqresps whose request which led to the current
+                    # set of abstract pages
+                    allrrs = frozenset(itertools.chain(
+                            *(i[1] for i in ar_rrs_list)))
+                    # make sure we are processing each reqresp pair only once
+                    assert not seenrrs & allrrs
+                    seenrrs |= allrrs
+                    # make sure we do not overwrite an exiting abstract request
+                    # mapping
+                    assert chosenar not in absrequests
+                    absrequests.add(chosenar)
+                    # set the chosen abstract request to every reqresp in the
+                    # set
+                    for rr in allrrs:
+                        chosenar.reqresps.append(rr)
+                        rr.request.absrequest = chosenar
+                        fullurireqmap.setAbstract(rr.request, chosenar)
 
         for r in sorted(absrequests):
             self.logger.debug(output.turquoise("%s" % r))
@@ -2486,7 +2516,7 @@ class AppGraphGenerator(object):
         tgtchosenlink = None
 
         while True:
-            #self.logger.debug(output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap))
+#            self.logger.debug(output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap))
             currtarget = currreq.targets[currstate]
 #            if maxstate >= 75 and str(currreq).find("review") != -1:
 #                pdb.set_trace()
@@ -2498,7 +2528,7 @@ class AppGraphGenerator(object):
             smallerstates = [(s, t) for s, t in currreq.targets.iteritems()
                     if s < currstate and t.target == currtarget.target]
             if smallerstates and any(statemap[t.transition] != s for s, t in smallerstates):
-                #self.logger.debug(output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets))
+#                self.logger.debug(output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets))
                 currstate += 1
             else:
                 # find if there are other states that we have already processed that lead to a different target
