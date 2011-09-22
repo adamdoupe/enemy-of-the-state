@@ -2742,6 +2742,8 @@ class Crawler(object):
         #self.webclient = htmlunit.WebClient(bw)
         self.webclient = htmlunit.WebClient()
         self.webclient.setThrowExceptionOnScriptError(True);
+
+        self.webclient.setThrowExceptionOnFailingStatusCode(True);
         self.webclient.setUseInsecureSSL(True)
         self.webclient.setRedirectEnabled(False)
         self.refresh_urls = []
@@ -3318,7 +3320,7 @@ class FormFiller(object):
             return FormFiller.Params()
         values = self.get(keys, form)
         if not values:
-            return None
+            return FormFiller.Params()
         return values.getnext()
 
 
