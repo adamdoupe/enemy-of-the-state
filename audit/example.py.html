@@ -1,0 +1,84 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN">
+<!-- Created by htmlize-1.36 in css mode. -->
+<html>
+  <head>
+    <title>example.py</title>
+    <style type="text/css">
+    <!--
+      body {
+        color: #00ff00;
+        background-color: #1f1f1f;
+      }
+      .comment {
+        /* font-lock-comment-face */
+        color: #ff7f24;
+      }
+      .function-name {
+        /* font-lock-function-name-face */
+        color: #87cefa;
+      }
+      .keyword {
+        /* font-lock-keyword-face */
+        color: #00ffff;
+      }
+      .string {
+        /* font-lock-string-face */
+        color: #ffa07a;
+      }
+      .type {
+        /* font-lock-type-face */
+        color: #98fb98;
+      }
+
+      a {
+        color: inherit;
+        background-color: inherit;
+        font: inherit;
+        text-decoration: inherit;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+    -->
+    </style>
+  </head>
+  <body>
+    <pre>
+<span class="comment"># Example script that shows how the co-routines will work
+</span>
+
+<span class="keyword">def</span> <span class="function-name">audit</span>(<span class="keyword">self</span>, req):
+    <span class="keyword">for</span> i <span class="keyword">in</span> [<span class="string">"adam"</span>, <span class="string">"test"</span>, <span class="string">"xss"</span>, <span class="string">"blah"</span>]:
+        new_req = req
+            
+        new_req.param[0] = i
+
+        <span class="keyword">yield</span> new_req
+
+        response = <span class="keyword">yield</span>
+
+        <span class="keyword">if</span> i <span class="keyword">in</span> response:
+            <span class="keyword">print</span> <span class="string">"VULN FOUND"</span>
+
+
+
+<span class="keyword">def</span> <span class="function-name">example_crawler</span>():
+    <span class="keyword">for</span> req <span class="keyword">in</span> found_requests:
+        xss = xss.audit(req)
+        
+        <span class="keyword">try</span>:
+            <span class="keyword">while</span> <span class="keyword">True</span>:
+                new_req = xss.next()
+
+                response = new_req.send_request()
+
+                <span class="keyword">if</span> crawler.changed_state():
+                    crawler.put_back_to_previous_state()
+
+                xss.send(response)
+        <span class="keyword">except</span> <span class="type">StopIteration</span>:
+            <span class="keyword">pass</span>
+        
+</pre>
+  </body>
+</html>
