@@ -14,6 +14,7 @@ import itertools
 import random
 import math
 import shutil
+import urlparse
 
 LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
@@ -705,9 +706,37 @@ class StateSet(frozenset):
         return str(self)
 
 
-def validanchor(a):
-    href = a.getHrefAttribute().strip()
-    return href and href.find('://') == -1 and not href.startswith("mailto:") and not href.startswith("emailto:") and not href.startswith("javascript:") and not href.startswith("#")
+
+def validanchor(current, href):
+    """ Returns true if the href on the current page is valid to visit.
+
+    current is the string URL of the current page and href is the string in the anchor.
+
+    We don't want to visit any other domains, mailto, emailto, javascript, and 
+    fragments of the current page (although that may help with executing JavaScript.
+    """
+
+    joined = urlparse.urljoin(current, href)
+
+    joined_parsed = urlparse.urlparse(joined)
+    current_parsed = urlparse.urlparse(current)
+
+    if joined_parsed.scheme != 'http':
+        return False
+
+    if joined_parsed.netloc != current_parsed.netloc:
+        return False
+
+    # valid if not the same path
+    if joined_parsed.path != current_parsed.path:
+        return True
+    # valid if not the same query string
+    # NOTE: could be in a different order, but don't worry about that for now
+    if joined_parsed.query != current_parsed.query:
+        return True
+
+    # This is just a link to the same page, so return false
+    return False
 
 class Page(object):
 
@@ -723,7 +752,7 @@ class Page(object):
 
     @lazyproperty
     def anchors(self):
-        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(i)] if not self.redirect and not self.error else []
+        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(self.internal.url.toString(), i.getHrefAttribute().strip())] if not self.redirect and not self.error else []
 
     @lazyproperty
     def forms(self):
@@ -2917,8 +2946,8 @@ class Crawler(object):
         except TypeError, e:
             reqresp = self.handleNavigationException(e)
         anchor.to.append(reqresp)
-        assert reqresp.request.fullpathref[-len(anchor.href):] == anchor.href, \
-                "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpathref)
+        # assert reqresp.request.fullpathref[-len(anchor.href):] == anchor.href, \
+        #         "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpathref)
         return reqresp
 
 
@@ -3020,8 +3049,8 @@ class Crawler(object):
         reqresp.request.formparams = params
         form.to.append(reqresp)
         act = form.action.split('?')[0]
-        assert reqresp.request.fullpathref.split('?')[0][-len(act):] == act, \
-                "Unhandled redirect %s !sub %s" % (act, reqresp.request.fullpathref)
+        # assert reqresp.request.fullpathref.split('?')[0][-len(act):] == act, \
+        #         "Unhandled redirect %s !sub %s" % (act, reqresp.request.fullpathref)
         return reqresp
 
     def back(self):
