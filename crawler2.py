@@ -724,19 +724,10 @@ def validanchor(current, href):
     if joined_parsed.scheme != 'http':
         return False
 
-    if joined_parsed.netloc != current_parsed.netloc:
+    if joined_parsed.hostname != current_parsed.hostname:
         return False
 
-    # valid if not the same path
-    if joined_parsed.path != current_parsed.path:
-        return True
-    # valid if not the same query string
-    # NOTE: could be in a different order, but don't worry about that for now
-    if joined_parsed.query != current_parsed.query:
-        return True
-
-    # This is just a link to the same page, so return false
-    return False
+    return True
 
 class Page(object):
 
