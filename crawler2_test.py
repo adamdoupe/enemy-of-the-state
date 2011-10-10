@@ -59,6 +59,15 @@ class ExtCrawlerTest(unittest.TestCase):
         self.assertEqual(len(e.cr.headreqresp.response.page.links), 0)
         self.assertIsNone(e.ag)
 
+    def test_absolute_urls(self):
+        url = EXT_BASE_URL + 'absolute_urls/index.php'
+        e = self.e
+        e.main([url])
+        self.assertEqual(len(e.ag.absrequests), 2)
+        self.assertEqual(len(e.ag.abspages), 2)
+        urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
+        self.assertEqual(set(['link.php', 'index.php']), urls)
+
     def test_simple(self):
         # Truncate status files
         fd = os.open(TEST_BASE_PATH + '/simple/pages.data',

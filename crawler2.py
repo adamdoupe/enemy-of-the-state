@@ -15,6 +15,21 @@ import random
 import math
 import shutil
 import urlparse
+import pydot
+import output
+import htmlunit
+import pdb
+import utils
+import signal
+from collections import defaultdict, deque, namedtuple
+
+
+# Imports that we wrote
+from running_average import RunningAverage
+from randgen import RandGen
+from lazyproperty import lazyproperty
+from constants import Constants
+from stateset import StateSet
 
 LAST_REQUEST_BOOST=0.1
 POST_BOOST=0.2
@@ -33,23 +48,6 @@ ignoreUrlParts = [
         re.compile(r'^sid=[a-f0-9]{32}$'),
         ]
 
-class RunningAverage(object):
-    def __init__(self, size):
-        self.vec = [0] * size
-        self.epoch = -1
-
-    # at every epoch increse, the history is reset to 0
-    def add(self, v, epoch=-1):
-        if epoch > self.epoch:
-            self.epoch = epoch
-            self.reset()
-        self.vec = self.vec[1:] + [v]
-
-    def average(self):
-        return sum(self.vec) / float(len(self.vec))
-
-    def reset(self):
-        self.vec = [0] * len(self.vec)
 
 
 def filterIgnoreUrlParts(s):
@@ -59,58 +57,15 @@ def filterIgnoreUrlParts(s):
     return s
 
 
-class RandGen(random.Random):
-
-    SMALLCASE = ''.join(chr(i) for i in range(ord('a'), ord('z')+1))
-    UPPERCASE = SMALLCASE.upper()
-    LETTERS = SMALLCASE + UPPERCASE
-    NUMBERS = ''.join(chr(i) for i in range(ord('0'), ord('9')+1))
-    ALPHANUMERIC = LETTERS + NUMBERS
-
-    def __init__(self):
-        random.Random.__init__(self)
-        self.seed(1)
-
-    def getWord(self, length=8):
-        return ''.join(self.choice(RandGen.LETTERS) for i in range(length))
-
-    def getWords(self, num=2, length=8):
-        return ' '.join(self.getWord(length) for i in range(num))
-
-    def getPassword(self, length=8):
-        # make sure we have at least one for each category (A a 0)
-        password = [self.choice(RandGen.SMALLCASE)] + \
-                [self.choice(RandGen.UPPERCASE)] + \
-                [self.choice(RandGen.NUMBERS)]
-        password += [self.choice(RandGen.LETTERS)
-                for i in range(length-len(password))]
-        self.shuffle(password)
-        return ''.join(password)
-
-
-
 rng = RandGen()
 
-import pydot
-
-import output
-
-import htmlunit
-
-from collections import defaultdict, deque, namedtuple
-
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
-
-import pdb
-import utils
 
 cond = 0
 debugstop = False
 debug_set = set()
 
 # running htmlunit via JCC will override the signal halders
-
-import signal
 
 wanttoexit = False
 
@@ -145,24 +100,6 @@ def median(l):
     else:
         return float(s[ln/2])
 
-class lazyproperty(object):
-    """ from http://blog.pythonisito.com/2008/08/lazy-descriptors.html """
-
-    def __init__(self, func):
-        self._func = func
-        self.__name__ = func.__name__
-        self.__doc__ = func.__doc__
-
-    def __get__(self, obj, klass=None):
-        if obj is None: return None
-        result = obj.__dict__[self.__name__] = self._func(obj)
-        return result
-
-class Constants(object):
-
-    def __init__(self, *args):
-        for a in args:
-            setattr(self, a, a)
 
 class RecursiveDict(defaultdict):
     def __init__(self, nleavesfunc=lambda x: 1 if x else 0, nleavesaggregator=sum):
@@ -691,20 +628,6 @@ class Redirect(Link):
     @lazyproperty
     def dompath(self):
         return "REDIRECT"
-
-
-class StateSet(frozenset):
-
-    @lazyproperty
-    def _str(self):
-        return "[%s]" % ', '.join(str(i) for i in sorted(self))
-
-    def __str__(self):
-        return self._str
-
-    def __repr__(self):
-        return str(self)
-
 
 
 def validanchor(current, href):
