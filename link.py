@@ -2,7 +2,6 @@ import re
 import output
 
 from lazyproperty import lazyproperty
-from randgen import RandGen
 from collections import namedtuple
 
 class Link(object):
@@ -38,6 +37,7 @@ import pdb
 
 from constants import Constants
 from recursive_dict import RecursiveDict
+from randgen import RandGen
 
 class Links(object):
     Type = Constants("ANCHOR", "FORM", "REDIRECT")
@@ -135,3 +135,34 @@ class Links(object):
                 self.logger.debug(output.red("******** PICKING ONE *******"))
                 pdb.set_trace()
             yield (Link.LinkIdx(p[0], p[1:], None), l[0])
+
+from utils import DebugDict
+
+class AbstractLink(object):
+
+    def __init__(self, links):
+        # map from state to AbstractRequest
+        self.skip = any(i.skip for i in links)
+        self.links = links
+        self.parentpage = links[0].reqresp.response.page.abspage
+        assert all(i.reqresp.response.page.abspage == self.parentpage
+                for i in links)
+        self.targets = DebugDict(self.parentpage.instance)
+
+    @lazyproperty
+    def _str(self):
+        raise NotImplementedError
+
+    def __str__(self):
+        return self._str
+
+    def __repr__(self):
+        return str(self)
+
+    @lazyproperty
+    def dompath(self):
+        dompaths = set(l.dompath for l in self.links)
+        # XXX multiple dompaths not supported yet
+        assert len(dompaths) == 1
+        return iter(dompaths).next()
+

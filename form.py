@@ -5,7 +5,8 @@ from lazyproperty import lazyproperty
 from ignore_urls import filterIgnoreUrlParts
 from vectors import formvector
 from form_field import FormField
-from link import Link
+from link import Link, AbstractLink, Links
+from utils import all_same
 
 class Form(Link):
     SUBMITTABLES = [("input", "type", "submit"),
@@ -150,3 +151,46 @@ class Form(Link):
                     raise
                 continue
         return result
+
+class AbstractForm(AbstractLink):
+
+    def __init__(self, forms):
+        if not isinstance(forms, list):
+            forms = list(forms)
+        AbstractLink.__init__(self, forms)
+        self.forms = forms
+        self.methods = set(i.method for i in forms)
+        self.actions = set(i.action for i in forms)
+        self.type = Links.Type.FORM
+        self._elemset = None
+
+    def update(self, forms):
+        self.forms = forms
+        self.methods = set(i.method for i in forms)
+        self.actions = set(i.action for i in forms)
+        self._elemset = None
+
+    @property
+    def _str(self):
+        return "AbstractForm(targets=%s)" % (self.targets)
+
+    def equals(self, f):
+        return (self.methods, self.actions) == (f.methods, f.actions)
+
+    @lazyproperty
+    def isPOST(self):
+        return Form.POST in self.methods
+
+    @lazyproperty
+    def action(self):
+        # XXX multiple hrefs not supported yet
+        assert len(self.actions) == 1
+        return iter(self.actions).next()
+
+    @property
+    def elemset(self):
+        if self._elemset is None:
+            elemnamesets = [frozenset(i.elemnames) for i in self.forms]
+            assert all_same(elemnamesets)
+            self._elemset = frozenset(self.forms[0].elems)
+        return self._elemset

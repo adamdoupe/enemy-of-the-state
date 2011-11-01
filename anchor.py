@@ -1,7 +1,7 @@
 import urlparse
 
 from lazyproperty import lazyproperty
-from link import Link
+from link import Link, Links, AbstractLink
 from ignore_urls import filterIgnoreUrlParts
 from vectors import urlvector
 
@@ -35,3 +35,43 @@ class Anchor(Link):
     @lazyproperty
     def linkvector(self):
         return urlvector(self.hrefurl)
+
+class AbstractAnchor(AbstractLink):
+
+    def __init__(self, anchors):
+        if not isinstance(anchors, list):
+            anchors = list(anchors)
+        AbstractLink.__init__(self, anchors)
+        self.hrefs = set(i.href for i in anchors)
+        self.type = Links.Type.ANCHOR
+        self._href = None
+
+    def update(self, anchors):
+        oldlen = len(self.hrefs)
+        self.hrefs = set(i.href for i in anchors)
+        if oldlen != len(self.hrefs):
+            self._href = None
+
+    @property
+    def _str(self):
+        return "AbstractAnchor(%s, targets=%s)" % (self.hrefs, self.targets)
+
+    def equals(self, a):
+        return self.hrefs == a.hrefs
+
+    @lazyproperty
+    def hasquery(self):
+        return any(i.find('?') != -1 for i in self.hrefs)
+
+    @property
+    def href(self):
+        if not self._href:
+            if len(self.hrefs) == 1:
+                self._href = iter(self.hrefs).next()
+            else:
+                # return longest common substring from the beginning
+                for i, cc in enumerate(zip(*self.hrefs)):
+                    if any(c != cc[0] for c in cc):
+                        break
+                self._href = iter(self.hrefs).next()[:i]
+        return self._href
