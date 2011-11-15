@@ -57,6 +57,8 @@ class PageClusterer(object):
                     v.clusterable = False
                 self.scanlevels(v, n+1)
 
+    # XXX TODO: Merge this with scanlevels since they're the same algorithm
+    # Also, newclusterable isn't used anywhere, which means that this doesn't really do anything
     def scanlevelspath(self, level, path, n=0):
         #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         v = level[path[0]]
@@ -127,6 +129,7 @@ class PageClusterer(object):
                 self.abspages.append(abspage)
                 level.abspages[k] = abspage
 
+    # This function is used after adding a new page to the tree
     def addabstractpagepath(self, level, reqresp, path):
         v = level[path[0]]
         if v:

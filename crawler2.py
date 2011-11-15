@@ -559,6 +559,7 @@ class AppGraphGenerator(object):
         else:
             finalmappedar = mappedreq
 
+        # XXX Probably a bug and can be deleted
         rr.request.absrequests = finalmappedar
         finalmappedar.reqresps.append(rr)
         reqs.append(rr)
@@ -804,13 +805,8 @@ class AppGraphGenerator(object):
                             #self.logger.debug("NEWWR %s %d %s %s" % (ap, s, l, newwebrequest))
                             if newwebrequest:
                                 request = Request(newwebrequest)
-                                #if maxstate >= 11 and str(request).find("upload"):
-                                #    pdb.set_trace()
                                 newrequest = self.fullurireqmap.getAbstract(request)
                                 assert newrequest
-                                #newrequest = self.fillreqmap[request]
-                                #self.logger.debug("NEWR %s %s\n\t%s" % (request, (request.method, request.path, request.query), newrequest))
-                                #newrequest.reqresps.append(RequestResponse(request, None))
                             newrequestbuilt = True
                         if newrequest:
                             newtgt = ReqTarget(newrequest, transition=s, nvisits=0)
@@ -1564,8 +1560,6 @@ class Crawler(object):
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
-#            if str(anchor).find('posting.php?mode=smilies') != -1:
-#                pdb.set_trace()
             page = anchor.internal.click()
             htmlpage = htmlunit.HtmlPage.cast_(page)
             reqresp = self.newPage(htmlpage)
