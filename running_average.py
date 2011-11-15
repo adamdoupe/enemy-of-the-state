@@ -5,7 +5,7 @@ class RunningAverage(object):
 
     # at every epoch increse, the history is reset to 0
     def add(self, v, epoch=-1):
-        if epoch > self.epoch:
+        if epoch != self.epoch:
             self.epoch = epoch
             self.reset()
         self.vec = self.vec[1:] + [v]
