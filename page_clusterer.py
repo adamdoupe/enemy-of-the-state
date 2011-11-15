@@ -28,17 +28,6 @@ class PageClusterer(object):
         self.logger.debug("clustering pages")
 
         self.levelclustering(reqresps)
-        #self.simpleclustering(reqresps)
-
-    def simpleclustering(self, reqresps):
-        buckets = Buckets(self.simplehash)
-        cnt = 0
-        for i in reqresps:
-            buckets.add(i)
-            cnt += 1
-        self.logger.debug("clustered %d pages into %d clusters", cnt, len(buckets))
-        self.abspages = [AbstractPage(i) for i in buckets.itervalues()]
-        self.linktorealpages()
 
     def linktorealpages(self):
         for ap in self.abspages:

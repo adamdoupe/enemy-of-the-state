@@ -383,6 +383,7 @@ class Score(object):
 
     @staticmethod
     def pagehitscore(counter):
+        """ counter[0] is n_(l,seen) and counter[1] is n_(l,trans)  """
         if counter[0] >= 3:
             score = -(1-float(counter[1])/counter[0])**2 + 1
         else:
@@ -1088,6 +1089,8 @@ class AppGraphGenerator(object):
             for rr in absreq.reqresps]
         debugstop = False
 #        self.logger.debug("SCORES %s", scores)
+
+        # LUDO XXX: Another bug here, max(max(scores)) doesn't work correctly
         return max(max(scores))[0]
 
     def pagescore(self, counter, req, dist):
@@ -1122,6 +1125,7 @@ class AppGraphGenerator(object):
                 currreq.statehints += 1
                 pastpages = []
                 for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
+                    # LUDO XXX: This equals check will never be true.
                     if req == currreq or \
                             self.getMinMappedState(laststate, statemap) != currmapsto:
                         self.logger.debug("stopping at %s", req)
@@ -1145,6 +1149,7 @@ class AppGraphGenerator(object):
                             if t.transition <= currstate:
                                 statemap[t.transition] = t.transition
 #                        pdb.set_trace()
+                        # XXX: Could probably just return from the function here
                         break
                     # no longer using PastPage.nvisits
                     pastpages.append(PastPage(req, page, chlink, laststate, None))
@@ -2005,6 +2010,7 @@ class Engine(object):
 #        self.logger.debug("COSTS", costs)
         #self.logger.debug("NCOST", [i[0].normalized for i in costs])
         # Remove links with high penalty
+        # XXX BUG: We probably don't want to do this if priority is -1
         costs = [i for i in costs if i[0].normalized[1] < PENALTY_THRESHOLD]
         if not costs:
             # costs might be empty after this filtering
@@ -2078,6 +2084,7 @@ class Engine(object):
                         # the request associated to this link has never been
                         # made in the current state, add it as unvisited
                         if state not in nextabsreq.targets:
+                            # XXX Possible Bug: Check why this exists
                             # do not pass form parameters, as this is an
                             # unvisited link and we want to pick random values
                             formidx = LinkIdx(idx.type, idx.path, None)
@@ -2151,6 +2158,7 @@ class Engine(object):
             self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
             self.followingpath = False
 
+        # This case only happens on the first page view
         if not reqresp.response.page.abspage:
             unvisited = self.getUnvisitedLink(reqresp)
             if unvisited:
@@ -2204,8 +2212,7 @@ class Engine(object):
                     if (t.target, t.transition) == (destination, self.state):
                         if s == self.state:
                             # state transition did not happen here
-                            assert not probablyseen or \
-                                    probablyseen == rr.request.absrequest
+                            assert not probablyseen 
                             probablyseen = rr.request.absrequest
                         else:
                             # XXX we are matching only on target and not on
@@ -2275,6 +2282,7 @@ class Engine(object):
                         if al.targets[self.state].nvisits == 0:
                             unv_anchors.append(idx)
                 if unv_anchors:
+                    # XXX Why would path finding fail?
                     chosen = rng.choice(unv_anchors)
                     self.logger.info("picking unvisited anchor %s", chosen)
                     return (Engine.Actions.ANCHOR,
