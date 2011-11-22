@@ -134,6 +134,8 @@ class ExtCrawlerTest(unittest.TestCase):
                          urls)
         self.assertEqual(len(e.ag.abspages), 11)
         self.assertEqual(e.ag.nstates, 1)
+        e.writeStateDot()
+        e.writeDot()
 
 if __name__ == '__main__':
     #logging.basicConfig(level=logging.DEBUG)

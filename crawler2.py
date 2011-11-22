@@ -1,27 +1,25 @@
 #!/usr/bin/env python
 
-import logging
-def handleError(self, record):
-      raise
-logging.Handler.handleError = handleError
-
-import errno
-import os
-import urlparse
-import re
-import heapq
-import itertools
-import random
-import math
-import shutil
-import pydot
-import output
-import htmlunit
-import pdb
-import utils
-import signal
 from collections import defaultdict, deque, namedtuple
-
+import errno
+import getopt
+import heapq
+import htmlunit
+import itertools
+import logging
+import math
+import os
+import output
+import pdb
+import pydot
+import random
+import re
+import shutil
+import signal
+import sys
+import traceback
+import urlparse
+import utils
 
 # Imports that we wrote
 from utils import all_same, median, DebugDict
@@ -58,22 +56,11 @@ PENALTY_THRESHOLD = 3
 # Size of the running verage vector for deciding if we are doing progress
 RUNNING_AVG_SIZE = 10
 
-# Set up the random word generator and add it to any class that uses it
-rng = RandGen()
-FormFiller.rng = rng
-Links.rng = rng
-
+# running htmlunit via JCC will override the signal handlers, so make sure the
+# SIGINT handler is set after starting htmlunit
 htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
 
-cond = 0
-debugstop = False
-debug_set = set()
-
-# running htmlunit via JCC will override the signal halders
-
 wanttoexit = False
-
-maxstate = -1
 
 def gracefulexit():
     global wanttoexit
@@ -87,6 +74,21 @@ def signalhandler(signum, frame):
 
 #signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
+
+def handleError(self, record):
+      raise
+logging.Handler.handleError = handleError
+
+# Set up the random word generator and add it to any class that uses it
+rng = RandGen()
+FormFiller.rng = rng
+Links.rng = rng
+
+cond = 0
+debugstop = False
+debug_set = set()
+
+maxstate = -1
 
 class AbstractRequest(object):
 
@@ -1997,9 +1999,9 @@ class Engine(object):
 
     def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
 #        if maxstate >= 100:
-#            import pdb; pdb.set_trace()
+#            pdb.set_trace()
 #        if str(head).find('changestate') != -1:
-#            import pdb; pdb.set_trace()
+#            pdb.set_trace()
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
 #        self.logger.debug("COSTS", costs)
         #self.logger.debug("NCOST", [i[0].normalized for i in costs])
@@ -2031,7 +2033,7 @@ class Engine(object):
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
         # recentlyseen is the set of requests done since last state change
 #        if str(startpage).find("index.php") != -1 and maxstate > 170:
-#            import pdb; pdb.set_trace()
+#            pdb.set_trace()
         heads = [(Dist(), startpage, startstate, [])]
         seen = set()
         candidates = []
@@ -2110,7 +2112,7 @@ class Engine(object):
         nvisited = len(set(i[0] for i in seen))
         if candidates:
 #            if maxstate >= 100:
-#                import pdb; pdb.set_trace()
+#                pdb.set_trace()
             self.logger.debug("CAND %s", candidates)
             return candidates[0].path, nvisited
         else:
@@ -2220,7 +2222,7 @@ class Engine(object):
                 else:
                     # we should always be able to find the destination page in the target object
 #                    if not probablyseen:
-#                        import pdb; pdb.set_trace()
+#                        pdb.set_trace()
                     assert probablyseen
                     recentlyseen.add(probablyseen)
                 if found:
@@ -2446,6 +2448,23 @@ class Engine(object):
                         self.pc = pc
                         self.ag = ag
 
+                        # if the following asserts never fail, we can remove the
+                        # dictionary state->TargetRequest from the abstractpages
+                        # (or at least the transition field is useless)
+                        for ap in self.ag.abspages:
+                            for al in ap.abslinks:
+                                if isinstance(al, AbstractForm):
+                                    continue
+                                tgts = frozenset(t.target
+                                        for t in al.targets.itervalues())
+                                assert len(tgts) == 1, (tgts, ap, al)
+                                for s, t in al.targets.iteritems():
+                                    assert s == t.transition, (ap, al, s, t)
+                                    assert (s in t.target.targets or
+                                            t.nvisits == 0), \
+                                           (ap, al, s, t.target,
+                                                   t.target.targets)
+
 #                        if maxstate >= 196:
 #                            pdb.set_trace()
 
@@ -2485,7 +2504,9 @@ class Engine(object):
                 linksequal = defaultdict(list)
                 for s, t in l.targets.iteritems():
                     assert s == t.transition
-                    linksequal[t.target].append(s)
+                    tgt = t.target
+                    if not isinstance(tgt, FormTarget.Dict):
+                        linksequal[t.target].append(s)
                 for t, ss in linksequal.iteritems():
                     try:
                         edge = pydot.Edge(nodes[p], nodes[t])
@@ -2573,8 +2594,6 @@ def writeColorableStateGraph(allstates, differentpairs):
         f.write(dot.to_string())
 
 if __name__ == "__main__":
-    import sys
-    import getopt
     optslist, args = getopt.getopt(sys.argv[1:], "l:d:")
     opts = dict(optslist) if optslist else {}
     try:
@@ -2615,7 +2634,6 @@ if __name__ == "__main__":
     try:
         e.main(args)
     except:
-        import traceback
         traceback.print_exc()
         pdb.post_mortem()
     finally:
