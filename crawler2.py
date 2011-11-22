@@ -1558,7 +1558,9 @@ class Crawler(object):
         assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
                 "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
         try:
-            page = anchor.internal.click()
+            # click the page as our special click
+            element = htmlunit.HtmlElement.cast_(anchor.internal)
+            page = element.click(False, False, False, False)
             htmlpage = htmlunit.HtmlPage.cast_(page)
             reqresp = self.newPage(htmlpage)
             #if reqresp.request.path.find("index.php") != -1 and \
