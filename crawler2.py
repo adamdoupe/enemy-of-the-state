@@ -1997,7 +1997,7 @@ class Engine(object):
 
         return dist
 
-    def addUnvisisted(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
+    def addUnvisited(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
 #        if maxstate >= 100:
 #            pdb.set_trace()
 #        if str(head).find('changestate') != -1:
@@ -2075,7 +2075,7 @@ class Engine(object):
                             # do not pass form parameters, as this is an
                             # unvisited link and we want to pick random values
                             formidx = LinkIdx(idx.type, idx.path, None)
-                            self.addUnvisisted(dist, head, state, headpath,
+                            self.addUnvisited(dist, head, state, headpath,
                                     [(formidx, link)], candidates, -1)
                         # the request associated to this link has never been
                         # made in the current state, add it as unvisited
@@ -2084,7 +2084,7 @@ class Engine(object):
                             # do not pass form parameters, as this is an
                             # unvisited link and we want to pick random values
                             formidx = LinkIdx(idx.type, idx.path, None)
-                            self.addUnvisisted(dist, head, state, headpath,
+                            self.addUnvisited(dist, head, state, headpath,
                                     [(formidx, link)], candidates, 0)
                             continue
                         # do not put request in the heap, but just go for the next abstract page
@@ -2103,7 +2103,7 @@ class Engine(object):
                         unvlinks = head.abslinks.getUnvisited(state)
 #                        self.logger.debug("UNVLINKS", "\n\t".join(str(i) for i in unvlinks))
                         if unvlinks:
-                            self.addUnvisisted(dist, head, state, headpath, unvlinks, candidates, 0, True)
+                            self.addUnvisited(dist, head, state, headpath, unvlinks, candidates, 0, True)
                             unvlinks_added = True
                         else:
                             # TODO handle state changes
