@@ -1793,7 +1793,7 @@ class Dist(object):
         (state changing,
          POST form, GET form, anchor w/ params, anchor w/o params, redirect
          )
-        the first elelement can be wither 0 or 1, whether the request proved to trigger a state change or not
+        the first elelement can be either 0 or 1, whether the request proved to trigger a state change or not
         the other elements are actually doubled: one value for the number of visits in the current state, and
         one value for the number of visits in the other states
         only one pair of element can be != 0
@@ -1897,7 +1897,7 @@ class Engine(object):
 #                pdb.set_trace()
         statechange = False
         tgt = None
-        # must be > 0, as it will also mark the kond of query in the dist vector
+        # must be > 0, as it will also mark the kind of query in the dist vector
         nvisits = 1
         # count visits done for this link and the subsequent request the current
         # state
@@ -2464,9 +2464,6 @@ class Engine(object):
                                             t.nvisits == 0), \
                                            (ap, al, s, t.target,
                                                    t.target.targets)
-
-#                        if maxstate >= 196:
-#                            pdb.set_trace()
 
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
