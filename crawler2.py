@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+# b 1702 b 2430 b 2475
 from collections import defaultdict, deque, namedtuple
 import errno
 import getopt
@@ -58,7 +58,7 @@ RUNNING_AVG_SIZE = 10
 
 # running htmlunit via JCC will override the signal handlers, so make sure the
 # SIGINT handler is set after starting htmlunit
-htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
+htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true')
 
 wanttoexit = False
 
@@ -113,6 +113,7 @@ class AbstractRequest(object):
     def __init__(self, request):
         self.method = request.method
         self.path = request.path
+        self.initial_full_path = request.fullpath
         self.reqresps = AbstractRequest.ReqRespsWrapper(self)
         self.instance = AbstractRequest.InstanceCounter
         AbstractRequest.InstanceCounter += 1
@@ -122,8 +123,10 @@ class AbstractRequest(object):
         self.statehints = 0
         self._requestset = None
         self.changingstate = False
-#        if self.instance == 209:
-#            pdb.set_trace()
+
+    def request_actually_made(self):
+        """ Return true if this abstract request was actually made, false otherwise """
+        return len(self.reqresps) > 0
 
     def __str__(self):
         return "AbstractRequest(%s, %s)%d" % (self.requestset, self.targets, self.instance)
@@ -1699,8 +1702,6 @@ class Crawler(object):
         return self.currreqresp != self.lastreqresp
 
     def getNewRequest(self, page, idx, link):
-#        if str(idx).find("guestbook") != -1:
-#            pdb.set_trace()
         if isinstance(link, AbstractAnchor):
             if len(link.hrefs) == 1:
                 href = iter(link.hrefs).next()
@@ -1864,6 +1865,7 @@ class Engine(object):
         # where to dump HTTP requests and responses
         self.dumpdir = dumpdir
         self.running_visited_avg = RunningAverage(RUNNING_AVG_SIZE)
+        self.unvisited_links = {}
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -2262,11 +2264,8 @@ class Engine(object):
                 debug_set.add(nexthop.idx.path[1:])
                 # pass the index too, in case there are some form parameters specified
                 return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
-            elif (self.ag and  # we have an application graph
-                  # we are not doing progress
-                  float(nvisited)/len(self.ag.abspages) <= self.running_visited_avg.average()):
-                # we cannot find unvisited links and we cannot make progress
-                # very likely we visited all the pages or we can no longer go back to some older states anyway
+            elif self.ag and not self.keep_looking_for_links():
+                # We aren't making progress and can't find any more links to visit
                 return (Engine.Actions.DONE, )
             else:
                 self.logger.info("no new path found, but we have not explored"
@@ -2304,6 +2303,28 @@ class Engine(object):
             # (XXX actually we could... but we would need to refresh the previous page)
             return (Engine.Actions.DONE, )
 
+    def keep_looking_for_links(self):
+        """
+        This function returns true if we should continue looking for links, false otherwise
+        """
+        total_abstract_requests = -100
+
+        link_importance = [self._link_decay_function(requests_since_last_seen, total_abstract_requests) for requests_since_last_seen in self.unvisited_links.itervalues()]
+
+        total_importance = sum(link_importance)
+        
+        return total_importance >= 1
+
+    def _link_decay_function(self, requests_since_last_seen, total_abstract_requests):
+        """
+        This is an exponential decay function that has the following properties:
+        Hits the points (1, 1), (2, .1). 
+
+        This means that the link importance will start to decay as requests_since_last_seen 
+        is greater than total_abstract_requests
+        """
+        ratio = (requests_since_last_seen * 1.0) / total_abstract_requests
+        return math.exp(-2.30259*(ratio - 1))
 
     def submitForm(self, form, params):
         if params is None:
@@ -2388,6 +2409,19 @@ class Engine(object):
                     reqresp = cr.followRedirect(nextAction[1])
                 else:
                     assert False, nextAction
+
+                # Perform some cleanup for the unvisited requests
+                last_request = reqresp.request
+                if last_request in self.unvisited_links:
+                    del self.unvisited_links[last_request]
+
+                # Increment the request count for all the other unvisited requests
+                for request in self.unvisited_links.iterkeys():
+                    self.unvisited_links[request] += 1
+
+                # Add the new requests to the unvisited_links map
+
+
                 self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
                 self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
                 if not nextAction[0] == Engine.Actions.BACK:
