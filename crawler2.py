@@ -58,7 +58,7 @@ RUNNING_AVG_SIZE = 10
 
 # running htmlunit via JCC will override the signal handlers, so make sure the
 # SIGINT handler is set after starting htmlunit
-htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']))
+htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true')
 
 wanttoexit = False
 
