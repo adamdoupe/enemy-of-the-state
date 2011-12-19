@@ -766,20 +766,11 @@ class AppGraphGenerator(object):
 
     def fillPageMissingRequests(self, ap):
         allstates = ap.seenstates
-        #self.logger.debug("AP", ap, ap.seenstates)
         for idx, l in ap.abslinks.iteritems():
-            #if str(ap).find("home") != -1 and str(ap).find("upload") != -1 \
-            #        and str(l).find("Redirect") != -1:
-            #    pdb.set_trace()
-            #self.logger.debug("LINK", l, "TTTT", l.targets)
-#            if maxstate >= 45 and str(l).find("view.php?picid=4") != -1:
-#                pdb.set_trace()
-
             newrequest = None  # abstract request for link l
             newrequestbuilt = False # attempt has already been made to build an
                                     # abstract request
             for s in sorted(allstates):
-                #if s not in l.targets or l.targets[s].nvisits == 0:
                 if s not in l.targets:
                     if isinstance(l, AbstractForm):
                         if not newrequestbuilt:
@@ -805,7 +796,6 @@ class AppGraphGenerator(object):
                         if not newrequestbuilt:
                             newwebrequest = self.crawler.getNewRequest(
                                     ap.reqresps[0].response.page, idx, l)
-                            #self.logger.debug("NEWWR %s %d %s %s" % (ap, s, l, newwebrequest))
                             if newwebrequest:
                                 request = Request(newwebrequest)
                                 newrequest = self.fullurireqmap.getAbstract(request)
@@ -814,9 +804,6 @@ class AppGraphGenerator(object):
                         if newrequest:
                             newtgt = ReqTarget(newrequest, transition=s, nvisits=0)
                             l.targets[s] = newtgt
-                            #self.logger.debug(output.red("NEWTTT %s %d %s %s" % (ap, s, l, newrequest)))
-                            #for ss, tt in newrequest.targets.iteritems():
-                            #    self.logger.debug(output.purple("\t %s %s" % (ss, tt)))
                 else:
                     assert l.targets[s].target is not None
 
@@ -1747,9 +1734,7 @@ class Crawler(object):
                 isubmitter = Crawler.getInternalSubmitter(iform, submitter)
                 newreq = iform.getWebRequest(isubmitter)
                 if htmlunit.HtmlImageInput.instance_(isubmitter):
-                    #pdb.set_trace()
                     url = newreq.getUrl()
-                    #self.logger.debug("CASTING!", url.getQuery(), url.getPath())
                     urlstr = url.getPath()
                     if urlstr.find('?') == -1:
                         urlstr += "?"
@@ -1765,7 +1750,6 @@ class Crawler(object):
                     newreq.setUrl(newurl)
                 newrequests.append(newreq)
                 requestparams.append(f)
-#        pdb.set_trace()
         return (newrequests, requestparams)
 
 def linkweigh(link, nvisits, othernvisits=0, statechange=False):
@@ -1866,6 +1850,7 @@ class Engine(object):
         self.dumpdir = dumpdir
         self.running_visited_avg = RunningAverage(RUNNING_AVG_SIZE)
         self.unvisited_links = {}
+        self.visited_links = set()
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -2307,7 +2292,7 @@ class Engine(object):
         """
         This function returns true if we should continue looking for links, false otherwise
         """
-        total_abstract_requests = -100
+        total_abstract_requests = len(self.ag.absrequests)
 
         link_importance = [self._link_decay_function(requests_since_last_seen, total_abstract_requests) for requests_since_last_seen in self.unvisited_links.itervalues()]
 
@@ -2376,7 +2361,6 @@ class Engine(object):
 
         return newstate
 
-
     def main(self, urls):
         self.pc = None
         self.ag = None
@@ -2388,6 +2372,7 @@ class Engine(object):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
             maxstate = -1
             reqresp = cr.open(url)
+            set_visited_unvisited(reqresp, self.unvisited_links, self.visited_links)
             self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
             self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
             statechangescores = None
@@ -2410,17 +2395,7 @@ class Engine(object):
                 else:
                     assert False, nextAction
 
-                # Perform some cleanup for the unvisited requests
-                last_request = reqresp.request
-                if last_request in self.unvisited_links:
-                    del self.unvisited_links[last_request]
-
-                # Increment the request count for all the other unvisited requests
-                for request in self.unvisited_links.iterkeys():
-                    self.unvisited_links[request] += 1
-
-                # Add the new requests to the unvisited_links map
-
+                set_visited_unvisited(reqresp, self.unvisited_links, self.visited_links)
 
                 self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
                 self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
@@ -2624,6 +2599,28 @@ def writeColorableStateGraph(allstates, differentpairs):
     with open('colorablestategraph.dot', 'w') as f:
         f.write(dot.to_string())
 
+def set_visited_unvisited(request_response, unvisited_links, visited_links):
+    # Perform some cleanup for the unvisited requests
+    last_request = request_response.request
+    last_request_path = last_request.method + last_request.fullpath
+
+    if last_request_path in unvisited_links:
+        del unvisited_links[last_request_path]
+                
+    visited_links.add(last_request_path)
+
+    # Increment the request count for all the other unvisited requests
+    for request in unvisited_links.iterkeys():
+        unvisited_links[request] += 1
+
+    # Add the new requests to the unvisited_links map
+    for idx, l in request_response.response.page.links.iteritems():
+        if l:
+            url = request_response.response.page.internal.getFullyQualifiedUrl(l.href)
+            url_path = "GET" + url.path
+            if not url_path in visited_links:
+                unvisited_links[url_path] = 0
+        
 if __name__ == "__main__":
     optslist, args = getopt.getopt(sys.argv[1:], "l:d:")
     opts = dict(optslist) if optslist else {}
