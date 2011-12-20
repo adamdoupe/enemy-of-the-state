@@ -2616,9 +2616,19 @@ def set_visited_unvisited(request_response, unvisited_links, visited_links):
     # Add the new requests to the unvisited_links map
     for idx, l in request_response.response.page.links.iteritems():
         if l:
-            url = request_response.response.page.internal.getFullyQualifiedUrl(l.href)
-            url_path = "GET" + url.path
-            if not url_path in visited_links:
+            url_path = ""
+            if isinstance(l, AbstractAnchor):
+                url = request_response.response.page.internal.getFullyQualifiedUrl(l.href)
+                url_path = "GET" + url.path
+            elif isinstance(l, AbstractRedirect):
+                url = htmlunit.URL(request_response.response.page.internal.getWebRequest().getUrl(), link.location)
+                url_path = "GET" + url.path
+            elif isinstance(l, AbstractForm):
+                continue
+            else:
+                assert "We shouldn't get here"
+            
+            if url_path and (not url_path in visited_links):
                 unvisited_links[url_path] = 0
         
 if __name__ == "__main__":
