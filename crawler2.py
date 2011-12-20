@@ -765,18 +765,11 @@ class AppGraphGenerator(object):
         allstates = ap.seenstates
         #self.logger.debug("AP", ap, ap.seenstates)
         for idx, l in ap.abslinks.iteritems():
-            #if str(ap).find("home") != -1 and str(ap).find("upload") != -1 \
-            #        and str(l).find("Redirect") != -1:
-            #    pdb.set_trace()
-            #self.logger.debug("LINK", l, "TTTT", l.targets)
-#            if maxstate >= 45 and str(l).find("view.php?picid=4") != -1:
-#                pdb.set_trace()
 
             newrequest = None  # abstract request for link l
             newrequestbuilt = False # attempt has already been made to build an
                                     # abstract request
             for s in sorted(allstates):
-                #if s not in l.targets or l.targets[s].nvisits == 0:
                 if s not in l.targets:
                     if isinstance(l, AbstractForm):
                         if not newrequestbuilt:
