@@ -1838,6 +1838,7 @@ class Engine(object):
     Actions = Constants("BACK", "ANCHOR", "FORM", "REDIRECT", "DONE")
 
     def __init__(self, formfiller=None, dumpdir=None):
+        self.requests = 0
         self.logger = logging.getLogger(self.__class__.__name__)
         self.state = -1
         self.followingpath = False
@@ -2289,13 +2290,16 @@ class Engine(object):
         """
         This function returns true if we should continue looking for links, false otherwise
         """
-        total_abstract_requests = len(self.ag.absrequests)
+        total_abstract_requests = len([i for i in self.ag.absrequests if not i.changingstate])
 
         link_importance = [self._link_decay_function(requests_since_last_seen, total_abstract_requests) for requests_since_last_seen in self.unvisited_links.itervalues()]
 
         total_importance = sum(link_importance)
-        
-        return total_importance >= 1
+
+
+        #return total_importance >= 1
+        return self.num_requests < 2000
+
 
     def _link_decay_function(self, requests_since_last_seen, total_abstract_requests):
         """
@@ -2359,6 +2363,10 @@ class Engine(object):
         return newstate
 
     def main(self, urls):
+
+        ar_through_time = open('ar_test.dat', 'w')
+        self.num_requests = 0
+
         self.pc = None
         self.ag = None
         cr = Crawler(self.dumpdir)
@@ -2369,7 +2377,10 @@ class Engine(object):
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
             maxstate = -1
             reqresp = cr.open(url)
+
+            self.num_requests += 1
             set_visited_unvisited(reqresp, self.unvisited_links, self.visited_links)
+
             self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
             self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
             statechangescores = None
@@ -2458,6 +2469,8 @@ class Engine(object):
                                            (ap, al, s, t.target,
                                                    t.target.targets)
 
+                self.num_requests += 1
+                ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
 
