@@ -456,18 +456,15 @@ class AppGraphGenerator(object):
 
         # iterate on the looser clusters
         for rrs in sorted(ctxmappedrequests.itervalues()):
-#            pdb.set_trace()
-#            self.logger.debug("RRS: %s" % rrs)
             mergedctx = {}
             # get all abstract requests from the current looser cluster
             fullabsreqset = frozenset(fullurireqmap.getAbstract(rr.request)
                     for rr in rrs)
             fullabsreqs = sorted(fullabsreqset)
-#            self.logger.debug("FAR: %s" % fullabsreqs)
             # get all sets of requests mapped to each abstract page in the loose
             # cluster
             mappedrrs = [mappedrequests[ar] for ar in fullabsreqs]
-            # get all sets of abstract pages targeted by all the seits of
+            # get all sets of abstract pages targeted by all the sets of
             # abstract requests in the loose cluster
             abspages = [frozenset(rr.response.page.abspage
                     for rr in mrrs) for mrrs in mappedrrs]
@@ -2426,18 +2423,11 @@ class Engine(object):
                             v = reduce(lambda a, b: (a[0] + b[0], (a[1] + b[1])), l, (0, 0))
                             v = (v[0], v[1]/2.0)
                             return v
-                        statechangescores = RecursiveDict(nleavesfunc=lambda x: x,
-                                #nleavesaggregator=lambda x: (1, mean(list(AppGraphGenerator.pagehitscore(i) for i in x))/2))
-                                #nleavesaggregator=lambda x: (1, mean(list(float(i[1])/i[0] for i in x))/2))
-                                nleavesaggregator=check)
+                        statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=check)
                         debugstop = False
                         rr = cr.headreqresp
                         while rr:
                             changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
-                            #if changing:
-                            #    self.logger.debug(output.turquoise("%d(%d)->%d(%d) %s %s" % (rr.request.reducedstate,)
-                            #        rr.request.state, rr.response.page.reducedstate, rr.response.page.state,
-                            #        rr.request, rr.response))
                             statechangescores.setapplypathvalue([rr.request.method] + list(rr.request.urlvector),
                                     (1, changing), lambda x: (x[0] + 1, x[1] + changing))
                             rr.request.state = -1
@@ -2447,8 +2437,6 @@ class Engine(object):
                         self.logger.debug(output.turquoise("%s" % statechangescores))
 
                         self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
-                        #global cond
-                        #if cond >= 2: cond += 1
                         ag.fillMissingRequests()
                         for r in sorted(ag.absrequests):
                             self.logger.debug(output.turquoise("POSTMISSING %s" % r))
@@ -2457,16 +2445,12 @@ class Engine(object):
                         self.pc = pc
                         self.ag = ag
 
-                        # if the following asserts never fail, we can remove the
-                        # dictionary state->TargetRequest from the abstractpages
-                        # (or at least the transition field is useless)
                         for ap in self.ag.abspages:
                             for al in ap.abslinks:
                                 if isinstance(al, AbstractForm):
                                     continue
                                 tgts = frozenset(t.target
                                         for t in al.targets.itervalues())
-                                assert len(tgts) == 1, (tgts, ap, al)
                                 for s, t in al.targets.iteritems():
                                     assert s == t.transition, (ap, al, s, t)
                                     assert (s in t.target.targets or
@@ -2606,6 +2590,8 @@ def set_visited_unvisited(request_response, unvisited_links, visited_links):
 
     if last_request_path in unvisited_links:
         del unvisited_links[last_request_path]
+        if len(unvisited_links) == 0:
+            unvisited_links['__empty__'] = 0
                 
     visited_links.add(last_request_path)
 
@@ -2617,19 +2603,24 @@ def set_visited_unvisited(request_response, unvisited_links, visited_links):
     for idx, l in request_response.response.page.links.iteritems():
         if l:
             url_path = ""
-            if isinstance(l, AbstractAnchor):
+            if isinstance(l, Anchor):
                 url = request_response.response.page.internal.getFullyQualifiedUrl(l.href)
                 url_path = "GET" + url.path
-            elif isinstance(l, AbstractRedirect):
-                url = htmlunit.URL(request_response.response.page.internal.getWebRequest().getUrl(), link.location)
+            elif isinstance(l, Redirect):
+                url = htmlunit.URL(request_response.response.page.internal.getWebRequest().getUrl(), l.location)
                 url_path = "GET" + url.path
-            elif isinstance(l, AbstractForm):
-                continue
+            elif isinstance(l, Form):
+                url = htmlunit.URL(request_response.response.page.internal.getWebResponse().getWebRequest().getUrl(), l.action)
+                url_path = l.method + url.path
             else:
-                assert "We shouldn't get here"
+                assert False, "We shouldn't get here"
+            if url.query:
+                url_path += "?" + url.query
             
             if url_path and (not url_path in visited_links):
                 unvisited_links[url_path] = 0
+                if '__empty__' in unvisited_links:
+                    del unvisited_links['__empty__']
         
 if __name__ == "__main__":
     optslist, args = getopt.getopt(sys.argv[1:], "l:d:")
