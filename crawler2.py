@@ -590,13 +590,10 @@ class AppGraphGenerator(object):
             currpage = curr.response.page
             currabspage = currpage.abspage
             assert not laststate in currabsreq.targets
-            #self.logger.debug(output.red("A %s(%d)\n\t%s " % (currabsreq, id(currabsreq),)
-            #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
+
             currabsreq.targets[laststate] = PageTarget(currabspage, laststate+1, nvisits=1)
             currpage.reqresp.request.state = laststate
 
-            #self.logger.debug(output.red("B %s(%d)\n\t%s " % (currabsreq, id(currabsreq),)
-            #    '\n\t'.join([str((s, t)) for s, t in currabsreq.targets.iteritems()])))
             laststate += 1
 
             assert currpage.state == -1 or currpage.state == laststate
@@ -607,6 +604,7 @@ class AppGraphGenerator(object):
             currabspage.statereqrespsmap[laststate] = [curr]
 
             if curr.next:
+                assert curr.next.backto == None, "This should never be true now that we removed going back."
                 if curr.next.backto is not None:
                     currpage = curr.next.backto.response.page
                     currabspage = currpage.abspage
@@ -616,12 +614,9 @@ class AppGraphGenerator(object):
                 assert not laststate in currabspage.abslinks[chosenlink].targets
                 newtgt = ReqTarget(nextabsreq, laststate, nvisits=1)
                 if chosenlink.type == Links.Type.FORM:
-#                    pdb.set_trace()
                     chosenlink = LinkIdx(chosenlink.type, chosenlink.path,
                             curr.next.request.formparams)
                     ## TODO: for now assume that different FORM requests are not clustered
-                    #assert len(set(tuple(sorted((j[0], tuple(j[1])) for j in i.request.formparams.iteritems())) for i in nextabsreq.reqresps)) == 1
-                    #tgtdict = {nextabsreq.reqresps[0].request.formparams: newtgt}
                     # we should get the form parameters from the chosenlink, 
                     assert chosenlink.params != None
                     tgtdict = {chosenlink.params: newtgt}
@@ -635,10 +630,6 @@ class AppGraphGenerator(object):
                     currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate].target[chosenlink.params]
                 else:
                     currabspage.statelinkmap[laststate] = currabspage.abslinks[chosenlink].targets[laststate]
-
-            #self.logger.debug(output.green("B %s(%d)\n\t%s " % (nextabsreq, id(nextabsreq),)
-            #    '\n\t'.join([str((s, t)) for s, t in nextabsreq.targets.iteritems()])))
-
             curr = curr.next
             currabsreq = nextabsreq
             cnt += 1
@@ -669,8 +660,6 @@ class AppGraphGenerator(object):
             if tgt.nvisits:
                 if tgt.target != nextabsreq:
                     # cannot map the page to the current state, need to redo clustering
-                    if maxstate >= 577:
-                        pdb.set_trace()
                     raise AppGraphGenerator.AddToAppGraphException("%s != %s [1]" % (tgt.target, nextabsreq))
                 tgt.nvisits += 1
             else:
@@ -690,8 +679,6 @@ class AppGraphGenerator(object):
             tgt = currabsreq.targets[state]
             if tgt.target != currabspage:
                 # cannot map the page to the current state, need to redo clustering
-                #if maxstate >= 577:
-                #    pdb.set_trace()
                 raise AppGraphGenerator.AddToAppGraphException("%s != %s [2]" % (tgt.target, currabspage))
             tgt.nvisits += 1
         else:
@@ -1161,10 +1148,7 @@ class AppGraphGenerator(object):
         tgtchosenlink = None
 
         while True:
-#            self.logger.debug(output.green("************************** %s %s\n%s\n%s") % (currstate, currreq, currreq.targets, statemap))
             currtarget = currreq.targets[currstate]
-#            if maxstate >= 75 and str(currreq).find("review") != -1:
-#                pdb.set_trace()
 
             # if any of the previous states leading to the same target caused a state transition,
             # directly guess that this request will cause a state transition
@@ -1224,12 +1208,6 @@ class AppGraphGenerator(object):
         self.mergeStateReqRespMaps(statemap)
 
         self.assignReducedState(statemap)
-
-#        for ar in self.absrequests:
-#            if str(ar).find("users/home") != -1:
-#                for s, t in ar.targets.iteritems():
-#                    if s != t.transition:
-#                        pdb.set_trace()
 
         # return last current state
         return statemap[-1]
@@ -1377,14 +1355,9 @@ class Crawler(object):
         self.logger = logging.getLogger(self.__class__.__name__)
         # where to dump HTTP requests and responses
         self.dumpdir = dumpdir
-        #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.INTERNET_EXPLORER_6)
-        #self.webclient = htmlunit.WebClient(htmlunit.BrowserVersion.FIREFOX_3)
-        #bw = htmlunit.BrowserVersion(
-        #    htmlunit.BrowserVersion.NETSCAPE, "5.0 (Windows; en-US)",
-        #            "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.0.1) Gecko/2008070208 Firefox/3.0.1 Safari", 3.0)
-            #        "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.0.1) Gecko/2008070208 Firefox/3.0.1 Safari", "1.2", 3.0, "FF3", None)
 
-        #self.webclient = htmlunit.WebClient(bw)
+        self.initial_url = None
+
         self.webclient = htmlunit.WebClient()
         self.webclient.setThrowExceptionOnScriptError(True);
 
@@ -1415,7 +1388,6 @@ class Crawler(object):
 
     def open(self, url):
         del self.refresh_urls[:]
-        #webrequest = htmlunit.WebRequest(htmlunit.URL(url))
         htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(url))
         # TODO: handle HTTP redirects, they will throw an exception
         return self.newPage(htmlpage)
@@ -1445,7 +1417,7 @@ class Crawler(object):
         return reqresp
 
     def newPage(self, htmlpage):
-        page = Page(htmlpage)
+        page = Page(htmlpage, initial_url=self.initial_url, webclient=self.webclient)
         webresponse = htmlpage.getWebResponse()
         response = Response(webresponse, page=page)
         request = Request(webresponse.getWebRequest())
@@ -1459,7 +1431,7 @@ class Crawler(object):
         return self.currreqresp
 
     def newHttpRedirect(self, webresponse):
-        redirect = Page(webresponse, redirect=True)
+        redirect = Page(webresponse, redirect=True, initial_url=self.initial_url, webclient=self.webclient)
         response = Response(webresponse, page=redirect)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
@@ -1472,20 +1444,7 @@ class Crawler(object):
         return self.currreqresp
 
     def newHttpError(self, webresponse):
-        error = Page(webresponse, error=True)
-        response = Response(webresponse, page=error)
-        request = Request(webresponse.getWebRequest())
-        reqresp = RequestResponse(request, response)
-        if self.dumpdir:
-            self.dumpReqResp(reqresp)
-        request.reqresp = reqresp
-        error.reqresp = reqresp
-
-        self.updateInternalData(reqresp)
-        return self.currreqresp
-
-    def newUnexpectedPage(self, webresponse):
-        error = Page(webresponse, error=True)
+        error = Page(webresponse, error=True, initial_url=self.initial_url, webclient=self.webclient)
         response = Response(webresponse, page=error)
         request = Request(webresponse.getWebRequest())
         reqresp = RequestResponse(request, response)
@@ -1542,27 +1501,17 @@ class Crawler(object):
 
     def click(self, anchor):
         self.logger.debug(output.purple("clicking on %s"), anchor)
-#        if str(anchor).find("viewtopic.php?p=2#2") != -1:
-#            pdb.set_trace()
-        assert anchor.internal.getPage() == self.currreqresp.response.page.internal, \
-                "Inconsistency error %s != %s" % (anchor.internal.getPage(), self.currreqresp.response.page.internal)
+
         try:
-            # click the page as our special click
-            element = htmlunit.HtmlElement.cast_(anchor.internal)
-            page = element.click(False, False, False, False)
+            page = anchor.click()
             htmlpage = htmlunit.HtmlPage.cast_(page)
+
             reqresp = self.newPage(htmlpage)
-            #if reqresp.request.path.find("index.php") != -1 and \
-            #        reqresp.response.content.find(
-            #                "The newest registered user") == -1:
-            #    pdb.set_trace()
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
         except TypeError, e:
             reqresp = self.handleNavigationException(e)
         anchor.to.append(reqresp)
-        # assert reqresp.request.fullpathref[-len(anchor.href):] == anchor.href, \
-        #         "Unhandled redirect %s !sub %s" % (anchor.href, reqresp.request.fullpathref)
         return reqresp
 
 
@@ -1667,23 +1616,6 @@ class Crawler(object):
         # assert reqresp.request.fullpathref.split('?')[0][-len(act):] == act, \
         #         "Unhandled redirect %s !sub %s" % (act, reqresp.request.fullpathref)
         return reqresp
-
-    def back(self):
-        self.logger.debug(output.purple("stepping back"))
-        # htmlunit has not "back" function
-        if self.currreqresp.prev is None:
-            raise Crawler.EmptyHistory()
-        # use "backto" rather than "prev", because the page pointed by "prev"
-        # might be still page for which we had to call "back()"
-        # backto will point to the page having the link that generated the
-        # current request
-        self.currreqresp = self.currreqresp.backto if self.currreqresp.backto \
-                else self.currreqresp.prev
-        return self.currreqresp
-
-    @property
-    def steppingback(self):
-        return self.currreqresp != self.lastreqresp
 
     def getNewRequest(self, page, idx, link):
         if isinstance(link, AbstractAnchor):
@@ -1835,7 +1767,7 @@ PathStep = namedtuple("PathStep", "abspage idx state")
 
 class Engine(object):
 
-    Actions = Constants("BACK", "ANCHOR", "FORM", "REDIRECT", "DONE")
+    Actions = Constants("ANCHOR", "FORM", "REDIRECT", "DONE", "RESTART")
 
     def __init__(self, formfiller=None, dumpdir=None):
         self.requests = 0
@@ -2159,35 +2091,14 @@ class Engine(object):
                 # if we have at least one link, and it is the only one, and it is a redirect, 
                 # then follow it
                 if firstlink and firstlink[0].type == Links.Type.REDIRECT:
-                    if self.cr.steppingback:
-                        if not reqresp.request.absrequest.changingstate:
-                            self.logger.debug("page contains only a rediect,"
-                                    " but we are stepping back; keep stepping"
-                                    "back")
-                            # reqresp.request.absrequest.changingstate should be
-                            # an OR of all
-                            # corresponding request.changingstate
-                            assert not reqresp.request.changingstate
-                            return (Engine.Actions.BACK, )
-                        else:
-                            self.logger.info("page contains only a rediect,"
-                                    " but we are stepping back; however the"
-                                    " last request caused a state transition,"
-                                    " so terminating")
-                            # cannot step back on a request that changed the state
-                            # (XXX actually we could... but we would need to refresh the previous page)
-                            return (Engine.Actions.DONE, )
-                    else:
-                        self.logger.debug("page contains only a rediect, following it")
-                        return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
+                    self.logger.debug("page contains only a rediect, following it")
+                    return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
 
             recentlyseen = set()
             rr = reqresp
             found = False
             while rr:
                 destination = rr.response.page.abspage
-#                if str(rr.response.page.abspage).find("tos") != -1:
-#                    pdb.set_trace()
                 probablyseen = None
                 for s, t in rr.request.absrequest.targets.iteritems():
                     if (t.target, t.transition) == (destination, self.state):
@@ -2266,25 +2177,8 @@ class Engine(object):
                     return (Engine.Actions.ANCHOR,
                             reqresp.response.page.links[chosen])
 
-        if not reqresp.prev:
-            # no path found and at the first page
-            self.logger.info("stepped back to the first page, terminating")
-            return (Engine.Actions.DONE, )
-
-        if not reqresp.request.absrequest.changingstate:
-            # reqresp.request.absrequest.changingstate should be an OR of all
-            # corresponding request.changingstate
-            assert not reqresp.request.changingstate
-            # no path found, step back
-            return (Engine.Actions.BACK, )
-        else:
-            self.logger.info("cannd find path to unvisited, we would like to"
-                    " step back; however the"
-                    " last request caused a state transition,"
-                    " so terminating")
-            # cannot step back on a request that changed the state
-            # (XXX actually we could... but we would need to refresh the previous page)
-            return (Engine.Actions.DONE, )
+        self.logger.info("Couldn't find a path, so let's restart at the main page.")
+        return (Engine.Actions.RESTART, )
 
     def keep_looking_for_links(self):
         """
@@ -2298,7 +2192,7 @@ class Engine(object):
 
 
         #return total_importance >= 1
-        return self.num_requests < 2000
+        return self.num_requests < 200
 
 
     def _link_decay_function(self, requests_since_last_seen, total_abstract_requests):
@@ -2374,6 +2268,9 @@ class Engine(object):
         global maxstate
 
         for cnt, url in enumerate(urls):
+
+            cr.initial_url = url
+
             self.logger.info(output.purple("starting with URL %d/%d %s"), cnt+1, len(urls), url)
             maxstate = -1
             reqresp = cr.open(url)
@@ -2396,10 +2293,10 @@ class Engine(object):
                     except Crawler.UnsubmittableForm:
                         nextAction[1].skip = True
                         nextAction = self.getNextAction(reqresp)
-                elif nextAction[0] == Engine.Actions.BACK:
-                    reqresp = cr.back()
                 elif nextAction[0] == Engine.Actions.REDIRECT:
                     reqresp = cr.followRedirect(nextAction[1])
+                elif nextAction[0] == Engine.Actions.RESTART:
+                    reqresp = cr.click(reqresp.response.page.anchors[-1])
                 else:
                     assert False, nextAction
 
@@ -2407,67 +2304,66 @@ class Engine(object):
 
                 self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
                 self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
-                if not nextAction[0] == Engine.Actions.BACK:
-                    try:
-                        if nextAction[0] == Engine.Actions.FORM or sinceclustered > 15:
-                            # do not even try to merge forms
-                            raise PageMergeException()
-                        self.state = self.tryMergeInGraph(reqresp)
-                        maxstate += 1
-                        self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
-                        sinceclustered += 1
-                    except PageMergeException:
-                        self.logger.info("need to recompute graph")
-                        sinceclustered = 0
-                        pc = PageClusterer(cr.headreqresp)
-                        self.logger.debug(output.blue("AP %s" % '\n'.join(str(i)
-                                for i in pc.getAbstractPages())))
-                        ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(),
-                                statechangescores, self.formfiller, cr)
-                        maxstate = ag.generateAppGraph()
-                        self.state = ag.reduceStates()
-                        ag.markChangingState()
-                        global debugstop
-                        debugstop = True
-                        def check(x):
-                            l = list(x)
-                            v = reduce(lambda a, b: (a[0] + b[0], (a[1] + b[1])), l, (0, 0))
-                            v = (v[0], v[1]/2.0)
-                            return v
-                        statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=check)
-                        debugstop = False
-                        rr = cr.headreqresp
-                        while rr:
-                            changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
-                            statechangescores.setapplypathvalue([rr.request.method] + list(rr.request.urlvector),
-                                    (1, changing), lambda x: (x[0] + 1, x[1] + changing))
-                            rr.request.state = -1
-                            rr.response.page.state = -1
-                            rr = rr.next
-                        self.logger.debug(output.turquoise("statechangescores"))
-                        self.logger.debug(output.turquoise("%s" % statechangescores))
+                try:
+                    if nextAction[0] == Engine.Actions.FORM or sinceclustered > 15:
+                        # do not even try to merge forms
+                        raise PageMergeException()
+                    self.state = self.tryMergeInGraph(reqresp)
+                    maxstate += 1
+                    self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
+                    sinceclustered += 1
+                except PageMergeException:
+                    self.logger.info("need to recompute graph")
+                    sinceclustered = 0
+                    pc = PageClusterer(cr.headreqresp)
+                    self.logger.debug(output.blue("AP %s" % '\n'.join(str(i)
+                            for i in pc.getAbstractPages())))
+                    ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(),
+                            statechangescores, self.formfiller, cr)
+                    maxstate = ag.generateAppGraph()
+                    self.state = ag.reduceStates()
+                    ag.markChangingState()
+                    global debugstop
+                    debugstop = True
+                    def check(x):
+                        l = list(x)
+                        v = reduce(lambda a, b: (a[0] + b[0], (a[1] + b[1])), l, (0, 0))
+                        v = (v[0], v[1]/2.0)
+                        return v
+                    statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=check)
+                    debugstop = False
+                    rr = cr.headreqresp
+                    while rr:
+                        changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
+                        statechangescores.setapplypathvalue([rr.request.method] + list(rr.request.urlvector),
+                                (1, changing), lambda x: (x[0] + 1, x[1] + changing))
+                        rr.request.state = -1
+                        rr.response.page.state = -1
+                        rr = rr.next
+                    self.logger.debug(output.turquoise("statechangescores"))
+                    self.logger.debug(output.turquoise("%s" % statechangescores))
 
-                        self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
-                        ag.fillMissingRequests()
-                        for r in sorted(ag.absrequests):
-                            self.logger.debug(output.turquoise("POSTMISSING %s" % r))
+                    self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
+                    ag.fillMissingRequests()
+                    for r in sorted(ag.absrequests):
+                        self.logger.debug(output.turquoise("POSTMISSING %s" % r))
 
-                        self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages())))
-                        self.pc = pc
-                        self.ag = ag
+                    self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages())))
+                    self.pc = pc
+                    self.ag = ag
 
-                        for ap in self.ag.abspages:
-                            for al in ap.abslinks:
-                                if isinstance(al, AbstractForm):
-                                    continue
-                                tgts = frozenset(t.target
-                                        for t in al.targets.itervalues())
-                                for s, t in al.targets.iteritems():
-                                    assert s == t.transition, (ap, al, s, t)
-                                    assert (s in t.target.targets or
-                                            t.nvisits == 0), \
-                                           (ap, al, s, t.target,
-                                                   t.target.targets)
+                    for ap in self.ag.abspages:
+                        for al in ap.abslinks:
+                            if isinstance(al, AbstractForm):
+                                continue
+                            tgts = frozenset(t.target
+                                    for t in al.targets.itervalues())
+                            for s, t in al.targets.iteritems():
+                                assert s == t.transition, (ap, al, s, t)
+                                assert (s in t.target.targets or
+                                        t.nvisits == 0), \
+                                       (ap, al, s, t.target,
+                                               t.target.targets)
 
                 self.num_requests += 1
                 ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))

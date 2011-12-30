@@ -7,22 +7,26 @@ from redirect import Redirect
 from validanchor import validanchor
 from vectors import linksvector
 from link import Links
+from fakehtmlunitanchor import FakeHtmlUnitAnchor
 
 class Page(object):
 
-    def __init__(self, internal, redirect=False, error=False):
+    def __init__(self, internal, initial_url, webclient, redirect=False, error=False):
         self.internal = internal
         self.reqresp = None
         self.abspage = None
         self.redirect = redirect
         self.error = error
         self.state = -1
-        # cannot use this assert, otherwise calls the lazypropery reirects before reqresp is initialized
-        #assert not self.redirect or len(self.redirects) == 1, self.redirects
+
+        self.fake_anchor = FakeHtmlUnitAnchor(initial_url, webclient)
 
     @lazyproperty
     def anchors(self):
-        return [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(self.internal.url.toString(), i.getHrefAttribute().strip())] if not self.redirect and not self.error else []
+        actual_anchors = [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(self.internal.url.toString(), i.getHrefAttribute().strip())] if not self.redirect and not self.error else []
+        if not self.redirect and not self.error:
+            actual_anchors.append(Anchor(self.fake_anchor, self.reqresp))
+        return actual_anchors
 
     @lazyproperty
     def forms(self):

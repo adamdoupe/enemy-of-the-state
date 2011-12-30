@@ -1,9 +1,11 @@
 import urlparse
+import htmlunit
 
 from lazyproperty import lazyproperty
 from link import Link, Links, AbstractLink
 from ignore_urls import filterIgnoreUrlParts
 from vectors import urlvector
+from fakehtmlunitanchor import FakeHtmlUnitAnchor
 
 class Anchor(Link):
 
@@ -26,7 +28,11 @@ class Anchor(Link):
         return urlparse.urlparse(self.href)
 
     def click(self):
-        return self.internal.click()
+        if isinstance(self.internal, FakeHtmlUnitAnchor):
+            return self.internal.click()
+        else:
+            element = htmlunit.HtmlElement.cast_(self.internal)
+            return element.click(False, False, False, False)
 
     @lazyproperty
     def _str(self):
