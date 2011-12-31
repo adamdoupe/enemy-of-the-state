@@ -1781,6 +1781,7 @@ class Engine(object):
         self.running_visited_avg = RunningAverage(RUNNING_AVG_SIZE)
         self.last_ar_seen = -1
         self.since_last_ar_change = 0
+        self.last_ap_pages = 1
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -2186,7 +2187,7 @@ class Engine(object):
         """
         c = 20
 
-        return self.since_last_ar_change <= (c * self.pc.getAbstractPages())
+        return self.since_last_ar_change <= (c * self.last_ap_pages)
 
     def submitForm(self, form, params):
         if params is None:
@@ -2343,6 +2344,7 @@ class Engine(object):
                 self.num_requests += 1
 
                 ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))
+                ar_through_time.flush()
 
                 ar_seen = len([ar for ar in ag.absrequests if ar.request_actually_made()])
 
@@ -2352,6 +2354,8 @@ class Engine(object):
                 else:
                     self.since_last_ar_change += 1
 
+                self.last_ap_pages = len(pc.getAbstractPages())
+                
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
 
