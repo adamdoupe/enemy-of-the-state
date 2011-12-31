@@ -1779,8 +1779,8 @@ class Engine(object):
         # where to dump HTTP requests and responses
         self.dumpdir = dumpdir
         self.running_visited_avg = RunningAverage(RUNNING_AVG_SIZE)
-        self.unvisited_links = {}
-        self.visited_links = set()
+        self.last_ar_seen = -1
+        self.since_last_ar_change = 0
 
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
@@ -2184,41 +2184,19 @@ class Engine(object):
         """
         This function returns true if we should continue looking for links, false otherwise
         """
-        total_abstract_requests = len([i for i in self.ag.absrequests if not i.changingstate])
+        c = 20
 
-        link_importance = [self._link_decay_function(requests_since_last_seen, total_abstract_requests) for requests_since_last_seen in self.unvisited_links.itervalues()]
-
-        total_importance = sum(link_importance)
-
-
-        #return total_importance >= 1
-        return self.num_requests < 200
-
-
-    def _link_decay_function(self, requests_since_last_seen, total_abstract_requests):
-        """
-        This is an exponential decay function that has the following properties:
-        Hits the points (1, 1), (2, .1). 
-
-        This means that the link importance will start to decay as requests_since_last_seen 
-        is greater than total_abstract_requests
-        """
-        ratio = (requests_since_last_seen * 1.0) / total_abstract_requests
-        return math.exp(-2.30259*(ratio - 1))
+        return self.since_last_ar_change <= (c * self.pc.getAbstractPages())
 
     def submitForm(self, form, params):
         if params is None:
-#            pdb.set_trace()
             formkeys = form.elems
             self.logger.debug("form keys %s", formkeys)
-#            if str(form).find("posting.php") != -1:
-#                pdb.set_trace()
             submitparams = self.formfiller.getrandparams(formkeys, form)
             assert submitparams is not None
         else:
             self.logger.debug("specified form params %s", params)
             submitparams = params
-#            pdb.set_trace()
         return self.cr.submitForm(form, submitparams)
 
     def tryMergeInGraph(self, reqresp):
@@ -2276,7 +2254,6 @@ class Engine(object):
             reqresp = cr.open(url)
 
             self.num_requests += 1
-            set_visited_unvisited(reqresp, self.unvisited_links, self.visited_links)
 
             self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
             self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
@@ -2299,8 +2276,6 @@ class Engine(object):
                     reqresp = cr.click(reqresp.response.page.anchors[-1])
                 else:
                     assert False, nextAction
-
-                set_visited_unvisited(reqresp, self.unvisited_links, self.visited_links)
 
                 self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
                 self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
@@ -2366,7 +2341,17 @@ class Engine(object):
                                                t.target.targets)
 
                 self.num_requests += 1
+
                 ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))
+
+                ar_seen = len([ar for ar in ag.absrequests if ar.request_actually_made()])
+
+                if ar_seen != self.last_ar_seen:
+                    self.last_ar_seen = ar_seen
+                    self.since_last_ar_change = 0
+                else:
+                    self.since_last_ar_change += 1
+
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
 
@@ -2492,45 +2477,6 @@ def writeColorableStateGraph(allstates, differentpairs):
     with open('colorablestategraph.dot', 'w') as f:
         f.write(dot.to_string())
 
-def set_visited_unvisited(request_response, unvisited_links, visited_links):
-    # Perform some cleanup for the unvisited requests
-    last_request = request_response.request
-    last_request_path = last_request.method + last_request.fullpath
-
-    if last_request_path in unvisited_links:
-        del unvisited_links[last_request_path]
-        if len(unvisited_links) == 0:
-            unvisited_links['__empty__'] = 0
-                
-    visited_links.add(last_request_path)
-
-    # Increment the request count for all the other unvisited requests
-    for request in unvisited_links.iterkeys():
-        unvisited_links[request] += 1
-
-    # Add the new requests to the unvisited_links map
-    for idx, l in request_response.response.page.links.iteritems():
-        if l:
-            url_path = ""
-            if isinstance(l, Anchor):
-                url = request_response.response.page.internal.getFullyQualifiedUrl(l.href)
-                url_path = "GET" + url.path
-            elif isinstance(l, Redirect):
-                url = htmlunit.URL(request_response.response.page.internal.getWebRequest().getUrl(), l.location)
-                url_path = "GET" + url.path
-            elif isinstance(l, Form):
-                url = htmlunit.URL(request_response.response.page.internal.getWebResponse().getWebRequest().getUrl(), l.action)
-                url_path = l.method + url.path
-            else:
-                assert False, "We shouldn't get here"
-            if url.query:
-                url_path += "?" + url.query
-            
-            if url_path and (not url_path in visited_links):
-                unvisited_links[url_path] = 0
-                if '__empty__' in unvisited_links:
-                    del unvisited_links['__empty__']
-        
 if __name__ == "__main__":
     optslist, args = getopt.getopt(sys.argv[1:], "l:d:")
     opts = dict(optslist) if optslist else {}
@@ -2557,13 +2503,11 @@ if __name__ == "__main__":
                 shutil.rmtree("%s/%s" % (dumpdir, d))
 
     ff = FormFiller()
-    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo']})
+    login = FormFiller.Params({'username': ['scanner1'], 'password': ['scanner1']})
     ff.add(login)
     login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off'], 'login': ['Log in']})
     ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
-    ff.add(login)
-    login = FormFiller.Params({'user': ['ludo'], 'pass': ['ludo']})
     ff.add(login)
     login = FormFiller.Params({'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]})
     ff.add(login)
@@ -2575,8 +2519,6 @@ if __name__ == "__main__":
         traceback.print_exc()
         pdb.post_mortem()
     finally:
-        e.writeStateDot()
-        #e.writeDot()
         pass
 
 

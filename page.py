@@ -24,7 +24,7 @@ class Page(object):
     @lazyproperty
     def anchors(self):
         actual_anchors = [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(self.internal.url.toString(), i.getHrefAttribute().strip())] if not self.redirect and not self.error else []
-        if not self.redirect and not self.error:
+        if not self.redirect:
             actual_anchors.append(Anchor(self.fake_anchor, self.reqresp))
         return actual_anchors
 
