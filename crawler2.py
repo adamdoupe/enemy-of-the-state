@@ -1421,7 +1421,7 @@ class Crawler(object):
                     message = filterIgnoreUrlParts(message)
                     self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
                     reqresp = self.newHttpRedirect(response)
-                elif statuscode == 404:
+                elif statuscode == 404 or statuscode == 500:
                     response = httpex.getResponse()
                     self.logger.info(output.purple("error %d (%s)" % (statuscode, message)))
                     reqresp = self.newHttpError(response)
@@ -1546,16 +1546,23 @@ class Crawler(object):
         return reqresp
 
     def getNewRequest(self, page, idx, link):
-        if isinstance(link, AbstractAnchor):
+        use_url = isinstance(link, AbstractRedirect) or page.error
+        use_fully_qualified = isinstance(link, AbstractAnchor) and not page.error
+        if use_fully_qualified:
             if len(link.hrefs) == 1:
                 href = iter(link.hrefs).next()
                 if not href.strip().lower().startswith("javascript:"):
                     url = page.internal.getFullyQualifiedUrl(href)
                     return htmlunit.WebRequest(url)
-        elif isinstance(link, AbstractRedirect):
-            if len(link.locations) == 1:
-                href = iter(link.locations).next()
-                if not href.strip().lower().startswith("javascript:"):
+        elif use_url:
+            href = ""
+            if isinstance(link, AbstractRedirect):
+                if len(link.locations) == 1:
+                    href = iter(link.locations).next()
+            elif isinstance(link, AbstractAnchor):
+                if len(link.hrefs) == 1:
+                    href = iter(link.hrefs).next()
+            if href and not href.strip().lower().startswith("javascript:"):
                     url = htmlunit.URL(page.internal.getWebRequest().getUrl(),
                             href)
                     return htmlunit.WebRequest(url)
@@ -2072,7 +2079,7 @@ class Engine(object):
         """
         This function returns true if we should continue looking for links, false otherwise
         """
-        c = 20
+        c = 10
 
         return self.since_last_ar_change <= (c * self.last_ap_pages)
 

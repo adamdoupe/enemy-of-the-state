@@ -91,6 +91,12 @@ class ExtCrawlerTest(unittest.TestCase):
         self.assertEqual(len(e.ag.abspages), 4)
         self.assertTrue(e.ag.nstates > 10)
 
+    def test_500_error(self):
+        url = EXT_BASE_URL + '/500/index.php'
+        e = self.e
+        e.main([url])
+        
+
     def test_changing_state(self):
         os.chmod(TEST_BASE_PATH + '/changing_state', 0777)
         try:
