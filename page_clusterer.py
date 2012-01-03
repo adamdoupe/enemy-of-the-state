@@ -36,18 +36,13 @@ class PageClusterer(object):
         self.logger.debug("%d abstract pages generated", len(self.abspages))
 
     def scanlevels(self, level, n=0):
-        #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         for k, v in level.iteritems():
             nleaves = v.nleaves
-            #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
             if v: # if there are descendants
                 # XXX magic number
-                # requrire more than X pages in a cluster
+                # require more than X pages in a cluster
 
                 # require some diversity in the dom path in order to create a link
-#                self.logger.debug("========", n, len(k), k, level)
-#                if nleaves >= 15 and nleaves >= med and str(k).find("date") != -1:
-#                    pdb.set_trace()
                 med = median((i.nleaves for i in v.itervalues()))
                 if nleaves > med and nleaves > 15*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
                         and v.depth <= 6 and n >= 3:
@@ -60,10 +55,8 @@ class PageClusterer(object):
     # XXX TODO: Merge this with scanlevels since they're the same algorithm
     # Also, newclusterable isn't used anywhere, which means that this doesn't really do anything
     def scanlevelspath(self, level, path, n=0):
-        #self.logger.debug(output.green(' ' * n + "MED %f / %d"), med, level.nleaves )
         v = level[path[0]]
         nleaves = v.nleaves if hasattr(v, "nleaves") else len(v)
-        #self.logger.debug(output.green(' ' * n + "K %s %d %f"), k, nleaves, nleaves/med)
         if v: # if there are descendants
             # XXX magic number
             # requrire more than X pages in a cluster

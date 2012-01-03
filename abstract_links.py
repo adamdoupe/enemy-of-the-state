@@ -15,7 +15,6 @@ class AbstractLinks(object):
                 (Links.Type.REDIRECT, AbstractRedirect)]:
             if any(t in lt for lt in linktrees):
                 self.buildtree(self.linkstree, t, [lt[t] for lt in linktrees], c)
-        #pdb.set_trace()
 
     def buildtree(self, level, key, ltval, c):
         assert all(isinstance(i, list) for i in ltval) or \
@@ -66,7 +65,6 @@ class AbstractLinks(object):
             basekeys = set(baselinkstree.keys())
             if pagekeys != basekeys:
                 # there is difference, abort and go back reclustering
-                #pdb.set_trace()
                 raise MergeLinksTreeException()
             for k in pagekeys:
                 # descend into tree
@@ -111,7 +109,6 @@ class AbstractLinks(object):
                 yield (Link.LinkIdx(p[0], p[1:], None), l)
 
     def getUnvisited(self, state):
-        #self.printInfo()
         # unvisited if we never did the request for that state
         # third element of the tuple are the form parameters
         return [(i, l) for i, l in self.iteritems() if not l.skip \

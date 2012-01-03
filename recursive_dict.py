@@ -15,8 +15,6 @@ class RecursiveDict(defaultdict):
 
     def __missing__(self, key):
         v = RecursiveDict(nleavesfunc=self.nleavesfunc, nleavesaggregator=self.nleavesaggregator)
-#        if str(key).find("logout") != -1 and debugstop:
-#            pdb.set_trace()
         self.__setitem__(key, v)
         return v
 
@@ -58,8 +56,6 @@ class RecursiveDict(defaultdict):
             i = i[p]
             # invalidate leaves count
             i._nleaves = None
-#        if str(path[-1]).find("logout") != -1 and debugstop:
-#            pdb.set_trace()
         i[path[-1]].value = value
 
     def applypath(self, path, func):
@@ -71,8 +67,6 @@ class RecursiveDict(defaultdict):
             i = i[p]
             # invalidate leaves count
             i._nleaves = None
-#        if str(path[-1]).find("logout") != -1 and debugstop:
-#            pdb.set_trace()
         i[path[-1]] = func(i[path[-1]])
         assert i[path[-1]]
 
@@ -87,8 +81,6 @@ class RecursiveDict(defaultdict):
             i = i[p]
             # invalidate leaves count
             i._nleaves = None
-#        if str(path[-1]).find("logout") != -1 and debugstop:
-#            pdb.set_trace()
         if path[-1] in i and i[path[-1]].value is not None:
             i[path[-1]].value = func(i[path[-1]].value)
         else:
@@ -109,7 +101,6 @@ class RecursiveDict(defaultdict):
                     children.extend(c.itervalues())
                 if children:
                     queue.append(children)
-                #self.logger.debug("LK", len(queue), levelkeys, queue)
                 yield levelkeys
 
     def iterleaves(self):

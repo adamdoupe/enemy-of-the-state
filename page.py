@@ -81,9 +81,6 @@ class AbstractPage(object):
 
 
     def addPage(self, reqresp):
-#        if maxstate > 155 and self.instance == 966:
-#            pdb.set_trace()
-
         self.reqresps.append(reqresp)
         self.abslinks.tryMergeLinkstree(reqresp.response.page.linkstree)
         self._str = None

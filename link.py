@@ -54,11 +54,8 @@ class Links(object):
             for l in links:
                 urlv = [ltype]
                 urlv += [l.dompath] if l.dompath else []
-                #self.logger.debug("LINKVETOR", l.linkvector)
                 urlv += list(l.linkvector)
-                #self.logger.debug("URLV", urlv)
                 linkstree.applypath(urlv, lambda x: self.addlink(x, l))
-                #self.logger.debug("LINKSTREE", linkstree)
         if not linkstree:
             # all pages with no links will end up in the same special bin
             linkstree.setapplypathvalue(("<EMPTY>", ), [None], lambda x: x+[None])

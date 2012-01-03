@@ -11,7 +11,6 @@ from utils import all_same
 class Form(Link):
     SUBMITTABLES = [("input", "type", "submit"),
                     ("input", "type", "image"),
-#                    ("input", "type", "button"),
                     ("button", "type", "submit")]
     GET, POST = ("GET", "POST")
 
@@ -140,7 +139,6 @@ class Form(Link):
         for submittable in Form.SUBMITTABLES:
             try:
                 submitters = self.internal.getElementsByAttribute(*submittable)
-                #self.logger.debug("SUBMITTERS %s", submitters)
 
                 result.extend(self.buildFormField(
                     htmlunit.HtmlElement.cast_(i)) for i in submitters)

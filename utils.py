@@ -33,7 +33,5 @@ class DebugDict(dict):
         dict.__init__(self)
 
     def __setitem__(self, k, v):
-#        if self.parent == 1471 and k == 46: 
-#            pdb.set_trace()
         dict.__setitem__(self, k, v)
 

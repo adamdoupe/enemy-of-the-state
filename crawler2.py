@@ -72,7 +72,6 @@ def signalhandler(signum, frame):
     else:
         gracefulexit()
 
-#signal.signal(signal.SIGUSR1, signalhandler)
 signal.signal(signal.SIGINT, signalhandler)
 
 def handleError(self, record):
@@ -104,8 +103,6 @@ class AbstractRequest(object):
             if self.outer._requestset is not None:
                 self.outer._requestset.add(rr.request.shortstr)
             self.outer.changingstate = self.outer.changingstate or rr.request.changingstate
-#            if maxstate >= 76 and str(rr.request).find("review") != -1:
-#                pdb.set_trace()
             if rr.request.statehint:
                 self.outer.statehints += 1
             return list.append(self, rr)
@@ -229,7 +226,6 @@ class CustomDict(dict):
             self[k] = v
 
     def __getitem__(self, k):
-        #self.logger.debug("GET", k)
         h = self.h(k)
         if dict.__contains__(self, h):
             return dict.__getitem__(self, self.h(k))
@@ -257,7 +253,6 @@ class AbstractMap(dict):
         else:
             v = self.absobj(obj)
             self[h] = v
-        #self.logger.debug(output.yellow("%s (%s) -> %s" % (h, obj, v)))
         assert all(self.h(i.request) if i.request else True
                 for i in v.reqresps)
         return v
@@ -296,8 +291,6 @@ class PairCounter(object):
         self.debug = debug
 
     def add(self, a, b):
-        #if self.debug and cond  > 4 and ((a in [0, 20] and b in [0, 29]) or (a in [22, 58] and b in [22, 58])):
-        #    pdb.set_trace()
         assert a != b
         if a < b:
             self._dict[(a, b)] += 1
@@ -361,8 +354,6 @@ class Score(object):
         self.counter = counter
         self.req = req
         self.dist = dist
-#        if repr(req.absrequest).find("highqual") != -1:
-#            pdb.set_trace()
         if not req.reqresp.response.page.links:
             # XXX if a page is a dead end, assume it cannot cause a state
             # transition this could actually happen, but support for handling it
@@ -485,7 +476,6 @@ class AppGraphGenerator(object):
                 # requests in the loose cluster under it
                 chosenar = fullabsreqs[0]
                 absrequests.add(chosenar)
-#                self.logger.debug("CLU: %s" % chosenar)
                 for rr in rrs:
                     chosenar.reqresps.append(rr)
                     rr.request.absrequest = chosenar
@@ -511,8 +501,6 @@ class AppGraphGenerator(object):
                 # so far in the loop
                 seenrrs = set()
                 for ar_rrs_list in abspages_to_ar.itervalues():
-#                    if str(ar_rrs_list).find("input=23") != -1:
-#                        pdb.set_trace()
                     # pick the first abstract request and map all other requests
                     # to it
                     chosenar = ar_rrs_list[0][0]
@@ -543,10 +531,6 @@ class AppGraphGenerator(object):
         self.absrequests = absrequests
 
     def addtorequestclusters(self, rr):
-        #if str(rr.request).find("recent.php") != -1:
-        #    pdb.set_trace()
-        #if maxstate == 47:
-        #    pdb.set_trace()
         mappedreq = self.fullurireqmap.getAbstract(rr.request)
         reqs = self.mappedrequests[mappedreq]
 
@@ -700,8 +684,6 @@ class AppGraphGenerator(object):
     def updateSeenStates(self):
         for ar in self.absrequests:
             for t in ar.targets.itervalues():
-#                if t.target.instance == 2542:
-#                    pdb.set_trace()
                 t.target.seenstates.add(t.transition)
 
         # Removing the following assert, as if fails for the new abstract requests
@@ -716,8 +698,6 @@ class AppGraphGenerator(object):
     def updateSeenStatesForPage(self, reqresp):
         ar = reqresp.request.absrequest
         for t in ar.targets.itervalues():
-            #if t.target.instance == 3297:
-            #    pdb.set_trace()
             if t.nvisits > 0:
                 t.target.seenstates.add(t.transition)
 
@@ -804,7 +784,6 @@ class AppGraphGenerator(object):
         newequalstates = set()
         for ss in statebins:
             otherstates = seenstates - ss
-            #self.logger.debug(output.darkred("OS %s" % otherstates))
             for es in equalstates:
                 newes = StateSet(es-otherstates)
                 if newes:
@@ -851,9 +830,6 @@ class AppGraphGenerator(object):
             statebins = [StateSet(i) for i in diffbins.itervalues()]
             equalstatebins = [StateSet(i) for i in equalbins.itervalues()]
 
-            #self.logger.debug(output.darkred("BINS %s %s" % (' '.join(str(i) for i in sorted(statebins)), ar)))
-            #self.logger.debug(output.darkred("EQUALBINS %s" % ' '.join(str(i) for i in sorted(equalstatebins))))
-
             for sb in statebins:
                 seentogether.addset(sb)
             for esb in equalstatebins:
@@ -885,15 +861,11 @@ class AppGraphGenerator(object):
 
             for t, states in sorted(targetbins.items()):
                 if len(states) > 1:
-                    #targetequalstates = set([StateSet(states)])
-                    #self.logger.debug("preTES", targetequalstates, ar, t)
-
                     statelist = sorted(states)
 
                     for i, a in enumerate(statelist):
                         for b in statelist[i+1:]:
                             if differentpairs.get(a, b):
-                                #self.logger.debug("DIFF %d != %d  ==>   %s != %s" % (a, b, targetstatebins[(t, a)], targetstatebins[(t, b)]))
                                 differentpairs.addallcombinations((targetstatebins[(t, a)], targetstatebins[(t, b)]))
 
     def assignColor(self, assignments, edges, node, maxused, statereqrespmap):
@@ -915,21 +887,18 @@ class AppGraphGenerator(object):
                 if tostate not in neighcolors:
                     # pick the tostate color directly, as it is the only one
                     # which will not generate a new state split
-                    #self.logger.debug("%d(%d) -> %d(%d), %s -> %s", rr.request.reducedstate, assignedfrom, node, tostate, rr.request.absrequest, rr.response.page.abspage)
                     assert node == rr.response.page.reducedstate
                     assignments[node] = tostate
                     return maxused
 
         for i in range(maxused, -1, -1) + [maxused+1]:
             if i not in neighcolors:
-                #self.logger.debug("ASSIGN %d %d <%s>" % (node, i, sorted(neighs)))
                 assignments[node] = i
                 if node != 0:
                     ar.colorassignstatepagemap[assignedfrom] = (rr.response.page.abspage, i)
                 maxused = max(maxused, i)
                 break
             else:
-                #self.logger.debug("NEIGH %s %d" % (node, i))
                 pass
         else:
             assert False
@@ -938,7 +907,6 @@ class AppGraphGenerator(object):
 
     def colorStateGraph(self, differentpairs, allstates, statereqrespmap):
         # XXX HOTSPOT
-        #ColorNode = namedtuple("ColorNode", "coloredneighbors degree node")
 
         # allstates should be sorted
         assert allstates[0] == 0
@@ -948,8 +916,6 @@ class AppGraphGenerator(object):
             assert a != b
             edges[a].add(b)
             edges[b].add(a)
-
-        #degrees = dict((n, ColorNode(0, len(edges[n]), n)) for n in allstates)
 
         assignments = {}
 
@@ -972,7 +938,6 @@ class AppGraphGenerator(object):
         for i, a in enumerate(allstates):
             for b in allstates[i+1:]:
                 if a not in exceptions and b not in exceptions and not seentogether.containsSorted(a, b):
-                    #self.logger.debug(output.darkred("NEVER %s" % ((a, b), )))
                     differentpairs.addSorted(a, b)
 
     def markNeverSeenTogether(self, statemap, seentogether, differentpairs, exceptions=frozenset()):
@@ -994,18 +959,12 @@ class AppGraphGenerator(object):
     def updateStatemapFromColorBins(self, bins, assignments, statemap):
             colormap = [min(nn) for nn in bins]
 
-            #self.logger.debug("CMAP", colormap)
-
             for n, c in assignments.iteritems():
                 statemap[n] = colormap[c]
-
-            #self.logger.debug("SMAP", statemap)
 
     def refreshStatemap(self, statemap):
         for i in range(len(statemap)):
             statemap[i] = statemap[statemap[i]]
-
-        #self.logger.debug("SMAP", statemap)
 
         nstates = len(set(statemap))
         return nstates
@@ -1022,13 +981,10 @@ class AppGraphGenerator(object):
 
         olddifferentpairslen = -1
 
-#        if maxstate >= 321:
-#            self.logger.debug("DIFF %s", differentpairs)
         while True:
             self.propagateDifferestTargetStates(differentpairs)
             differentpairslen = len(differentpairs)
-#            if maxstate >= 321:
-#                self.logger.debug("DIFF %s", differentpairs)
+
             assert differentpairslen >= olddifferentpairslen
             if differentpairslen == olddifferentpairslen:
                 break
@@ -1048,8 +1004,6 @@ class AppGraphGenerator(object):
 
 
     def reqstatechangescore(self, absreq, dist):
-#        if str(absreq).find("action.php?action=add") != -1:
-#            pdb.set_trace()
         global debugstop
         debugstop = True
         scores = [[(self.pagescore(i, rr.request, dist),
@@ -1058,7 +1012,6 @@ class AppGraphGenerator(object):
             [rr.request.method] + list(rr.request.urlvector))]
             for rr in absreq.reqresps]
         debugstop = False
-#        self.logger.debug("SCORES %s", scores)
 
         # LUDO XXX: Another bug here, max(max(scores)) doesn't work correctly
         return max(max(scores))[0]
@@ -1080,11 +1033,6 @@ class AppGraphGenerator(object):
                     assert len(sstarget.target.statereqrespsmap[sstarget.transition]) == 1
                     assert len(currtarget.target.statereqrespsmap[currtarget.transition]) == 1
                     continue
-                    #if sstarget.target.statereqrespsmap[sstarget.transition][0].response.page.linksvector == currtarget.target.statereqrespsmap[currtarget.transition][0].response.page.linksvector:
-                    #    continue
-                    #else:
-                    #    #self.logger.debug("DIFFSTATES")
-                    #    pass
                 self.logger.debug(output.teal("need to split state for request %s -> %s")
                         % (currreq, currtarget))
                 self.logger.debug("\t%d(%d)->%s %d(%d)"
@@ -1101,30 +1049,23 @@ class AppGraphGenerator(object):
                         self.logger.debug("stopping at %s", req)
                         scores = [(self.reqstatechangescore(pp.req, i), pp)
                             for i, pp in enumerate(pastpages)]
-#                        self.logger.debug("PASTPAGES %s", '\n'.join(str(i) for i in scores))
                         bestcand = max(scores)[1]
-#                        if str(bestcand).find("calendar") != -1:
-#                            pdb.set_trace()
                         self.logger.debug("BESTCAND %s", bestcand)
-                        #if str(bestcand).find("review") != -1:
-                        #    self.logger.debug(self.statechangescores)
-                        #    pdb.set_trace()
+
                         target = bestcand.req.targets[bestcand.cstate]
-#                        if str(bestcand).find("search") != -1 or str(bestcand).find("/preview") != -1 :
-#                            pdb.set_trace()
+
                         self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                         assert statemap[target.transition] == bestcand.cstate
                         # this request will always change state
                         for t in bestcand.req.targets.itervalues():
                             if t.transition <= currstate:
                                 statemap[t.transition] = t.transition
-#                        pdb.set_trace()
                         # XXX: Could probably just return from the function here
                         break
                     # no longer using PastPage.nvisits
                     pastpages.append(PastPage(req, page, chlink, laststate, None))
                 else:
-                    # if we get hear, we need a better heuristic for splitting state
+                    # if we get here, we need a better heuristic for splitting state
                     raise RuntimeError()
                 currmapsto = self.getMinMappedState(currstate, statemap)
                 assert ssmapsto != currmapsto, "%d == %d" % (ssmapsto, currmapsto)
@@ -1157,7 +1098,6 @@ class AppGraphGenerator(object):
             smallerstates = [(s, t) for s, t in currreq.targets.iteritems()
                     if s < currstate and t.target == currtarget.target]
             if smallerstates and any(statemap[t.transition] != s for s, t in smallerstates):
-#                self.logger.debug(output.red("************************** %s %s\n%s") % (currstate, currreq, currreq.targets))
                 currstate += 1
             else:
                 # find if there are other states that we have already processed that lead to a different target
@@ -1189,19 +1129,14 @@ class AppGraphGenerator(object):
         self.nstates = lenstatemap
 
         self.logger.debug("statemap states %d", self.nstates)
-        #self.logger.debug(statemap)
 
         self.collapseGraph(statemap)
-
-        #self.logger.debug(statemap)
 
         self.mergeStateReqRespMaps(statemap)
 
         statereqrespmap = self.assignReducedStateCreateStateReqRespMap(statemap)
 
         self.mergeStatesGreedyColoring(statemap, statereqrespmap)
-
-        #self.logger.debug(statemap)
 
         self.collapseGraph(statemap)
 
@@ -1247,8 +1182,6 @@ class AppGraphGenerator(object):
 
     def collapseNode(self, nodes, statemap):
         for aa in nodes:
-#            if maxstate >= 58 and str(aa).find("POST /users/login.php") != -1:
-#                pdb.set_trace()
             statereduce = [(st, statemap[st]) for st in aa.targets]
             for st, goodst in statereduce:
                 if st == goodst:
@@ -1333,7 +1266,6 @@ class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
         self.refresh_urls = refresh_urls
 
     def handleRefresh(self, page, url, seconds):
-#        pdb.set_trace()
         pageUrl = filterIgnoreUrlParts(str(page.getUrl()))
         rurl = filterIgnoreUrlParts(str(url))
         self.logger.debug("%s refrsh to %s in %d s", pageUrl, rurl, seconds)
@@ -1570,8 +1502,6 @@ class Crawler(object):
         self.logger.info(output.fuscia("submitting form %s %r and params: %r"),
                 form.method.upper(), form.action,
                 params)
-#        if str(form.action).find("comment") != -1:
-#            pdb.set_trace()
 
         iform = form.internal
 
@@ -1613,8 +1543,6 @@ class Crawler(object):
         reqresp.request.formparams = params
         form.to.append(reqresp)
         act = form.action.split('?')[0]
-        # assert reqresp.request.fullpathref.split('?')[0][-len(act):] == act, \
-        #         "Unhandled redirect %s !sub %s" % (act, reqresp.request.fullpathref)
         return reqresp
 
     def getNewRequest(self, page, idx, link):
@@ -1642,7 +1570,6 @@ class Crawler(object):
         if len(link.methods) != 1:
             pdb.set_trace()
         if len(link.methods) == 1:
-#            pdb.set_trace()
             # XXX no garantee link.forms[0] is a good one
             form = link.forms[0]
             for f in formfiller.get(link.elemset, form):
@@ -1732,10 +1659,8 @@ class Dist(object):
 
     @lazyproperty
     def normalized(self):
-        #n = (self.val[0], reduce(lambda a, b: a*10 + b, self.val[1:]))
         penalty = sum(self.val)/5
         ret = (self.val[0], penalty, self.val[1:])
-        #self.logger.debug("NORM %s %s" % (self.val, ret))
         return ret
 
     def __getitem__(self, i):
@@ -1810,9 +1735,6 @@ class Engine(object):
         return None
 
     def linkcost(self, abspage, linkidx, link, state):
-#        if maxstate >= 414 and \
-#                str(linkidx).find("add_comment") != -1:
-#                pdb.set_trace()
         statechange = False
         tgt = None
         # must be > 0, as it will also mark the kind of query in the dist vector
@@ -1916,13 +1838,8 @@ class Engine(object):
         return dist
 
     def addUnvisited(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
-#        if maxstate >= 100:
-#            pdb.set_trace()
-#        if str(head).find('changestate') != -1:
-#            pdb.set_trace()
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
-#        self.logger.debug("COSTS", costs)
-        #self.logger.debug("NCOST", [i[0].normalized for i in costs])
+
         # Remove links with high penalty
         # XXX BUG: We probably don't want to do this if priority is -1
         costs = [i for i in costs if i[0].normalized[1] < PENALTY_THRESHOLD]
@@ -1940,18 +1857,10 @@ class Engine(object):
             newdist = dist
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
                 mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
-#        if maxstate >= 158 and str(mincost[1]).find("picid'), (u'add', u'5") != -1:
-#            pdb.set_trace()
-#        if mincost[1].path[1:] in debug_set:
-#            pdb.set_trace()
-#        if not mincost[1].params and mincost[1].params is not None:
-#            pdb.set_trace()
         heapq.heappush(candidates, Candidate(priority, newdist, path))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
         # recentlyseen is the set of requests done since last state change
-#        if str(startpage).find("index.php") != -1 and maxstate > 170:
-#            pdb.set_trace()
         heads = [(Dist(), startpage, startstate, [])]
         seen = set()
         candidates = []
@@ -1961,30 +1870,18 @@ class Engine(object):
                 continue
             self.logger.debug(output.yellow("H %s %s %s %s" % (dist, head, state, headpath)))
             seen.add((head, state))
-            #head.abslinks.printInfo()
             unvlinks_added = False
             for idx, link in head.abslinks.iteritems():
-#                if maxstate >= 367 and str(link).find(r"posting.php") != -1 \
-#                        and idx.type == Links.Type.FORM:
-#                    pdb.set_trace()
                 if link.skip:
                     continue
                 newpath = [PathStep(head, idx, state)] + headpath
-#                if maxstate >= 297 and str(link).find(r"recent.php") != -1:
-#                    pdb.set_trace()
-                #self.logger.debug("state %s targets %s" % (state, link.targets))
                 if state in link.targets:
                     linktgt = link.targets[state]
                     if isinstance(linktgt, FormTarget):
-#                        if maxstate >= 89 and str(head).find(r"GET /users/login.php") != -1:
-#                            pdb.set_trace()
                         nextabsrequests = [(p, i.target) for p, i in linktgt.target.iteritems()]
                     else:
                         nextabsrequests = [(None, linktgt.target)]
                     for formparams, nextabsreq in nextabsrequests:
-                        #self.logger.debug("NEXTABSREQ", nextabsreq)
-#                        if maxstate >= 111 and str(nextabsreq).find("review"):
-#                            pdb.set_trace()
                         if state == startstate and nextabsreq.statehints and \
                                 not nextabsreq.changingstate and \
                                 not nextabsreq in recentlyseen:
@@ -2012,14 +1909,10 @@ class Engine(object):
                             continue
                         formidx = LinkIdx(idx.type, idx.path, formparams)
                         newdist = dist + self.linkcost(head, formidx, link, state)
-                        #self.logger.debug("TGT %s %s %s" % (tgt, newdist, nextabsreq))
-#                        if maxstate >= 297 and str(tgt.target).find(r"recent.php") != -1:
-#                            pdb.set_trace()
                         heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     if not unvlinks_added:
                         unvlinks = head.abslinks.getUnvisited(state)
-#                        self.logger.debug("UNVLINKS", "\n\t".join(str(i) for i in unvlinks))
                         if unvlinks:
                             self.addUnvisited(dist, head, state, headpath, unvlinks, candidates, 0, True)
                             unvlinks_added = True
@@ -2029,8 +1922,6 @@ class Engine(object):
         # get the number of abstract pages reachable from here
         nvisited = len(set(i[0] for i in seen))
         if candidates:
-#            if maxstate >= 100:
-#                pdb.set_trace()
             self.logger.debug("CAND %s", candidates)
             return candidates[0].path, nvisited
         else:
@@ -2118,16 +2009,12 @@ class Engine(object):
                             break
                 else:
                     # we should always be able to find the destination page in the target object
-#                    if not probablyseen:
-#                        pdb.set_trace()
                     assert probablyseen
                     recentlyseen.add(probablyseen)
                 if found:
                     break
                 rr = rr.prev
-                #self.logger.debug("RRRR", rr)
             self.logger.debug("last changing request %s", rr)
-            #self.logger.debug("recentlyseen", recentlyseen)
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
             if self.ag:
                 # the running average history will be reset at envery discovery
@@ -2153,7 +2040,7 @@ class Engine(object):
                 assert not self.pathtofollow
                 self.pathtofollow = path
                 nexthop = self.pathtofollow.pop(0)
-                #self.logger.debug(nexthop)
+
                 assert nexthop.abspage == reqresp.response.page.abspage
                 assert nexthop.state == self.state
                 debug_set.add(nexthop.idx.path[1:])
@@ -2220,7 +2107,6 @@ class Engine(object):
                 self.logger.info(output.red("Unable to add page to current abstract request, reclustering"))
                 raise
             except AppGraphGenerator.AddToAppGraphException, e:
-                #self.logger.debug("STATEHINT %s", reqresp.request)
                 reqresp.request.statehint = True
                 self.logger.info(output.red("Unable to add page to current application graph, reclustering. %s" % e))
                 raise
@@ -2410,7 +2296,6 @@ class Engine(object):
             for s, t in p.targets.iteritems():
                 if s != t.transition:
                     edge = pydot.Edge(nodes[p], nodes[t.target])
-                    #self.logger.debug("LINK %s => %s" % (p, t.target))
                     edge.set_label("%s->%s" % (s, t.transition))
                     edge.set_color("red")
                     dot.add_edge(edge)
@@ -2428,7 +2313,6 @@ class Engine(object):
                 edge.set_color("blue")
 
         dot.write_ps('graph.ps')
-        #dot.write_pdf('graph.pdf')
         with open('graph.dot', 'w') as f:
             f.write(dot.to_string())
         self.logger.debug("DOT graph written")
@@ -2456,7 +2340,6 @@ class Engine(object):
             dot.add_node(n)
 
         dot.write_ps('stategraph.ps')
-        #dot.write_pdf('graph.pdf')
         with open('stategraph.dot', 'w') as f:
             f.write(dot.to_string())
         self.logger.debug("DOT state graph written")
@@ -2477,7 +2360,6 @@ def writeColorableStateGraph(allstates, differentpairs):
         dot.add_edge(edge)
 
     dot.write_ps('colorablestategraph.ps')
-    #dot.write_pdf('graph.pdf')
     with open('colorablestategraph.dot', 'w') as f:
         f.write(dot.to_string())
 
