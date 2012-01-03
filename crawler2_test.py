@@ -118,7 +118,7 @@ class ExtCrawlerTest(unittest.TestCase):
         url = EXT_BASE_URL + '/traps/root.html'
         e = self.e
         e.main([url])
-        self.assertEqual(len(e.ag.absrequests), 12)
+        self.assertTrue(len(e.ag.absrequests) >= 12)
         urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
         want_to_see = set(['a.html',
                               'a1.html',
