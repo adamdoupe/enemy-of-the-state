@@ -40,10 +40,8 @@ class LocalCrawlerTest(unittest.TestCase):
         url = BASE_URL + 'single/single.html'
         e = self.e
         e.main([url])
-        self.assertIsNone(e.cr.headreqresp.next)
         self.assertIsInstance(e.cr.headreqresp.response.page, crawler.Page)
-        self.assertEqual(len(e.cr.headreqresp.response.page.links), 0)
-        self.assertIsNone(e.ag)
+        self.assertEqual(len(e.cr.headreqresp.response.page.links), 1)
 
 class ExtCrawlerTest(unittest.TestCase):
     def setUp(self):
@@ -54,10 +52,8 @@ class ExtCrawlerTest(unittest.TestCase):
         url = EXT_BASE_URL + 'single/single.html'
         e = self.e
         e.main([url])
-        self.assertIsNone(e.cr.headreqresp.next)
         self.assertIsInstance(e.cr.headreqresp.response.page, crawler.Page)
-        self.assertEqual(len(e.cr.headreqresp.response.page.links), 0)
-        self.assertIsNone(e.ag)
+        self.assertEqual(len(e.cr.headreqresp.response.page.links), 1)
 
     def test_absolute_urls(self):
         url = EXT_BASE_URL + 'absolute_urls/index.php'
@@ -122,9 +118,9 @@ class ExtCrawlerTest(unittest.TestCase):
         url = EXT_BASE_URL + '/traps/root.html'
         e = self.e
         e.main([url])
-        self.assertEqual(len(e.ag.absrequests), 14)
+        self.assertEqual(len(e.ag.absrequests), 12)
         urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
-        self.assertEqual(set(['a.html',
+        want_to_see = set(['a.html',
                               'a1.html',
                               'a2.html',
                               'b.html',
@@ -134,8 +130,9 @@ class ExtCrawlerTest(unittest.TestCase):
                               'private.php',
                               'root.html'] +
                               ['trap.php?input=%d' % i for i in range(1, 21)] +
-                              ['trap2.php?input=%d' % i for i in range(1, 34)]),
-                         urls)
+                              ['trap2.php?input=%d' % i for i in range(1, 34)])
+        for url in want_to_see:
+            self.assertTrue(url in urls)
         self.assertEqual(len(e.ag.abspages), 11)
         self.assertEqual(e.ag.nstates, 1)
         e.writeStateDot()
