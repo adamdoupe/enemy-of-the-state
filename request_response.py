@@ -1,4 +1,4 @@
-.from response import Response
+from response import Response
 from request import Request
 
 class RequestResponse(object):
