@@ -1197,8 +1197,6 @@ class AppGraphGenerator(object):
                             common = frozenset(aa.targets[st].target.keys()) \
                                     & frozenset(aa.targets[goodst].target.keys())
                             for c in common:
-                                assert aa.targets[st].target[c].target == aa.targets[goodst].target[c].target, \
-                                        "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
                                 assert st == goodst or \
                                         statemap[aa.targets[goodst].target[c].transition] \
                                         == statemap[aa.targets[st].target[c].transition], \
