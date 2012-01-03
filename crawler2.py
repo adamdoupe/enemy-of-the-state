@@ -2128,9 +2128,11 @@ class Engine(object):
 
         return newstate
 
-    def main(self, urls):
-
-        ar_through_time = open('ar_test.dat', 'w')
+    def main(self, urls, write_state_graph = False, write_ar_test = False):
+        
+        ar_through_time = None
+        if write_ar_test:
+            ar_through_time = open('ar_test.dat', 'w')
         self.num_requests = 0
 
         self.pc = None
@@ -2236,8 +2238,9 @@ class Engine(object):
 
                 self.num_requests += 1
 
-                ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))
-                ar_through_time.flush()
+                if write_ar_test:
+                    ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))
+                    ar_through_time.flush()
 
                 ar_seen = len([ar for ar in ag.absrequests if ar.request_actually_made()])
 
@@ -2254,7 +2257,8 @@ class Engine(object):
 
                 if wanttoexit:
                     return
-                self.writeStateDot()
+                if write_state_graph:
+                    self.writeStateDot()
 
     def writeDot(self):
         if not self.ag:
