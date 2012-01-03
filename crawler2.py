@@ -2375,7 +2375,7 @@ def writeColorableStateGraph(allstates, differentpairs):
         f.write(dot.to_string())
 
 if __name__ == "__main__":
-    optslist, args = getopt.getopt(sys.argv[1:], "l:d:")
+    optslist, args = getopt.getopt(sys.argv[1:], "l:d:sa")
     opts = dict(optslist) if optslist else {}
     try:
         handler = logging.FileHandler(opts['-l'], 'w')
@@ -2383,6 +2383,9 @@ if __name__ == "__main__":
                 filemode='w')
     except KeyError:
         logging.basicConfig(level=logging.DEBUG)
+
+    write_ar_test = opts.has_key('-a')
+    write_state_graph = opts.has_key('-s')    
 
     dumpdir = None
     try:
@@ -2411,7 +2414,7 @@ if __name__ == "__main__":
     ff.add_named_params(["email", "mail"], "adoupe@cs.ucsb.edu")
     e = Engine(ff, dumpdir)
     try:
-        e.main(args)
+        e.main(args, write_state_graph, write_ar_test)
     except:
         traceback.print_exc()
         pdb.post_mortem()
