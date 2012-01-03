@@ -83,11 +83,9 @@ class ExtCrawlerTest(unittest.TestCase):
         e.main([url])
         self.assertEqual(len(e.ag.absrequests), 4)
         urls = set(r.split('/')[-1] for ar in e.ag.absrequests for r in ar.requestset)
-        self.assertEqual(set(['viewpage.php?id=%d' % i for i in range(18)] +
-                             ['addpage.php',
-                              'index.php',
-                              'static.php']),
-                         urls)
+        for url in set(['viewpage.php?id=%d' % i for i in range(18)] + ['addpage.php', 'index.php', 'static.php']):
+            self.assertTrue(url in urls)
+
         self.assertEqual(len(e.ag.abspages), 4)
         self.assertTrue(e.ag.nstates > 10)
 
