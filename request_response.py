@@ -13,8 +13,8 @@ class RequestResponse(object):
         self.next = None
         # how many pages we went back before performing this new request
         self.backto = None
-        self.instance = Response.InstanceCounter
-        Response.InstanceCounter += 1
+        self.instance = RequestResponse.InstanceCounter
+        RequestResponse.InstanceCounter += 1
 
     def __iter__(self):
         curr = self
