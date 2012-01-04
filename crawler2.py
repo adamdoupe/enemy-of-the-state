@@ -1397,8 +1397,6 @@ class Crawler(object):
         if self.headreqresp is None:
             self.headreqresp = reqresp
 
-        self.logger.info("%s", self.currreqresp)
-
     def handleNavigationException(self, e):
         if isinstance(e, TypeError):
             response = e.args[0].webResponse
@@ -2147,6 +2145,8 @@ class Engine(object):
             maxstate = -1
             reqresp = cr.open(url)
 
+            self.logger.info("Starting URL %s", reqresp)
+
             self.num_requests += 1
 
             self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
@@ -2171,6 +2171,7 @@ class Engine(object):
                 else:
                     assert False, nextAction
 
+                self.logger.info("%s", reqresp)
                 self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
                 self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
                 try:
