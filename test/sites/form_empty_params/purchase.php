@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] != 'POST')
 
 <div><h1>GREAT, you just purchased something!</h1>
 <p>
-    Wow, look at this cool new thing you've purchased. Isn't it awesome?
+	 <a href="index.php">Wow, look at this cool new thing you've purchased. Isn't it awesome?</a>
 </p>
 
 </body>

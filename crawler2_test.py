@@ -89,7 +89,12 @@ class ExtCrawlerTest(unittest.TestCase):
         url = EXT_BASE_URL + '/500/index.php'
         e = self.e
         e.main([url])
-        
+
+    def test_empty_form(self):
+        url = EXT_BASE_URL + '/form_empty_params/index.php'
+        e = self.e
+        e.main([url])
+        self.assertEqual(len(e.ag.absrequests), 3)
 
     def test_changing_state(self):
         os.chmod(TEST_BASE_PATH + '/changing_state', 0777)
