@@ -96,6 +96,14 @@ class ExtCrawlerTest(unittest.TestCase):
         e.main([url])
         self.assertEqual(len(e.ag.absrequests), 3)
 
+    def test_wackopicko_form(self):
+        url = EXT_BASE_URL + '/wackopicko_registration_form/index.php'
+        e = self.e
+        e.main([url])
+        self.assertEqual(len(e.ag.absrequests), 4)
+        self.assertEqual(len(e.ag.abspages), 4)
+                         
+
     def test_changing_state(self):
         os.chmod(TEST_BASE_PATH + '/changing_state', 0777)
         try:
