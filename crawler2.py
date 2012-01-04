@@ -2077,7 +2077,7 @@ class Engine(object):
         """
         This function returns true if we should continue looking for links, false otherwise
         """
-        c = 10
+        c = 2
 
         return self.since_last_ar_change <= (c * self.last_ap_pages)
 
