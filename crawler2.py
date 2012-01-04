@@ -78,11 +78,6 @@ def handleError(self, record):
       raise
 logging.Handler.handleError = handleError
 
-# Set up the random word generator and add it to any class that uses it
-rng = RandGen()
-FormFiller.rng = rng
-Links.rng = rng
-
 cond = 0
 debugstop = False
 debug_set = set()
@@ -1711,6 +1706,11 @@ class Engine(object):
         self.since_last_ar_change = 0
         self.last_ap_pages = 1
 
+        # Set up the random word generator and add it to any class that uses it
+        self.rng = RandGen()
+        FormFiller.rng = self.rng
+        Links.rng = self.rng
+
     def getUnvisitedLink(self, reqresp):
         page = reqresp.response.page
         abspage = page.abspage
@@ -2063,7 +2063,7 @@ class Engine(object):
                             unv_anchors.append(idx)
                 if unv_anchors:
                     # XXX Why would path finding fail?
-                    chosen = rng.choice(unv_anchors)
+                    chosen = self.rng.choice(unv_anchors)
                     self.logger.info("picking unvisited anchor %s", chosen)
                     return (Engine.Actions.ANCHOR,
                             reqresp.response.page.links[chosen])
