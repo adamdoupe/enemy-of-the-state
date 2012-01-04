@@ -2130,6 +2130,9 @@ class Engine(object):
         if write_ar_test:
             ar_through_time = open('ar_test.dat', 'w')
         self.num_requests = 0
+        self.last_ar_seen = -1
+        self.since_last_ar_change = 0
+        self.last_ap_pages = 1
 
         self.pc = None
         self.ag = None
