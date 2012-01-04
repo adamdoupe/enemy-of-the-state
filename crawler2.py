@@ -2373,14 +2373,19 @@ def writeColorableStateGraph(allstates, differentpairs):
         f.write(dot.to_string())
 
 if __name__ == "__main__":
-    optslist, args = getopt.getopt(sys.argv[1:], "l:d:sa")
+    optslist, args = getopt.getopt(sys.argv[1:], "l:d:saD")
     opts = dict(optslist) if optslist else {}
+
+    level = logging.INFO
+    if opts.has_key('-D'):
+        level = logging.DEBUG
+
     try:
         handler = logging.FileHandler(opts['-l'], 'w')
-        logging.basicConfig(level=logging.DEBUG, filename=opts['-l'],
+        logging.basicConfig(level=level, filename=opts['-l'],
                 filemode='w')
     except KeyError:
-        logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(level=level)
 
     write_ar_test = opts.has_key('-a')
     write_state_graph = opts.has_key('-s')    
