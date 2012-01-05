@@ -35,3 +35,28 @@ class DebugDict(dict):
     def __setitem__(self, k, v):
         dict.__setitem__(self, k, v)
 
+
+class CustomDict(dict):
+
+    def __init__(self, items, missing, h=hash):
+        dict.__init__(self)
+        self.h = h
+        self.missing = missing
+        for (k, v) in items:
+            self[k] = v
+
+    def __getitem__(self, k):
+        h = self.h(k)
+        if dict.__contains__(self, h):
+            return dict.__getitem__(self, self.h(k))
+        else:
+            v = self.missing(k)
+            dict.__setitem__(self, h, v)
+            return v
+
+    def __setitem__(self, k, v):
+        return dict.__setitem__(self, self.h(k), v)
+
+    def __contains__(self, k):
+        return dict.__contains__(self, self.h(k))
+
