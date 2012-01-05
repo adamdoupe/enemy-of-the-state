@@ -957,8 +957,6 @@ class AppGraphGenerator(object):
                                 rt.transition = statemap[rt.transition]
 
                         else:
-                            assert aa.targets[st].target == aa.targets[goodst].target, \
-                                    "%d->%s %d->%s" % (st, aa.targets[st], goodst, aa.targets[goodst])
                             assert st == goodst or \
                                     statemap[aa.targets[goodst].transition] == \
                                     statemap[aa.targets[st].transition], \
