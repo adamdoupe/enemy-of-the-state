@@ -1431,7 +1431,7 @@ class ParamDefaultDict(defaultdict):
     def __missing__(self, key):
         return self._factory(key)
 
-Candidate = namedtuple("Candidate", "priority dist path")
+Candidate = namedtuple("Candidate", "priority dist path tiebreaker")
 PathStep = namedtuple("PathStep", "abspage idx state")
 
 class Engine(object):
@@ -1451,6 +1451,8 @@ class Engine(object):
         self.last_ar_seen = -1
         self.since_last_ar_change = 0
         self.last_ap_pages = 1
+
+        self.COUNTER = 1
 
         # Set up the random word generator and add it to any class that uses it
         self.rng = RandGen()
@@ -1586,6 +1588,10 @@ class Engine(object):
 
         return dist
 
+    def getCounter(self):
+        self.COUNTER += 1
+        return self.COUNTER
+
     def addUnvisited(self, dist, head, state, headpath, unvlinks, candidates, priority, new=False):
         costs = [(self.linkcost(head, i, j, state), i) for (i, j) in unvlinks]
 
@@ -1606,7 +1612,7 @@ class Engine(object):
             newdist = dist
         self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
                 mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
-        heapq.heappush(candidates, Candidate(priority, newdist, path))
+        heapq.heappush(candidates, Candidate(priority, newdist, path, self.getCounter()))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
         # recentlyseen is the set of requests done since last state change
@@ -1735,6 +1741,12 @@ class Engine(object):
                     self.logger.debug("page contains only a rediect, following it")
                     return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
 
+
+            if self.ag and not self.keep_looking_for_links():
+                # We aren't making progress and can't find any more links to visit
+                return (Engine.Actions.DONE, )
+
+
             recentlyseen = set()
             rr = reqresp
             found = False
@@ -1795,9 +1807,6 @@ class Engine(object):
                 debug_set.add(nexthop.idx.path[1:])
                 # pass the index too, in case there are some form parameters specified
                 return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
-            elif self.ag and not self.keep_looking_for_links():
-                # We aren't making progress and can't find any more links to visit
-                return (Engine.Actions.DONE, )
             else:
                 self.logger.info("no new path found, but we have not explored"
                                  " enough")
