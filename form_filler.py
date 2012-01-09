@@ -84,7 +84,6 @@ class FormFiller(object):
         return self.forms[keys]
 
     def emptyfill(self, keys, submitter=None):
-        self.logger.debug("empty filling")
         res = FormFiller.Params()
         for f in keys:
             if f.type == FormField.Type.HIDDEN:
@@ -95,7 +94,6 @@ class FormFiller(object):
         return res
 
     def randfill(self, keys, samepass=False, submitter=None):
-        self.logger.debug("random filling from (samepass=%s)", samepass)
         res = FormFiller.Params()
         password = None
         multiplepass = False

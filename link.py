@@ -107,16 +107,10 @@ class Links(object):
         val = self.linkstree.getpath(idx)
         assert val.nleaves == len(list(val.iterleaves()))
         if val.nleaves > 1:
-            self.logger.debug(output.red("******** PICKING ONE *******"))
             ret = Links.rng.choice([i for i in val.iterleaves()])
-        if not val.value:
-            self.logger.debug(output.red("******** INCOMPLETE PATH %s *******"), linkidx)
         ret = val.iterleaves().next()
         assert not val.value or val.value == ret
         assert isinstance(ret, list)
-        if len(ret) > 1:
-            self.logger.debug(output.red("******** PICKING ONE *******"))
-            pdb.set_trace()
         return ret[0]
 
     def __iter__(self):
@@ -128,9 +122,6 @@ class Links(object):
     def iteritems(self):
         for p, l in self.linkstree.iteridxleaves():
             assert isinstance(l, list), l
-            if len(l) > 1:
-                self.logger.debug(output.red("******** PICKING ONE *******"))
-                pdb.set_trace()
             yield (Link.LinkIdx(p[0], p[1:], None), l[0])
 
 from utils import DebugDict

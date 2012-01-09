@@ -25,7 +25,6 @@ class PageClusterer(object):
 
     def __init__(self, reqresps):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.debug("clustering pages")
 
         self.levelclustering(reqresps)
 
@@ -33,7 +32,6 @@ class PageClusterer(object):
         for ap in self.abspages:
             for rr in ap.reqresps:
                 rr.response.page.abspage = ap
-        self.logger.debug("%d abstract pages generated", len(self.abspages))
 
     def scanlevels(self, level, n=0):
         for k, v in level.iteritems():
@@ -146,7 +144,6 @@ class PageClusterer(object):
         classif = Classifier(lambda rr: rr.response.page.linksvector)
         classif.addall(reqresps)
         self.scanlevels(classif)
-        self.printlevelstat(classif)
         self.makeabspages(classif)
         self.classif = classif
 
@@ -155,7 +152,6 @@ class PageClusterer(object):
         classif.add(reqresp)
         path = classif.featuresextractor(reqresp)
         self.scanlevelspath(classif, path)
-        self.printlevelstat(classif)
         self.addabstractpagepath(classif, reqresp, path)
 
 

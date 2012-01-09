@@ -265,9 +265,6 @@ class AppGraphGenerator(object):
                         rr.request.absrequest = chosenar
                         fullurireqmap.setAbstract(rr.request, chosenar)
 
-        for r in sorted(absrequests):
-            self.logger.debug(output.turquoise("%s" % r))
-
         self.fullurireqmap = fullurireqmap
         self.mappedrequests = mappedrequests
         self.ctxmappedrequests = ctxmappedrequests
@@ -292,11 +289,9 @@ class AppGraphGenerator(object):
         reqs.append(rr)
         rr.request.absrequest = finalmappedar
 
-        self.logger.debug(output.turquoise("%s" % finalmappedar))
 
 
     def generateAppGraph(self):
-        self.logger.debug("generating application graph")
 
         # make sure we are at the beginning
         assert self.reqrespshead.prev is None
@@ -362,7 +357,6 @@ class AppGraphGenerator(object):
             cnt += 1
 
         self.maxstate = laststate
-        self.logger.debug("application graph generated in %d steps", cnt)
 
         return laststate
 
@@ -419,7 +413,6 @@ class AppGraphGenerator(object):
 
         currabspage.statereqrespsmap[state].append(curr)
 
-        self.logger.debug("page merged into application graph")
 
         return tgt.transition
 
@@ -588,8 +581,6 @@ class AppGraphGenerator(object):
                     statelist[rr.response.page.linksvector].append(s)
 
             if len(statelist) > 1:
-                self.logger.debug("DIFFSTATESABSTRACT %s %s", ap, statelist)
-                self.logger.debug(output.yellow(str(statelist.values())))
                 differentpairs.addallcombinations(statelist.values())
 
 
@@ -737,13 +728,11 @@ class AppGraphGenerator(object):
             assignments = self.colorStateGraph(differentpairs, allstates, statereqrespmap)
             bins = self.createColorBins(lenallstates, assignments)
             self.updateStatemapFromColorBins(bins, assignments, statemap)
-            self.logger.debug(output.darkred("almost final states %s"), sorted(bins))
             differentpairs.addallcombinations(bins)
 
 
         self.nstates = self.refreshStatemap(statemap)
 
-        self.logger.debug(output.darkred("final states %d %s"), self.nstates, sorted(bins))
 
 
     def reqstatechangescore(self, absreq, dist):
@@ -776,12 +765,6 @@ class AppGraphGenerator(object):
                     assert len(sstarget.target.statereqrespsmap[sstarget.transition]) == 1
                     assert len(currtarget.target.statereqrespsmap[currtarget.transition]) == 1
                     continue
-                self.logger.debug(output.teal("need to split state for request %s -> %s")
-                        % (currreq, currtarget))
-                self.logger.debug("\t%d(%d)->%s %d(%d)"
-                        % (currstate, currmapsto, currtarget, currtarget.transition, cttransition))
-                self.logger.debug("\t%d(%d)->%s %d(%d)"
-                        % (ss, ssmapsto, sstarget, sstarget.transition, ssttransition))
                 # mark this request as givin hints for state change detection
                 currreq.statehints += 1
                 pastpages = []
@@ -789,15 +772,13 @@ class AppGraphGenerator(object):
                     # LUDO XXX: This equals check will never be true.
                     if req == currreq or \
                             self.getMinMappedState(laststate, statemap) != currmapsto:
-                        self.logger.debug("stopping at %s", req)
                         scores = [(self.reqstatechangescore(pp.req, i), pp)
                             for i, pp in enumerate(pastpages)]
                         bestcand = max(scores)[1]
-                        self.logger.debug("BESTCAND %s", bestcand)
 
                         target = bestcand.req.targets[bestcand.cstate]
 
-                        self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
+                        #self.logger.debug(output.teal("splitting on best candidate %d->%d request %s to page %s"), bestcand.cstate, target.transition, bestcand.req, bestcand.page)
                         assert statemap[target.transition] == bestcand.cstate
                         # this request will always change state
                         for t in bestcand.req.targets.itervalues():
@@ -818,7 +799,6 @@ class AppGraphGenerator(object):
             statemap[i] = self.getMinMappedState(i, statemap)
 
     def reduceStates(self):
-        self.logger.debug("reducing state number from %d", self.maxstate)
 
         # map each state to its equivalent one
         statemap = range(self.maxstate+1)
@@ -871,7 +851,6 @@ class AppGraphGenerator(object):
 
         self.nstates = lenstatemap
 
-        self.logger.debug("statemap states %d", self.nstates)
 
         self.collapseGraph(statemap)
 
@@ -977,7 +956,6 @@ class AppGraphGenerator(object):
                     del aa.targets[st]
 
     def collapseGraph(self, statemap):
-        self.logger.debug("collapsing graph")
 
         # merge states that were reduced to the same one
         for ap in self.abspages:
@@ -990,7 +968,6 @@ class AppGraphGenerator(object):
         for ar in sorted(self.absrequests):
             changing = any(s != t.transition for s, t in ar.targets.iteritems())
             if changing:
-                self.logger.debug("CHANGING %s", ar)
                 for rr in ar.reqresps:
                     rr.request.changingstate = True
 
@@ -1007,7 +984,6 @@ class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
     def handleRefresh(self, page, url, seconds):
         pageUrl = filterIgnoreUrlParts(str(page.getUrl()))
         rurl = filterIgnoreUrlParts(str(url))
-        self.logger.debug("%s refrsh to %s in %d s", pageUrl, rurl, seconds)
         self.refresh_urls.append(url)
 
 
@@ -1064,7 +1040,6 @@ class Crawler(object):
         return self.newPage(htmlpage)
 
     def followRedirect(self, redirect):
-        self.logger.debug(output.purple("following redirect %s"), redirect)
         lastvalidpage = self.currreqresp.response.page
         while lastvalidpage.redirect or lastvalidpage.error:
             if not lastvalidpage.reqresp.prev:
@@ -1169,7 +1144,6 @@ class Crawler(object):
         return reqresp
 
     def click(self, anchor):
-        self.logger.debug(output.purple("clicking on %s"), anchor)
 
         try:
             page = anchor.click()
@@ -1205,12 +1179,10 @@ class Crawler(object):
                     pass
                 else:
                     i.setValueAttribute(v)
-                logger.debug("VALUE %s '%s'=='%s'" % (i, i.getValueAttribute(), v))
 
             for i, v in zip(iform.getTextAreasByName(k), vv):
                 textarea = htmlunit.HtmlTextArea.cast_(i)
                 textarea.setText(v)
-                logger.debug("VALUE %s '%s'=='%s'" % (i, i.getText(), v))
 
 
     @staticmethod
@@ -1258,8 +1230,6 @@ class Crawler(object):
             isubmitter = self.getInternalSubmitter(iform, submitter)
 
             attrs = list(iform.getAttributesMap().keySet())
-            self.logger.debug("FORM ATTRS %s", attrs)
-            self.logger.debug("SUBMITTER %s", isubmitter)
 
             page = isubmitter.click()
             htmlpage = htmlunit.HtmlPage.cast_(page)
@@ -1467,13 +1437,11 @@ class Engine(object):
         # this should happen only at the first iteration
         if abspage is None:
             if len(page.anchors) > 0:
-                self.logger.debug("abstract page not availabe, picking first anchor")
                 for i, aa in page.links.iteritems():
                     if i.type == Links.Type.ANCHOR:
                         return i
                 assert False
             else:
-                self.logger.debug("abstract page not availabe, and no anchors")
                 return None
 
         # find unvisited anchor
@@ -1610,8 +1578,6 @@ class Engine(object):
         else:
             # for non-standard priority (-1), use the real distance
             newdist = dist
-        self.logger.debug("found unvisited link %s (/%d) in page %s (%d) dist %s->%s (pri %d, new=%s)",
-                mincost[1], len(unvlinks), head, state, dist, newdist, priority, new)
         heapq.heappush(candidates, Candidate(priority, newdist, path, self.getCounter()))
 
     def findPathToUnvisited(self, startpage, startstate, recentlyseen):
@@ -1623,7 +1589,6 @@ class Engine(object):
             dist, head, state, headpath = heapq.heappop(heads)
             if (head, state) in seen:
                 continue
-            self.logger.debug(output.yellow("H %s %s %s %s" % (dist, head, state, headpath)))
             seen.add((head, state))
             unvlinks_added = False
             for idx, link in head.abslinks.iteritems():
@@ -1677,7 +1642,6 @@ class Engine(object):
         # get the number of abstract pages reachable from here
         nvisited = len(set(i[0] for i in seen))
         if candidates:
-            self.logger.debug("CAND %s", candidates)
             return candidates[0].path, nvisited
         else:
             return None, nvisited
@@ -1702,9 +1666,6 @@ class Engine(object):
             assert self.followingpath
             nexthop = self.pathtofollow.pop(0)
             if not reqresp.response.page.abspage.match(nexthop.abspage) or nexthop.state != self.state:
-                self.logger.debug(output.red("got %s (%d) not matching expected %s (%d)"),
-                        reqresp.response.page.abspage, self.state, nexthop.abspage, nexthop.state)
-                self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> ABORT following path"))
                 self.followingpath = False
                 self.pathtofollow = []
             else:
@@ -1715,14 +1676,12 @@ class Engine(object):
                     # pass the index too, in case there are some form parameters specified
                     return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
         if self.followingpath and not self.pathtofollow:
-            self.logger.debug(output.red(">>>>>>>>>>>>>>>>>>>>>>>>>>>>> DONE following path"))
             self.followingpath = False
 
         # This case only happens on the first page view
         if not reqresp.response.page.abspage:
             unvisited = self.getUnvisitedLink(reqresp)
             if unvisited:
-                self.logger.debug(output.green("unvisited in current page: %s"), unvisited)
                 return (Engine.Actions.ANCHOR, reqresp.response.page.links[unvisited])
         else:
             # if there is only one REDIRECT, follow it
@@ -1738,7 +1697,6 @@ class Engine(object):
                 # if we have at least one link, and it is the only one, and it is a redirect, 
                 # then follow it
                 if firstlink and firstlink[0].type == Links.Type.REDIRECT:
-                    self.logger.debug("page contains only a rediect, following it")
                     return (Engine.Actions.REDIRECT, reqresp.response.page.links[firstlink[0]])
 
 
@@ -1775,7 +1733,6 @@ class Engine(object):
                 if found:
                     break
                 rr = rr.prev
-            self.logger.debug("last changing request %s", rr)
             path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
             if self.ag:
                 # the running average history will be reset at envery discovery
@@ -1783,20 +1740,12 @@ class Engine(object):
                 self.running_visited_avg.add(
                         float(nvisited)/len(self.ag.abspages),
                         len(self.ag.abspages))
-                self.logger.debug("visited %d/%d (%f) abstract pages (avg %f)",
-                                  nvisited,
-                                  len(self.ag.abspages),
-                                  float(nvisited)/len(self.ag.abspages),
-                                  self.running_visited_avg.average())
-            self.logger.debug(output.green("PATH %s"), path)
             if path:
                 # if there is a state change along the path, drop all following steps
                 for i, p in enumerate(path):
                     if i > 0 and p.state != path[i-1].state:
                         path[i:] = []
                         break
-                self.logger.debug(output.green("REDUCED PATH %s"), path)
-                self.logger.debug(output.red("<<<<<<<<<<<<<<<<<<<<<<<<<<<<< START following path"))
                 self.followingpath = True
                 assert not self.pathtofollow
                 self.pathtofollow = path
@@ -1837,11 +1786,9 @@ class Engine(object):
     def submitForm(self, form, params):
         if params is None:
             formkeys = form.elems
-            self.logger.debug("form keys %s", formkeys)
             submitparams = self.formfiller.getrandparams(formkeys, form)
             assert submitparams is not None
         else:
-            self.logger.debug("specified form params %s", params)
             submitparams = params
         return self.cr.submitForm(form, submitparams)
 
@@ -1907,8 +1854,6 @@ class Engine(object):
 
             self.num_requests += 1
 
-            self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
-            self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
             statechangescores = None
             nextAction = self.getNextAction(reqresp)
             sinceclustered = 0
@@ -1930,22 +1875,18 @@ class Engine(object):
                     assert False, nextAction
 
                 self.logger.info("%s", reqresp)
-                self.logger.debug(output.red("TREE %s" % (reqresp.response.page.linkstree,)))
-                self.logger.debug(output.red("TREEVECTOR %s" % (reqresp.response.page.linksvector,)))
                 try:
                     if nextAction[0] == Engine.Actions.FORM or sinceclustered > 15:
                         # do not even try to merge forms
                         raise PageMergeException()
                     self.state = self.tryMergeInGraph(reqresp)
                     maxstate += 1
-                    self.logger.debug(output.green("estimated current state %d (%d)"), self.state, maxstate)
+                    self.logger.info(output.green("estimated current state %d (%d)"), self.state, maxstate)
                     sinceclustered += 1
                 except PageMergeException:
                     self.logger.info("need to recompute graph")
                     sinceclustered = 0
                     pc = PageClusterer(cr.headreqresp)
-                    self.logger.debug(output.blue("AP %s" % '\n'.join(str(i)
-                            for i in pc.getAbstractPages())))
                     ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(),
                             statechangescores, self.formfiller, cr)
                     maxstate = ag.generateAppGraph()
@@ -1968,15 +1909,9 @@ class Engine(object):
                         rr.request.state = -1
                         rr.response.page.state = -1
                         rr = rr.next
-                    self.logger.debug(output.turquoise("statechangescores"))
-                    self.logger.debug(output.turquoise("%s" % statechangescores))
 
-                    self.logger.debug(output.green("current state %d (%d)"), self.state, maxstate)
                     ag.fillMissingRequests()
-                    for r in sorted(ag.absrequests):
-                        self.logger.debug(output.turquoise("POSTMISSING %s" % r))
 
-                    self.logger.debug(output.blue("AP %s" % '\n'.join(str(i) + "\n\t" + "\n\t".join(str(j) for j in i.statereqrespsmap.iteritems()) for i in pc.getAbstractPages())))
                     self.pc = pc
                     self.ag = ag
 
@@ -2019,7 +1954,7 @@ class Engine(object):
 
     def writeDot(self):
         if not self.ag:
-            self.logger.debug("not creating DOT graph")
+            self.logger.info("not creating DOT graph")
             return
 
         self.logger.info("creating DOT graph")
@@ -2035,8 +1970,6 @@ class Engine(object):
             name = str('\\n'.join(p.requestset))
             node = pydot.Node(name)
             nodes[p] = node
-
-        self.logger.debug("%d DOT nodes", len(nodes))
 
         for n in nodes.itervalues():
             dot.add_node(n)
@@ -2083,11 +2016,10 @@ class Engine(object):
         dot.write_ps('graph.ps')
         with open('graph.dot', 'w') as f:
             f.write(dot.to_string())
-        self.logger.debug("DOT graph written")
 
     def writeStateDot(self):
         if not self.ag:
-            self.logger.debug("not creating state DOT graph")
+            self.logger.info("not creating state DOT graph")
             return
 
         self.logger.info("creating state DOT graph")
@@ -2102,7 +2034,6 @@ class Engine(object):
                     edge.set_label(name)
                     dot.add_edge(edge)
 
-        self.logger.debug("%d DOT nodes", len(nodes))
 
         for n in nodes.itervalues():
             dot.add_node(n)
@@ -2110,7 +2041,6 @@ class Engine(object):
         dot.write_ps('stategraph.ps')
         with open('stategraph.dot', 'w') as f:
             f.write(dot.to_string())
-        self.logger.debug("DOT state graph written")
 
 
 def writeColorableStateGraph(allstates, differentpairs):
