@@ -52,6 +52,9 @@ class AbstractRequest(object):
     def __cmp__(self, o):
         return cmp(self.instance, o.instance)
 
+    def __eq__(self, o):
+        return 0 == self.__cmp__(o)
+
     @lazyproperty
     def isPOST(self):
         return any(i.request.isPOST for i in self.reqresps)
