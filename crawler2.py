@@ -83,7 +83,6 @@ def handleError(self, record):
 logging.Handler.handleError = handleError
 
 cond = 0
-debugstop = False
 debug_set = set()
 
 maxstate = -1
@@ -526,34 +525,6 @@ class AppGraphGenerator(object):
                     newequalstates.add(newes)
         return newequalstates
 
-    def dropRedundantStateGroups(self, equalstates):
-        # if a set of states has no unique states, drop it
-        # this removes sets that are subsets of others, and other state equivalences
-        # that would cause the state assignment to fail
-        # sort by lnegth and state number, in order to make multiple runs deterministic
-        equalstateslist = [sorted(i) for i in equalstates]
-        equalstateslist.sort(key=lambda x: (len(x), x))
-        for es in equalstateslist:
-            esset = frozenset(es)
-            allothersets = equalstates - frozenset((esset, ))
-            assert len(equalstates) == len(allothersets) + 1, "%s %s %s" % (equalstates , allothersets, esset)
-            if allothersets:
-                allothers = reduce(lambda a, b: a | b, allothersets)
-                uniqueelems = esset - allothers
-                if not uniqueelems:
-                    equalstates -= frozenset((esset,))
-
-    def dropRedundantStateGroupsMild(self, equalstates):
-        # removes sets that are subsets of others
-        goodequalstates = []
-        for es in equalstates:
-            for es2 in equalstates:
-                if es != es2 and es.issubset(es2):
-                    break
-            else:
-                goodequalstates.append(es)
-        return set(goodequalstates)
-
     def markDifferentStates(self, seentogether, differentpairs):
         for ar in sorted(self.absrequests):
             diffbins = defaultdict(set)
@@ -736,14 +707,10 @@ class AppGraphGenerator(object):
 
 
     def reqstatechangescore(self, absreq, dist):
-        global debugstop
-        debugstop = True
         scores = [[(self.pagescore(i, rr.request, dist),
                 i, rr.request)
-            for i in self.statechangescores.getpathnleaves(
-            [rr.request.method] + list(rr.request.urlvector))]
+            for i in self.statechangescores.getpathnleaves([rr.request.method] + list(rr.request.urlvector))]
             for rr in absreq.reqresps]
-        debugstop = False
 
         # LUDO XXX: Another bug here, max(max(scores)) doesn't work correctly
         return max(max(scores))[0]
@@ -769,7 +736,6 @@ class AppGraphGenerator(object):
                 currreq.statehints += 1
                 pastpages = []
                 for (j, (req, page, chlink, laststate)) in enumerate(reversed(history)):
-                    # LUDO XXX: This equals check will never be true.
                     if req == currreq or \
                             self.getMinMappedState(laststate, statemap) != currmapsto:
                         scores = [(self.reqstatechangescore(pp.req, i), pp)
@@ -1892,15 +1858,12 @@ class Engine(object):
                     maxstate = ag.generateAppGraph()
                     self.state = ag.reduceStates()
                     ag.markChangingState()
-                    global debugstop
-                    debugstop = True
                     def check(x):
                         l = list(x)
                         v = reduce(lambda a, b: (a[0] + b[0], (a[1] + b[1])), l, (0, 0))
                         v = (v[0], v[1]/2.0)
                         return v
                     statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=check)
-                    debugstop = False
                     rr = cr.headreqresp
                     while rr:
                         changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
@@ -2100,8 +2063,6 @@ if __name__ == "__main__":
     login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off'], 'login': ['Log in']})
     ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
-    ff.add(login)
-    login = FormFiller.Params({'userId': ['temp01'], 'password': ['Temp@67A%'], 'newURL': [""], "datasource": ["myyardi"], 'form_submit': [""]})
     ff.add(login)
     ff.add_named_params(["email", "mail"], "adoupe@cs.ucsb.edu")
     e = Engine(ff, dumpdir)
