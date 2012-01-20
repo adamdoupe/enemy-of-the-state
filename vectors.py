@@ -8,6 +8,8 @@ def urlvector(request):
         urltoks = ['/']
     else:
         urltoks = [i for i in request.path.split('/') if i]
+    if not urltoks:
+        urltoks = ['<SAME/PAGE>']
     query = request.query
     if query:
         querytoks = request.query.split('&')

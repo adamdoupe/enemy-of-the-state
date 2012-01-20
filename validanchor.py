@@ -9,6 +9,9 @@ def validanchor(current, href):
     fragments of the current page (although that may help with executing JavaScript.
     """
 
+    if not href:
+        return False
+
     joined = urlparse.urljoin(current, href)
 
     joined_parsed = urlparse.urlparse(joined)
