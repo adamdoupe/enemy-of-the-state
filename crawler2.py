@@ -1099,7 +1099,7 @@ class Crawler(object):
                     message = filterIgnoreUrlParts(message)
                     self.logger.info(output.purple("redirect to %s %d (%s)" % (location, statuscode, message)))
                     reqresp = self.newHttpRedirect(response)
-                elif statuscode == 404 or statuscode == 500:
+                elif statuscode == 404 or statuscode == 500 or statuscode == 403:
                     response = httpex.getResponse()
                     self.logger.info(output.purple("error %d (%s)" % (statuscode, message)))
                     reqresp = self.newHttpError(response)
@@ -2060,7 +2060,7 @@ if __name__ == "__main__":
     ff = FormFiller()
     login = FormFiller.Params({'username': ['scanner1'], 'password': ['scanner1']})
     ff.add(login)
-    login = FormFiller.Params({'username': ['ludo'], 'password': ['ludoludo'], 'autologin': ['off'], 'login': ['Log in']})
+    login = FormFiller.Params({'username': ['scanner1'], 'password': ['scanner1'], 'autologin': ['off'], 'login': ['Log in']})
     ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
     ff.add(login)
