@@ -1732,14 +1732,13 @@ class Engine(object):
                         if al.targets[self.state].nvisits == 0:
                             unv_anchors.append(idx)
                 if unv_anchors:
-                    # XXX Why would path finding fail?
                     chosen = self.rng.choice(unv_anchors)
                     self.logger.info("picking unvisited anchor %s", chosen)
                     return (Engine.Actions.ANCHOR,
                             reqresp.response.page.links[chosen])
 
-        self.logger.info("Couldn't find a path, so let's restart at the main page.")
-        return (Engine.Actions.RESTART, )
+        self.logger.info("Couldn't find a path, so let's pick a random link!.")
+        return (Engine.Actions.ANCHOR, self.rng.choice([i for i in reqresp.response.page.links]))
 
     def keep_looking_for_links(self):
         """
