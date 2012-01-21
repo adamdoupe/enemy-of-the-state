@@ -2064,6 +2064,7 @@ if __name__ == "__main__":
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
     ff.add(login)
     ff.add_named_params(["email", "mail"], "adoupe@cs.ucsb.edu")
+    ff.add_named_params(["url"], "http://example.com/")
     e = Engine(ff, dumpdir)
     try:
         e.main(args, write_state_graph, write_ar_test)
