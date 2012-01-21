@@ -972,7 +972,7 @@ class Crawler(object):
         self.initial_url = None
 
         self.webclient = htmlunit.WebClient()
-        self.webclient.setThrowExceptionOnScriptError(True);
+        self.webclient.setThrowExceptionOnScriptError(False);
 
         self.webclient.setThrowExceptionOnFailingStatusCode(True);
         self.webclient.setUseInsecureSSL(True)
