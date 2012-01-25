@@ -68,6 +68,8 @@ class Form(Link):
                 type = FormField.Type.IMAGE
             elif etype == "button":
                 type = FormField.Type.BUTTON
+            elif etype == "file":
+                type = FormField.Type.FILE
             else:
                 type = FormField.Type.OTHER
         elif tag == FormField.Tag.TEXTAREA:
