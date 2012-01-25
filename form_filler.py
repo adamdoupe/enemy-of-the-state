@@ -115,6 +115,8 @@ class FormFiller(object):
                     else:
                         multiplepass = True
                     value = password
+                elif f.type == FormField.Type.FILE:
+                    value = "blank.jpg"
             elif f.tag == FormField.Tag.TEXTAREA:
                 if f.name in self.namedparams:
                     value = self.namedparams[f.name]

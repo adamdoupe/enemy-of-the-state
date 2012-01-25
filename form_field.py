@@ -5,7 +5,7 @@ class FormField(object):
 
     Tag = Constants("INPUT", "BUTTON", "TEXTAREA")
 
-    Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "SUBMIT", "IMAGE", "BUTTON", "OTHER")
+    Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "SUBMIT", "IMAGE", "FILE", "BUTTON", "OTHER")
 
     def __init__(self, tag, type, name, value=None):
         self.tag = tag

@@ -1372,7 +1372,7 @@ PathStep = namedtuple("PathStep", "abspage idx state")
 
 class Engine(object):
 
-    Actions = Constants("ANCHOR", "FORM", "REDIRECT", "DONE", "RESTART")
+    Actions = Constants("ANCHOR", "FORM", "REDIRECT", "DONE", "RANDOM")
 
     def __init__(self, formfiller=None, dumpdir=None):
         self.requests = 0
@@ -1568,6 +1568,14 @@ class Engine(object):
                     else:
                         nextabsrequests = [(None, linktgt.target)]
                     for formparams, nextabsreq in nextabsrequests:
+                        # Check to see if this next abstract request is the same 
+                        # abstract request that was made previously
+                        prevreqresps = head.statereqrespsmap[state]
+                        if nextabsreq.request_actually_made():
+                            for prevreqresp in prevreqresps:
+                                if nextabsreq == prevreqresp.request.absrequest:
+                                    continue
+
                         if state == startstate and nextabsreq.statehints and \
                                 not nextabsreq.changingstate and \
                                 not nextabsreq in recentlyseen:
@@ -1712,6 +1720,7 @@ class Engine(object):
                     if i > 0 and p.state != path[i-1].state:
                         path[i:] = []
                         break
+                
                 self.followingpath = True
                 assert not self.pathtofollow
                 self.pathtofollow = path
@@ -1738,7 +1747,7 @@ class Engine(object):
                             reqresp.response.page.links[chosen])
 
         self.logger.info("Couldn't find a path, so let's pick a random link!.")
-        return (Engine.Actions.ANCHOR, self.rng.choice([i for i in reqresp.response.page.links]))
+        return (Engine.Actions.RANDOM, )
 
     def keep_looking_for_links(self):
         """
@@ -1834,8 +1843,9 @@ class Engine(object):
                         nextAction = self.getNextAction(reqresp)
                 elif nextAction[0] == Engine.Actions.REDIRECT:
                     reqresp = cr.followRedirect(nextAction[1])
-                elif nextAction[0] == Engine.Actions.RESTART:
-                    reqresp = cr.click(reqresp.response.page.anchors[-1])
+                elif nextAction[0] == Engine.Actions.RANDOM:
+                    randlink = self.rng.choice([i for i in reqresp.response.page.anchors])
+                    reqresp = cr.click(randlink)
                 else:
                     assert False, nextAction
 
@@ -2070,7 +2080,7 @@ if __name__ == "__main__":
         e.main(args, write_state_graph, write_ar_test)
     except:
         traceback.print_exc()
-        pdb.post_mortem()
+        #pdb.post_mortem()
     finally:
         pass
 
