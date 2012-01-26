@@ -16,6 +16,13 @@ class FakeHtmlUnitAnchor(object):
     def getAttributesMap(self):
         return FakeHtmlUnitAnchor.FakeAttributesMap()
 
+    def getAttribute(self, attribute):
+        if attribute == "href":
+            return self.getHrefAttribute()
+        else:
+            return ""
+        
+
     def getHrefAttribute(self):
         return self.href
 

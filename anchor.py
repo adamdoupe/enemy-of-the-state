@@ -19,7 +19,7 @@ class Anchor(Link):
 
     @lazyproperty
     def href(self):
-        href = self.internal.getHrefAttribute()
+        href = self.internal.getAttribute("href")
         href = filterIgnoreUrlParts(href)
         return href
 

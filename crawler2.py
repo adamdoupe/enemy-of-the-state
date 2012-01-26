@@ -2080,7 +2080,7 @@ if __name__ == "__main__":
         e.main(args, write_state_graph, write_ar_test)
     except:
         traceback.print_exc()
-        #pdb.post_mortem()
+        pdb.post_mortem()
     finally:
         pass
 

@@ -1,3 +1,5 @@
+import urlparse
+
 def urlvector(request):
     """ /path/to/path.html?p1=v1&p2=v2
         ->
@@ -12,8 +14,7 @@ def urlvector(request):
         urltoks = ['<SAME/PAGE>']
     query = request.query
     if query:
-        querytoks = request.query.split('&')
-        keys, values = zip(*(i.split('=', 1) for i in querytoks if i))
+        keys, values = zip(*[(k, tuple(*v)) for k, v in urlparse.parse_qs(query, True).iteritems()])
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     return tuple(urltoks)
