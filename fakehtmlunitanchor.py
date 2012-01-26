@@ -2,9 +2,10 @@ import htmlunit
 
 class FakeHtmlUnitAnchor(object):
 
-    def __init__(self, href, webclient):
+    def __init__(self, href, webclient, dom = "/html/body/added/to/end/by/adam/should/not/exist"):
         self.href = href
         self.webclient = webclient
+        self.dom = dom
 
     class FakeAttributesMap(object):
         def __init__(self):
@@ -30,4 +31,4 @@ class FakeHtmlUnitAnchor(object):
         return htmlunit.HtmlPage.cast_(self.webclient.getPage(self.href))
 
     def getCanonicalXPath(self):
-        return "/html/body/added/to/end/by/adam/should/not/exist"
+        return self.dom

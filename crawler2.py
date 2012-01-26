@@ -2040,7 +2040,6 @@ if __name__ == "__main__":
     level = logging.INFO
     if opts.has_key('-D'):
         level = logging.DEBUG
-
     try:
         handler = logging.FileHandler(opts['-l'], 'w')
         logging.basicConfig(level=level, filename=opts['-l'],
@@ -2080,7 +2079,8 @@ if __name__ == "__main__":
         e.main(args, write_state_graph, write_ar_test)
     except:
         traceback.print_exc()
-        pdb.post_mortem()
+        if level == logging.DEBUG:
+            pdb.post_mortem()
     finally:
         pass
 

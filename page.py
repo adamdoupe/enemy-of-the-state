@@ -27,13 +27,14 @@ class Page(object):
         actual_anchors = [Anchor(i, self.reqresp) for i in self.internal.getAnchors() if validanchor(self.internal.url.toString(), i.getHrefAttribute().strip())] if not self.redirect and not self.error else []
         if not self.redirect:
             actual_anchors.append(Anchor(self.fake_anchor, self.reqresp))
-
-        links = self.internal.getElementsByTagName("link")
-        for link in links:
-            if "href" in link.getAttributesMap().keySet():
-                href = link.getAttribute("href")
-                if validanchor(self.internal.url.toString(), href.strip()):
-                    actual_anchors.append(Anchor(link, self.reqresp))
+        
+        if not (self.redirect or self.error):
+            links = self.internal.getElementsByTagName("link")
+            for link in links:
+                if "href" in link.getAttributesMap().keySet():
+                    href = link.getAttribute("href")
+                    if validanchor(self.internal.url.toString(), href.strip()):
+                        actual_anchors.append(Anchor(FakeHtmlUnitAnchor(self.internal.getFullyQualifiedUrl(href).toString(), self.webclient, link.getCanonicalXPath()), self.reqresp))
 
         return actual_anchors
 
