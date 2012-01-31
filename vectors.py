@@ -14,7 +14,7 @@ def urlvector(request):
         urltoks = ['<SAME/PAGE>']
     query = request.query
     if query:
-        keys, values = zip(*[(k, tuple(*v)) for k, v in urlparse.parse_qs(query, True).iteritems()])
+        keys, values = zip(*[(k, tuple(v)) for k, v in urlparse.parse_qs(query, True).iteritems()])
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     return tuple(urltoks)

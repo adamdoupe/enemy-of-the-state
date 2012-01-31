@@ -266,7 +266,6 @@ class AppGraphGenerator(object):
 
         self.fullurireqmap = fullurireqmap
         self.mappedrequests = mappedrequests
-        self.ctxmappedrequests = ctxmappedrequests
         self.absrequests = absrequests
 
     def addtorequestclusters(self, rr):
@@ -1007,6 +1006,7 @@ class Crawler(object):
 
     def followRedirect(self, redirect):
         lastvalidpage = self.currreqresp.response.page
+        reqresp = None
         while lastvalidpage.redirect or lastvalidpage.error:
             if not lastvalidpage.reqresp.prev:
                 # beginning of history
@@ -1020,11 +1020,12 @@ class Crawler(object):
         try:
             page = self.webclient.getPage(fqurl)
             htmlpage = htmlunit.HtmlPage.cast_(page)
+            reqresp = self.newPage(htmlpage)
         except htmlunit.JavaError, e:
             reqresp = self.handleNavigationException(e)
         except TypeError, e:
             reqresp = self.handleNavigationException(e)
-        reqresp = self.newPage(htmlpage)
+
         redirect.to.append(reqresp)
         return reqresp
 
@@ -2072,8 +2073,11 @@ if __name__ == "__main__":
     ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
     ff.add(login)
-    ff.add_named_params(["email", "mail"], "adoupe@cs.ucsb.edu")
+    login = FormFiller.Params({'User/Email': ['scanner1'], 'User/Password': ['scanner1'], 'User/Sign_In': ['Sign In'], 'User/RememberMe': [0]})
+    ff.add(login)
+    ff.add_named_params(["email", "mail", "User/Email"], "adoupe@cs.ucsb.edu")
     ff.add_named_params(["url"], "http://example.com/")
+    ff.add_named_params(["hpt"], "")
     e = Engine(ff, dumpdir)
     try:
         e.main(args, write_state_graph, write_ar_test)

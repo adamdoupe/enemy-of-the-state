@@ -56,7 +56,6 @@ class FormFiller(object):
         name can be a string or a list of strings
         values can be a string of a list of strings        
         """
-        assert values and names
         name_list = utils.string_or_list_into_list(names)
         values_list = utils.string_or_list_into_list(values)
         for name in name_list:

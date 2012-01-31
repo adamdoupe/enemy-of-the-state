@@ -19,6 +19,7 @@ class Page(object):
         self.error = error
         self.state = -1
         self.webclient = webclient
+        self.initial_url = initial_url
 
         self.fake_anchor = FakeHtmlUnitAnchor(initial_url, webclient)
 
@@ -44,7 +45,15 @@ class Page(object):
 
     @lazyproperty
     def redirects(self):
-        return [Redirect(self.internal.getResponseHeaderValue("Location"), self.reqresp)] if self.redirect else []
+        if self.redirect:
+            redirect_location = self.internal.getResponseHeaderValue("Location")
+            redirect_url = htmlunit.URL(self.reqresp.request.webrequest.getUrl(), redirect_location).toString()
+            if redirect_url == self.reqresp.request.webrequest.getUrl().toString():
+                redirect_url = self.initial_url
+            return [Redirect(redirect_url, self.reqresp)]
+        else:
+            return []
+
 
     @property
     def linkstree(self):
