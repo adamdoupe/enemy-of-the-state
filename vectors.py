@@ -23,8 +23,7 @@ def formvector(method, action, inputs, hiddens):
     urltoks = [method] + [i if i  else '/' for i in action.path.split('/')]
     query = action.query
     if query:
-        querytoks = action.query.split('&')
-        keys, values = zip(*(i.split('=', 1) for i in querytoks if i))
+        keys, values = zip(*[(k, tuple(v)) for k, v in urlparse.parse_qs(action.query, True).iteritems()])
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     if inputs:

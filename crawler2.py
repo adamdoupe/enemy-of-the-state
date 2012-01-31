@@ -1157,7 +1157,8 @@ class Crawler(object):
         isubmitters = list(htmlunit.HtmlElement.cast_(i)
                 for i in iform.getElementsByAttribute(
                 submitter.tag, "type", submitter.type.lower()))
-        assert isubmitters
+        if len(isubmitters) == 0:
+            return None
         if len(isubmitters) == 1:
             isubmitter = isubmitters[0]
         else:
@@ -1269,6 +1270,9 @@ class Crawler(object):
                     submitter = f.submitter
 
                 isubmitter = Crawler.getInternalSubmitter(iform, submitter)
+                if not isubmitter:
+                    # couldn't find a submit button, skip creating this form.
+                    continue
                 newreq = iform.getWebRequest(isubmitter)
                 if htmlunit.HtmlImageInput.instance_(isubmitter):
                     url = newreq.getUrl()

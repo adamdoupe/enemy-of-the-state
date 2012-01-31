@@ -3,7 +3,7 @@ import htmlunit
 from ignore_urls import filterIgnoreUrlParts
 from lazyproperty import lazyproperty
 from form_filler import FormFiller
-from vectors import urlvector
+from vectors import urlvector, formvector
 
 class Request(object):
 
@@ -15,6 +15,7 @@ class Request(object):
         self.state = -1
         self.statehint = False
         self.changingstate = False
+        self.test = self.signature_vector
 
     @lazyproperty
     def method(self):
@@ -76,6 +77,14 @@ class Request(object):
     @lazyproperty
     def urlvector(self):
         return urlvector(self)
+
+    @lazyproperty
+    def signature_vector(self):
+        if self.isPOST:
+            # handle post request
+            return formvector("POST", self, None, None)
+        else:
+            return tuple(["GET"] + list(self.urlvector))
 
     def __str__(self):
         return self._str
