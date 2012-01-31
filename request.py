@@ -82,7 +82,7 @@ class Request(object):
     def signature_vector(self):
         if self.isPOST:
             # handle post request
-            return formvector("POST", self, None, None)
+            return formvector("POST", self, tuple([i.name for i in self.webrequest.getRequestParameters()]), tuple([i.value for i in self.webrequest.getRequestParameters()]))
         else:
             return tuple(["GET"] + list(self.urlvector))
 
