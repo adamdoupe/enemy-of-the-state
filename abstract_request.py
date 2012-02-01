@@ -22,7 +22,6 @@ class AbstractRequest(object):
     def __init__(self, request):
         self.method = request.method
         self.path = request.path
-        self.initial_full_path = request.fullpath
         self.reqresps = AbstractRequest.ReqRespsWrapper(self)
         self.instance = AbstractRequest.InstanceCounter
         AbstractRequest.InstanceCounter += 1

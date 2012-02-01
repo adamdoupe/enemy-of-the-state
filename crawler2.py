@@ -48,6 +48,7 @@ from abstract_request import AbstractRequest
 from target import Target, PageTarget, ReqTarget, FormTarget
 from abstract_map import AbstractMap
 from pair_counter import PairCounter
+from classifier import Classifier
 
 
 LAST_REQUEST_BOOST=0.1
@@ -156,138 +157,99 @@ class AppGraphGenerator(object):
         self.formfiller = formfiller
         self.crawler = crawler
         self.nstates = 0
+        self.request_cluster = None
 
     def updatepageclusters(self, abspages):
         self.abspages = abspages
 
+
     def clusterRequests(self):
-        # clustering requests on the abstrct pages is a bad idea, because we do not want
-        # the exact same request to be split in 2 clusters
-        #reqmap = AbstractMap(AbstractRequest, lambda x: (x.method, x.path))
-        # actually, if we do not cluster based on the abstract pages, we get issues with the
-        # "trap.php" test case, because pages are clustered but requests are not
-        # compromise: cluster based on abstract pages only if also the previous abspage is the same
-
-
-        ################
-
-        # cluster together all requests that are exactly the same
-        fullurireqmap = AbstractMap(AbstractRequest,
-                lambda x: (x.method, x.path, x.query, x.params))
-
-        # make another set of less strict clusters
-        ctxmappedrequests = CustomDict([], missing=(lambda x: []),
-                h=lambda x: (x.method, x.path))
-
-        # fill the 2 sets of clusters
-        mappedrequests = defaultdict(list)
+        # We're going to cluster the pages based on a pre-fix tree of their signatures.
+        # We'll use the same thing as the old algorithm: only cluster if one of the requests
+        # is a superset of all the others.
+        
+        self.request_cluster = Classifier(lambda request: request.signature_vector)
         for rr in self.reqrespshead:
-            mappedrequests[fullurireqmap.getAbstract(rr.request)].append(rr)
-            ctxmappedrequests[rr.request].append(rr)
+            rr.request.absrequest = None
+            self.request_cluster.add(rr.request)
 
-        absrequests = set()
+        self.mark_clusterable(self.request_cluster)
 
-        # iterate on the looser clusters
-        for rrs in sorted(ctxmappedrequests.itervalues()):
-            mergedctx = {}
-            # get all abstract requests from the current looser cluster
-            fullabsreqset = frozenset(fullurireqmap.getAbstract(rr.request)
-                    for rr in rrs)
-            fullabsreqs = sorted(fullabsreqset)
-            # get all sets of requests mapped to each abstract page in the loose
-            # cluster
-            mappedrrs = [mappedrequests[ar] for ar in fullabsreqs]
-            # get all sets of abstract pages targeted by all the sets of
-            # abstract requests in the loose cluster
-            abspages = [frozenset(rr.response.page.abspage
-                    for rr in mrrs) for mrrs in mappedrrs]
-            # get the max number of distinct abstract page targeted by a single
-            # abstract request
-            maxapslen = max(len(i) for i in abspages)
-            # get the set of distinct abstract pages target by all the requests
-            # in the loose cluster
-            totabspages = frozenset.union(*abspages)
-            assert len(totabspages) >= maxapslen
-            if len(totabspages) == maxapslen:
-                # if there is least one set of abstract pages targetd by one
-                # abstract request in the loose cluster which is superset of all
-                # the other set of abstract pages, than we can merge all
-                # requests in the loose cluster under the same abstract request
+        abstract_requests = self.create_abstract_requests(self.request_cluster, [])
+        self.absrequests = set(abstract_requests)
 
-                # pick the first abstract request in the loose cluster and put all
-                # requests in the loose cluster under it
-                chosenar = fullabsreqs[0]
-                absrequests.add(chosenar)
-                for rr in rrs:
-                    chosenar.reqresps.append(rr)
-                    rr.request.absrequest = chosenar
-                # store the mapping the new mapping of each request to the
-                # corresponding abstract request in the fullurireqmap object, which
-                # will be later used to heuristically fill the unvisited links in
-                # the application graph
-                for mrrs in mappedrrs:
-                    fullurireqmap.setAbstract(mrrs[0].request, chosenar)
-            else:  # len(totabspages) > maxapslen
-                # we cannot merge all the requests in the loose cluster
-
-                # merge together all requests that go to the same exact set of
-                # abstract pages
-                assert len(abspages) == len(fullabsreqs)
-                # map each set of abstract pages to the list of abstract
-                # requests (and corresponding reqresps) which lead to that set
-                abspages_to_ar = defaultdict(list)
-                for aps, ar, mrrs in zip(abspages, fullabsreqs, mappedrrs):
-                    abspages_to_ar[aps].append((ar, mrrs))
-
-                # only used for consistency checks: set of reqresps we have seen
-                # so far in the loop
-                seenrrs = set()
-                for ar_rrs_list in abspages_to_ar.itervalues():
-                    # pick the first abstract request and map all other requests
-                    # to it
-                    chosenar = ar_rrs_list[0][0]
-                    # set of all reqresps whose request which led to the current
-                    # set of abstract pages
-                    allrrs = frozenset(itertools.chain(
-                            *(i[1] for i in ar_rrs_list)))
-                    # make sure we are processing each reqresp pair only once
-                    assert not seenrrs & allrrs
-                    seenrrs |= allrrs
-                    # make sure we do not overwrite an exiting abstract request
-                    # mapping
-                    assert chosenar not in absrequests
-                    absrequests.add(chosenar)
-                    # set the chosen abstract request to every reqresp in the
-                    # set
-                    for rr in allrrs:
-                        chosenar.reqresps.append(rr)
-                        rr.request.absrequest = chosenar
-                        fullurireqmap.setAbstract(rr.request, chosenar)
-
-        self.fullurireqmap = fullurireqmap
-        self.mappedrequests = mappedrequests
-        self.absrequests = absrequests
-
-    def addtorequestclusters(self, rr):
-        mappedreq = self.fullurireqmap.getAbstract(rr.request)
-        reqs = self.mappedrequests[mappedreq]
-
-        if reqs:
-            dests = frozenset(r.response.page.abspage for r in reqs)
-            if rr.response.page.abspage in dests:
-                finalmappedar = reqs[0].request.absrequest
-            else:
-                raise AppGraphGenerator.AddToAbstractRequestException()
+        
+    def get_abstract_request_or_create(self, request):
+        abs_request = None
+        if self.request_cluster.is_present(request):
+            same_reqs = self.request_cluster.get_object(request)
+            abs_request = same_reqs[0].absrequest
         else:
-            finalmappedar = mappedreq
+            # haven't made this exact request yet, so create a new abstract request
+            self.request_cluster.add(request)
+            abs_request = AbstractRequest(request)
+            request.absrequest = abs_request
+        return abs_request
+        
 
-        # XXX Probably a bug and can be deleted
-        rr.request.absrequests = finalmappedar
-        finalmappedar.reqresps.append(rr)
-        reqs.append(rr)
-        rr.request.absrequest = finalmappedar
+    def create_abstract_requests(self, level, prev):
+        to_return = list()
+        for k, v in level.iteritems():
+            if v.clusterable:
+                requests = reduce(lambda x,y: x+y, [i for i in v.iterleaves()])
+                abs_request = AbstractRequest(requests[0])
+                for request in requests:
+                    abs_request.reqresps.append(request.reqresp)
+                    request.absrequest = abs_request
+                    
+                to_return.append(abs_request)
+            else:
+                if v.value:
+                    # Not clusterable, but there are requests at this level, so cluster them.
+                    requests = v.value
+                    abs_request = AbstractRequest(requests[0])
+                    for request in requests:
+                        abs_request.reqresps.append(request.reqresp)
+                        request.absrequest = abs_request
+                    to_return.append(abs_request)
+                to_return.extend(self.create_abstract_requests(v, prev))
+        return prev + to_return
 
+    def mark_clusterable(self, level):
+        for k, v in level.iteritems():
+            requests = [i for i in v.iterleaves()]
+            if self.requests_are_clusterable(requests):
+                v.clusterable = True
+            else:
+                v.clusterable = False
+                self.mark_clusterable(v)
 
+    def requests_are_clusterable(self, requests):
+        
+        abs_pages = map(lambda reqs: [r.reqresp.response.page.abspage for r in reqs], requests)
+        
+        unique_abs_pages = map(frozenset, abs_pages)
+
+        all_abs_pages = reduce(lambda x,y: x.union(y), unique_abs_pages, set())
+        
+        max_unique_abs_pages_len = max(len(i) for i in unique_abs_pages)
+
+        return len(all_abs_pages) == max_unique_abs_pages_len
+        
+    def addtorequestclusters(self, rr):
+        same_reqs = self.request_cluster.get_object(rr.request)
+        abs_request = same_reqs[0].absrequest
+        if abs_request.request_actually_made():
+            # if the abstract request that this maps to has the same abstract page, then add it to the 
+            # abstract request. Otherwise redo clustering.
+
+            all_abs_pages_in_abs_request = frozenset(r.response.page.abspage for r in abs_request.reqresps)
+            if not rr.response.page.abspage in all_abs_pages_in_abs_request:
+                raise AppGraphGenerator.AddToAbstractRequestException()
+
+        abs_request.reqresps.append(rr)
+        rr.request.absrequest = abs_request
+        self.absrequests.add(abs_request)
 
     def generateAppGraph(self):
 
@@ -450,7 +412,8 @@ class AppGraphGenerator(object):
         for ap in self.abspages:
             self.fillPageMissingRequests(ap)
 
-        self.allabsrequests = set(self.fullurireqmap.itervalues())
+        all_requests = set(reduce(lambda x,y: x+y, [i for i in self.request_cluster.iterleaves()]))
+        self.allabsrequests = set(i.absrequest for i in all_requests)
         self.allabsrequests |= self.absrequests
         self.absrequests = self.allabsrequests
 
@@ -479,7 +442,7 @@ class AppGraphGenerator(object):
                             if newwebrequests:
                                 requests = [Request(i) for i in newwebrequests]
                                 newrequest = [
-                                        self.fullurireqmap.getAbstract(i)
+                                        self.get_abstract_request_or_create(i)
                                         for i in requests]
                                 assert all(i for i in newrequest)
                             newrequestbuilt = True
@@ -496,7 +459,7 @@ class AppGraphGenerator(object):
                                     ap.reqresps[0].response.page, idx, l)
                             if newwebrequest:
                                 request = Request(newwebrequest)
-                                newrequest = self.fullurireqmap.getAbstract(request)
+                                newrequest = self.get_abstract_request_or_create(request)
                                 assert newrequest
                             newrequestbuilt = True
                         if newrequest:

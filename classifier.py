@@ -15,3 +15,10 @@ class Classifier(RecursiveDict):
     def addall(self, it):
         for i in it:
             self.add(i)
+
+    def is_present(self, obj):
+        return self.get_object(obj) is not None
+
+    def get_object(self, obj):
+        featvect = self.featuresextractor(obj)
+        return self.getpath(featvect).value
