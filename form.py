@@ -38,7 +38,7 @@ class Form(Link):
 
     @lazyproperty
     def linkvector(self):
-        return formvector(self.method, self.actionurl, self.inputnames, self.hiddennames)
+        return formvector(self.method, self.actionurl, self.elemnames, self.hiddennames)
 
     @lazyproperty
     def elemnames(self):

@@ -2,9 +2,8 @@ from collections import defaultdict
 
 class PairCounter(object):
 
-    def __init__(self, debug=False):
+    def __init__(self):
         self._dict = defaultdict(int)
-        self.debug = debug
 
     def add(self, a, b):
         assert a != b

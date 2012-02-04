@@ -62,8 +62,9 @@ class Links(object):
         self.linkstree = linkstree
 
     def addlink(self, v, l):
-        if v:
-            nextk = max(v.keys()) + 1
+        keys = [i for i in v.keys() if isinstance(i, int)] if v else []
+        if v and keys:
+            nextk = max(keys) + 1
         else:
             nextk = 0
         # call setpath to fix the leaves count

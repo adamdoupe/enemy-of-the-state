@@ -84,7 +84,6 @@ def handleError(self, record):
 logging.Handler.handleError = handleError
 
 cond = 0
-debug_set = set()
 
 maxstate = -1
 
@@ -237,8 +236,7 @@ class AppGraphGenerator(object):
         return len(all_abs_pages) == max_unique_abs_pages_len
         
     def addtorequestclusters(self, rr):
-        same_reqs = self.request_cluster.get_object(rr.request)
-        abs_request = same_reqs[0].absrequest
+        abs_request = self.get_abstract_request_or_create(rr.request)
         if abs_request.request_actually_made():
             # if the abstract request that this maps to has the same abstract page, then add it to the 
             # abstract request. Otherwise redo clustering.
@@ -488,7 +486,7 @@ class AppGraphGenerator(object):
         return newequalstates
 
     def markDifferentStates(self, seentogether, differentpairs):
-        for ar in sorted(self.absrequests):
+       for ar in sorted(self.absrequests):
             diffbins = defaultdict(set)
             equalbins = defaultdict(set)
             for s, t in ar.targets.iteritems():
@@ -507,14 +505,15 @@ class AppGraphGenerator(object):
             differentpairs.addallcombinations(statebins)
 
         # mark as different states that have seen different concreate pages in the same abstract page
-        for ap in self.abspages:
+       for ap in self.abspages:
             statelist = defaultdict(list)
             for s, rrs in ap.statereqrespsmap.iteritems():
                 for rr in rrs:
                     statelist[rr.response.page.linksvector].append(s)
 
             if len(statelist) > 1:
-                differentpairs.addallcombinations(statelist.values())
+                #differentpairs.addallcombinations(statelist.values())
+                pass
 
 
     def propagateDifferestTargetStates(self, differentpairs):
@@ -639,7 +638,7 @@ class AppGraphGenerator(object):
     def mergeStatesGreedyColoring(self, statemap, statereqrespmap):
 
         seentogether = PairCounter()
-        differentpairs = PairCounter(False)
+        differentpairs = PairCounter()
 
         self.markDifferentStates(seentogether, differentpairs)
 
@@ -1256,26 +1255,26 @@ class Crawler(object):
                 requestparams.append(f)
         return (newrequests, requestparams)
 
-def linkweigh(link, nvisits, othernvisits=0, statechange=False):
+def linkweigh(link, nvisits, othernvisits=0, other_link_visits=0, statechange=False):
         statechange = 1 if statechange else 0
         if link.type == Links.Type.ANCHOR:
             if link.hasquery:
-                dist = Dist((statechange, 0, 0, 0, 0, nvisits, othernvisits, 0, 0, 0, 0))
+                dist = Dist((statechange, 0, 0, 0, 0, nvisits, othernvisits, other_link_visits, 0, 0, 0, 0))
             else:
-                dist = Dist((statechange, 0, 0, 0, 0, 0, 0, nvisits, othernvisits, 0, 0))
+                dist = Dist((statechange, 0, 0, 0, 0, 0, 0, nvisits, othernvisits, other_link_visits, 0, 0))
         elif link.type == Links.Type.FORM:
             if link.isPOST:
-                dist = Dist((statechange, nvisits, othernvisits, 0, 0, 0, 0, 0, 0, 0, 0))
+                dist = Dist((statechange, nvisits, othernvisits, other_link_visits, 0, 0, 0, 0, 0, 0, 0, 0))
             else:
-                dist = Dist((statechange, 0, 0, nvisits, othernvisits, 0, 0, 0, 0, 0, 0))
+                dist = Dist((statechange, 0, 0, nvisits, othernvisits, other_link_visits, 0, 0, 0, 0, 0, 0))
         elif link.type == Links.Type.REDIRECT:
-            dist = Dist((statechange, 0, 0, 0, 0, 0, 0, 0, 0, nvisits, othernvisits))
+            dist = Dist((statechange, 0, 0, 0, 0, 0, 0, 0, 0, nvisits, othernvisits, other_link_visits))
         else:
             assert False, link
         return dist
 
 class Dist(object):
-    LEN = 11
+    LEN = 12
 
     def __init__(self, v=None):
         """ The content of the vector is as follow:
@@ -1481,12 +1480,15 @@ class Engine(object):
                     if s != t.transition:
                         statechange = True
 
-
         assert link.type == linkidx.type
         # divide othernvisits by 3, so it weights less and for the first 3
         # visists it is 1
         othernvisits = int(math.ceil(othernvisits/3.0))
-        dist = linkweigh(link, nvisits, othernvisits, statechange)
+
+        other_link_visits = sum(i.nvisits for i in link.targets.itervalues())
+        other_link_visits = int(math.ceil(other_link_visits/3.0))
+
+        dist = linkweigh(link, nvisits, othernvisits, other_link_visits, statechange)
 
         return dist
 
@@ -1503,7 +1505,11 @@ class Engine(object):
         if not costs:
             # costs might be empty after this filtering
             return
-        mincost = min(costs)
+        sorted_costs = sorted(costs)
+        
+        # get everything that is equal to this and add it to choose one randomly
+        mincosts = [sorted_costs[0]]
+        mincost = self.rng.choice(mincosts)
         path = list(reversed([PathStep(head, mincost[1], state)] + headpath))
         if priority == 0:
             # for startndard priority, select unvisited links disregarding the
@@ -1696,7 +1702,6 @@ class Engine(object):
 
                 assert nexthop.abspage == reqresp.response.page.abspage
                 assert nexthop.state == self.state
-                debug_set.add(nexthop.idx.path[1:])
                 # pass the index too, in case there are some form parameters specified
                 return (self.getEngineAction(nexthop.idx), reqresp.response.page.links[nexthop.idx], nexthop.idx)
             else:
@@ -1873,14 +1878,17 @@ class Engine(object):
                 if write_ar_test:
                     ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))
                     ar_through_time.flush()
+                
+                if sinceclustered == 0:
+                    ar_seen = len([ar for ar in ag.absrequests if ar.request_actually_made()])
 
-                ar_seen = len([ar for ar in ag.absrequests if ar.request_actually_made()])
-
-                if ar_seen != self.last_ar_seen:
-                    self.last_ar_seen = ar_seen
-                    self.since_last_ar_change = 0
-                else:
-                    self.since_last_ar_change += 1
+                    if ar_seen != self.last_ar_seen:
+                        self.last_ar_seen = ar_seen
+                        self.since_last_ar_change = 0
+                        self.num_last_update = self.num_requests
+                    else:
+                        self.since_last_ar_change += (self.num_requests - self.num_last_update)
+                        self.num_last_update = self.num_requests
 
                 self.last_ap_pages = len(pc.getAbstractPages())
                 
@@ -1889,7 +1897,7 @@ class Engine(object):
 
                 if wanttoexit:
                     return
-                if write_state_graph:
+                if write_state_graph and self.num_requests % 100 == 0:
                     self.writeStateDot()
 
     def writeDot(self):
@@ -1969,7 +1977,12 @@ class Engine(object):
         for p in self.ag.allabsrequests:
             for s, t in p.targets.iteritems():
                 if s != t.transition:
-                    name = str('\\n'.join(p.requestset))
+                    requestset = list(p.requestset)
+                    if len(requestset) > 5:
+                        requestset = requestset[:5]
+                        
+                    name = str('\\n'.join(requestset))
+                    
                     edge = pydot.Edge(nodes[s], nodes[t.transition])
                     edge.set_label(name)
                     dot.add_edge(edge)
@@ -2039,6 +2052,8 @@ if __name__ == "__main__":
     login = FormFiller.Params({'username': ['scanner1'], 'password': ['scanner1'], 'autologin': ['off'], 'login': ['Log in']})
     ff.add(login)
     login = FormFiller.Params({'adminname': ['admin'], 'password': ['admin']})
+    ff.add(login)
+    login = FormFiller.Params({'email': ['scanner1'], 'password': ['scanner1']})
     ff.add(login)
     login = FormFiller.Params({'User/Email': ['scanner1'], 'User/Password': ['scanner1'], 'User/Sign_In': ['Sign In'], 'User/RememberMe': [0]})
     ff.add(login)

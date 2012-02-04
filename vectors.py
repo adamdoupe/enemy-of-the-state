@@ -19,7 +19,23 @@ def urlvector(request):
         urltoks.append(tuple(values))
     return tuple(urltoks)
 
-def formvector(method, action, inputs, values):
+def formvector(method, action, inputs, hiddens):
+    urltoks = []
+    if inputs:
+        urltoks.append(tuple(inputs))
+    urltoks.append(method)
+    urltoks.extend([i if i  else '/' for i in action.path.split('/')])
+    query = action.query
+    if query:
+        keys, values = zip(*[(k, tuple(v)) for k, v in urlparse.parse_qs(action.query, True).iteritems()])
+        urltoks.append(tuple(keys))
+        urltoks.append(tuple(values))
+    if hiddens:
+        # TODO hiddens values
+        urltoks.append(tuple(hiddens))
+    return tuple(urltoks)
+
+def post_request_vector(method, action, inputs, values):
     urltoks = [method] + [i if i  else '/' for i in action.path.split('/')]
     query = action.query
     if query:
@@ -32,6 +48,7 @@ def formvector(method, action, inputs, values):
         # TODO hiddens values
         urltoks.append(tuple(values))
     return tuple(urltoks)
+
 
 def linksvector(page):
     linksvector = tuple([tuple(i) for i in page.linkstree.iterlevels()])

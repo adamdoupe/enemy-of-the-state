@@ -42,13 +42,13 @@ class PageClusterer(object):
 
                 # require some diversity in the dom path in order to create a link
                 med = median((i.nleaves for i in v.itervalues()))
-                if nleaves > med and nleaves > 15*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
-                        and v.depth <= 6 and n >= 3:
+                if nleaves > med and nleaves > 8*(1+1.0/(n+1)) and len(k) > 7.0*math.exp(-n) \
+                        and n >= 3:
                     v.clusterable = True
                     level.clusterable = False
                 else:
                     v.clusterable = False
-                self.scanlevels(v, n+1)
+                    self.scanlevels(v, n+1)
 
     # XXX TODO: Merge this with scanlevels since they're the same algorithm
     # Also, newclusterable isn't used anywhere, which means that this doesn't really do anything
@@ -61,8 +61,8 @@ class PageClusterer(object):
 
             # require some diversity in the dom path in order to create a link
             med = median((i.nleaves for i in v.itervalues()))
-            if nleaves > med and nleaves > 15*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
-                    and v.depth <= 6 and n >= 3:
+            if nleaves > med and nleaves > 8*(1+1.0/(n+1)) and len(path[0]) > 7.0*math.exp(-n) \
+                    and n >= 3:
                 v.newclusterable = True
                 level.newclusterable = False
             else:
