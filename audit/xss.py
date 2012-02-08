@@ -21,17 +21,21 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 '''
 from __future__ import with_statement
 
-import core.controllers.outputManager as om
 
-from core.controllers.basePlugin.baseAuditPlugin import baseAuditPlugin
-from core.data.fuzzer.fuzzer import createMutants, createRandAlNum
-from core.controllers.w3afException import w3afException
+from baseAuditPlugin import baseAuditPlugin
+from fuzzer import createMutants, createRandAlNum
+from w3afException import w3afException
 
-import core.data.kb.knowledgeBase as kb
-import core.data.kb.vuln as vuln
-import core.data.constants.severity as severity
+import knowledgeBase as kb
+import vuln as vuln
 
-import core.data.constants.browsers as browsers
+import outputManager as om
+
+import severity
+
+import browsers
+
+kb=kb.kb
 
 
 class xss(baseAuditPlugin):
@@ -40,8 +44,8 @@ class xss(baseAuditPlugin):
     @author: Andres Riancho ( andres.riancho@gmail.com )
     '''
 
-    def __init__(self):
-        baseAuditPlugin.__init__(self)
+    def __init__(self, crawler):
+        baseAuditPlugin.__init__(self, crawler)
         
         # Some internal variables to keep track of remote web application sanitization
         self._fuzzableRequests = []
@@ -124,11 +128,11 @@ class xss(baseAuditPlugin):
             # Only spawn a thread if the mutant has a modified variable
             # that has no reported bugs in the kb
             if self._hasNoBug( 'xss' , 'xss', mutant.getURL() , mutant.getVar() ):
-                
-                targs = (mutant,)
-                self._tm.startFunction( target=self._sendMutant, args=targs, ownerObj=self )
-                
-        self._tm.join( self )
+
+                self._sendMutant(mutant)
+                # Replace the below with the above
+                # targs = (mutant,)
+                # self._tm.startFunction( target=self._sendMutant, args=targs, ownerObj=self )
     
     def _get_allowed_chars(self, mutant):
         '''
@@ -201,10 +205,11 @@ class xss(baseAuditPlugin):
                     mutant.affected_browsers = affected_browsers
 
         for mutant in mutant_list:
-            targs = (mutant,)
-            self._tm.startFunction( target=self._sendMutant, args=targs, ownerObj=self )
+            self._sendMutant(mutant)
+            # targs = (mutant,)
+            # self._tm.startFunction( target=self._sendMutant, args=targs, ownerObj=self )
             
-        self._tm.join( self )
+        # self._tm.join( self )
         
     def _get_xss_tests( self ):
         '''
@@ -358,7 +363,7 @@ class xss(baseAuditPlugin):
                     v.setDesc( msg )
                     v.addToHighlight( mutant.getModValue() )
 
-                    kb.kb.append( self, 'xss', v )
+                    kb.append( self, 'xss', v )
     
     def _checkHTML( self, xss_string , response ):
         '''
@@ -409,7 +414,7 @@ class xss(baseAuditPlugin):
         
         @return: None, vulns are saved to the kb.
         '''
-        self._tm.join( self )
+        # self._tm.join( self )
         if self._check_stored_xss:
             for fuzzable_request in self._fuzzableRequests:
                 response = self._sendMutant(fuzzable_request, analyze=False,
@@ -438,10 +443,10 @@ class xss(baseAuditPlugin):
                         v.setDesc( msg )
                         v.setId( [response.id, mutant_response_id] )
                         v.addToHighlight( mutant.getModValue() )
-                        kb.kb.append( self, 'xss', v )
+                        kb.append( self, 'xss', v )
                         break
         
-        self.printUniq( kb.kb.getData( 'xss', 'xss' ), 'VAR' )
+        self.printUniq( kb.getData( 'xss', 'xss' ), 'VAR' )
 
     def getLongDesc( self ):
         '''

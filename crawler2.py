@@ -9,6 +9,7 @@ import itertools
 import logging
 import math
 import os
+import os.path
 import output
 import pdb
 import pydot
@@ -49,6 +50,17 @@ from target import Target, PageTarget, ReqTarget, FormTarget
 from abstract_map import AbstractMap
 from pair_counter import PairCounter
 from classifier import Classifier
+
+
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "audit"))
+
+print sys.path
+
+audit_plugins_names = ['xss']
+audit_plugins = map((lambda x:(__import__(x), x)), audit_plugins_names)
+
+from plugin_wrapper import plugin_wrapper
+import knowledgeBase as kb
 
 
 LAST_REQUEST_BOOST=0.1
@@ -1834,63 +1846,23 @@ class Engine(object):
                 except PageMergeException:
                     self.logger.info("need to recompute graph")
                     sinceclustered = 0
-                    pc = PageClusterer(cr.headreqresp)
-                    ag = AppGraphGenerator(cr.headreqresp, pc.getAbstractPages(),
-                            statechangescores, self.formfiller, cr)
-                    maxstate = ag.generateAppGraph()
-                    self.state = ag.reduceStates()
-                    ag.markChangingState()
-                    def check(x):
-                        l = list(x)
-                        v = reduce(lambda a, b: (a[0] + b[0], (a[1] + b[1])), l, (0, 0))
-                        v = (v[0], v[1]/2.0)
-                        return v
-                    statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=check)
-                    rr = cr.headreqresp
-                    while rr:
-                        changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
-                        statechangescores.setapplypathvalue([rr.request.method] + list(rr.request.urlvector),
-                                (1, changing), lambda x: (x[0] + 1, x[1] + changing))
-                        rr.request.state = -1
-                        rr.response.page.state = -1
-                        rr = rr.next
-
-                    ag.fillMissingRequests()
-
-                    self.pc = pc
-                    self.ag = ag
-
-                    for ap in self.ag.abspages:
-                        for al in ap.abslinks:
-                            if isinstance(al, AbstractForm):
-                                continue
-                            tgts = frozenset(t.target
-                                    for t in al.targets.itervalues())
-                            for s, t in al.targets.iteritems():
-                                assert s == t.transition, (ap, al, s, t)
-                                assert (s in t.target.targets or
-                                        t.nvisits == 0), \
-                                       (ap, al, s, t.target,
-                                               t.target.targets)
+                    statechangescores = self.cluster_everything(statechangescores)
 
                 self.num_requests += 1
 
                 if write_ar_test:
-                    ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(ag.absrequests), len([ar for ar in ag.absrequests if ar.request_actually_made()]), len(pc.getAbstractPages())))
+                    ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(self.ag.absrequests), len([ar for ar in self.ag.absrequests if ar.request_actually_made()]), len(self.pc.getAbstractPages())))
                     ar_through_time.flush()
+
+                ar_seen = len([ar for ar in self.ag.absrequests if ar.request_actually_made()])
+
+                if ar_seen != self.last_ar_seen:
+                    self.last_ar_seen = ar_seen
+                    self.since_last_ar_change = 0
+                else:
+                    self.since_last_ar_change += 1
                 
-                if sinceclustered == 0:
-                    ar_seen = len([ar for ar in ag.absrequests if ar.request_actually_made()])
-
-                    if ar_seen != self.last_ar_seen:
-                        self.last_ar_seen = ar_seen
-                        self.since_last_ar_change = 0
-                        self.num_last_update = self.num_requests
-                    else:
-                        self.since_last_ar_change += (self.num_requests - self.num_last_update)
-                        self.num_last_update = self.num_requests
-
-                self.last_ap_pages = len(pc.getAbstractPages())
+                self.last_ap_pages = len(self.pc.getAbstractPages())
                 
                 nextAction = self.getNextAction(reqresp)
                 assert nextAction
@@ -1899,6 +1871,95 @@ class Engine(object):
                     return
                 if write_state_graph and self.num_requests % 100 == 0:
                     self.writeStateDot()
+
+        # Done with crawling the website, time to fuzz.
+            
+        # First, check to see if we've clustered
+        if sinceclustered != 0:
+            # If not, cluster (for the last time)
+            statechangescores = self.cluster_everything(statechangescores)
+
+        # Init the plugin_wrappers
+        plugins = [plugin_wrapper(getattr(ap,name)) for ap, name in audit_plugins]
+                    
+        # Go through the requests and uniquely fuzz them
+
+        cur_reqresp = self.cr.headreqresp
+        while cur_reqresp:
+            for plugin in plugins:
+                try:
+                    p = plugin.audit(cur_reqresp.request)
+                    new_req = p.next()
+
+                    while True:
+                        response = self.send_fuzzing_request(new_req)
+
+                        if self.changed_state():
+                            self.put_back_to_previous_state()
+
+                        new_req = p.send(response)
+                        
+                except StopIteration:
+                    pass
+
+            cur_reqresp = cur_reqresp.next
+
+        for plugin in plugins:
+            plugin.stop()
+
+    def send_fuzzing_request(self, new_req):
+        # Make the request and return a new response
+        htmlunit_page = self.cr.webclient.getPage(new_req.webrequest)
+        page = Page(htmlunit_page, initial_url=self.cr.initial_url, webclient=self.cr.webclient)
+        webresponse = htmlunit_page.getWebResponse()
+        response = Response(webresponse, page=page)
+        reqresp = RequestResponse(new_req, response)
+
+        new_req.reqresp = reqresp
+        page.reqresp = reqresp
+
+        return response
+
+        
+
+    def changed_state(self):
+        # return true if the state has changed
+        return False
+
+    def put_back_to_previous_state(self):
+        # Put the application back into the previous state
+        pass
+
+    def cluster_everything(self, statechangescores):
+        pc = PageClusterer(self.cr.headreqresp)
+        ag = AppGraphGenerator(self.cr.headreqresp, pc.getAbstractPages(),
+                               statechangescores, self.formfiller, self.cr)
+        global maxstate
+        maxstate = ag.generateAppGraph()
+        self.state = ag.reduceStates()
+        ag.markChangingState()
+        def check(x):
+            l = list(x)
+            v = reduce(lambda a, b: (a[0] + b[0], (a[1] + b[1])), l, (0, 0))
+            v = (v[0], v[1]/2.0)
+            return v
+        statechangescores = RecursiveDict(nleavesfunc=lambda x: x, nleavesaggregator=check)
+        rr = self.cr.headreqresp
+        while rr:
+            changing = 1 if rr.request.reducedstate != rr.response.page.reducedstate else 0
+            statechangescores.setapplypathvalue([rr.request.method] + list(rr.request.urlvector),
+                                                (1, changing), lambda x: (x[0] + 1, x[1] + changing))
+            rr.request.state = -1
+            rr.response.page.state = -1
+            rr = rr.next
+            
+        ag.fillMissingRequests()
+            
+        self.pc = pc
+        self.ag = ag
+        return statechangescores
+
+
 
     def writeDot(self):
         if not self.ag:
@@ -2069,6 +2130,8 @@ if __name__ == "__main__":
             pdb.post_mortem()
     finally:
         pass
+    print kb.kb.getAllVulns()
+    sys.exit(0)
 
 
 # vim:sw=4:et:
