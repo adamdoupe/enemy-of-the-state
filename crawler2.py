@@ -21,6 +21,8 @@ import sys
 import traceback
 import urlparse
 import utils
+import subprocess
+import time
 
 # Imports that we wrote
 from utils import all_same, median, DebugDict, CustomDict
@@ -56,7 +58,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "audit
 
 print sys.path
 
-audit_plugins_names = ['xss']
+audit_plugins_names = ['xss', 'sqli', 'remoteFileInclude', 'osCommanding', 'localFileInclude', 'eval', 'blindSqli']
 audit_plugins = map((lambda x:(__import__(x), x)), audit_plugins_names)
 
 from plugin_wrapper import plugin_wrapper
@@ -1139,9 +1141,9 @@ class Crawler(object):
             assert submitter.name or submitter.value
             isubmitter = None
             for i in isubmitters:
-                if (submitter.name and i.getAttribute("name") == submitter.name) \
+                if (submitter.name and i.getAttribute("name").encode('ascii', 'ignore') == submitter.name) \
                         or (not submitter.name and
-                            i.getAttribute("value") == submitter.value):
+                            i.getAttribute("value").encode('ascii', 'ignore') == submitter.value):
                     assert isubmitter is None
                     isubmitter = i
             assert isubmitter
@@ -1353,7 +1355,7 @@ class Engine(object):
 
     Actions = Constants("ANCHOR", "FORM", "REDIRECT", "DONE", "RANDOM")
 
-    def __init__(self, formfiller=None, dumpdir=None):
+    def __init__(self, formfiller=None, dumpdir=None, command_to_reset=None):
         self.requests = 0
         self.logger = logging.getLogger(self.__class__.__name__)
         self.state = -1
@@ -1366,6 +1368,7 @@ class Engine(object):
         self.last_ar_seen = -1
         self.since_last_ar_change = 0
         self.last_ap_pages = 1
+        self.command_to_reset = command_to_reset
 
         self.COUNTER = 1
 
@@ -1873,62 +1876,162 @@ class Engine(object):
                     self.writeStateDot()
 
         # Done with crawling the website, time to fuzz.
+        # Now, don't throw an exception when we fail
+        self.cr.webclient.setThrowExceptionOnFailingStatusCode(False);
             
-        # First, check to see if we've clustered
-        if sinceclustered != 0:
-            # If not, cluster (for the last time)
-            statechangescores = self.cluster_everything(statechangescores)
+        # cluster (for the last time)
+        statechangescores = self.cluster_everything(statechangescores)
 
         # Init the plugin_wrappers
         plugins = [plugin_wrapper(getattr(ap,name)) for ap, name in audit_plugins]
                     
         # Go through the requests and uniquely fuzz them
+        self.reset_web_application()
+        requests_states_already_fuzzed = set()
+        try:
+            cur_reqresp = self.cr.headreqresp
+            while cur_reqresp:
+                cur_state = cur_reqresp.request.reducedstate
+                if not (cur_reqresp.request.signature_vector, cur_state) in requests_states_already_fuzzed:
+                    need_to_check_state = self.is_state_changing_reqresp(cur_reqresp)
+                    print "FUZZING", (cur_reqresp.request.signature_vector, cur_state)
+                    for plugin in plugins:
+                        try:
+                            p = plugin.audit(cur_reqresp.request)
+                            new_req = p.next()
+                            
+                            while True:
+                                response = self.send_fuzzing_request(new_req)
+                                
+                                if need_to_check_state:
+                                    state_revealing_reqresp = self.get_state_revealing_reqresp(cur_reqresp)
+                                    if state_revealing_reqresp:
+                                        state_revealing_response = self.send_fuzzing_request(state_revealing_reqresp.request)
+                                        same_page_clusters = self.pc.classif.get_object(state_revealing_response.page.reqresp)
+                                        if same_page_clusters:
+                                            states_maps_to = set(reqresp.response.page.reducedstate for reqresp in same_page_clusters)
+                                            if cur_state in states_maps_to:
+                                                print "haven't changed state, we're OK"
+                                                pass
+                                            else:
+                                                print "we accidentially changed the state while fuzzing"
+                                                # We changed state with the last request, time to reset
+                                                # Try to find a request to bring us back
+                                                request_to_change_back = self.get_request_to_change_state(cur_reqresp, cur_state)
+                                                if request_to_change_back:
+                                                    # make the request
+                                                    self.send_fuzzing_request(request_to_change_back)
 
-        cur_reqresp = self.cr.headreqresp
-        while cur_reqresp:
+                                                    # check the state revealing page                                         
+                                                    state_revealing_response = self.send_fuzzing_request(state_revealing_reqresp.request)
+                                                    same_page_clusters = self.pc.classif.get_object(state_revealing_response.page.reqresp)
+                                                    if same_page_clusters:
+                                                        states_maps_to = set(reqresp.response.page.reducedstate for reqresp in same_page_clusters)
+                                                        if cur_state in states_maps_to:
+                                                            print "Back in the correct state!"
+                                                            pass
+                                                        else:
+                                                            print "request_to_change_back didn't take us back. Reset everything"
+                                                            self.reset_until(cur_reqresp)
+                                                    else:
+                                                        print "After sending the changing state the state revealing page is brand new"
+                                                        self.reset_until(cur_reqresp)
+                                                else:
+                                                    print "No request to put us back in the state, reset"
+                                                    self.reset_until(cur_reqresp)
+                                                    
+                                        else:
+                                            print "We're in a strange place, the request didn't go anywhere"
+                                            self.reset_until(cur_reqresp)
+                                    else:
+                                        need_to_check_state = False
+
+                                # need to check that the new_req is on the response page
+                                
+                                new_req = p.send(response)
+                                
+                        except StopIteration:
+                            pass
+                else:
+                    print "SKIPPING", 
+                requests_states_already_fuzzed.add((cur_reqresp.request.signature_vector, cur_state))
+
+                # Make the actual request
+                self.send_fuzzing_request(cur_reqresp.request)
+                cur_reqresp = cur_reqresp.next
+
+        finally:
             for plugin in plugins:
-                try:
-                    p = plugin.audit(cur_reqresp.request)
-                    new_req = p.next()
+                plugin.stop()
 
-                    while True:
-                        response = self.send_fuzzing_request(new_req)
+    def get_request_to_change_state(self, reqresp, target_state):
+        cur_state = reqresp.response.page.reducedstate
+        reqresp = reqresp.next
+        toReturn = None
+        while reqresp:
+            if reqresp.request.reducedstate == cur_state and reqresp.response.page.reducedstate == target_state:
+                toReturn = reqresp.request
+                break
+            reqresp = reqresp.next
 
-                        if self.changed_state():
-                            self.put_back_to_previous_state()
 
-                        new_req = p.send(response)
-                        
-                except StopIteration:
-                    pass
+        return toReturn
 
+            
+
+    def reset_until(self, reqresp):
+        self.reset_web_application()
+        cur_reqresp = self.cr.headreqresp
+        while cur_reqresp != reqresp:
+            self.send_fuzzing_request(cur_reqresp.request)
             cur_reqresp = cur_reqresp.next
 
-        for plugin in plugins:
-            plugin.stop()
+    def get_state_revealing_reqresp(self, reqresp):
+        toReturn = None
+        while reqresp:
+            if reqresp.request.statehint:
+                toReturn = reqresp
+                break
+            reqresp = reqresp.next
+        return toReturn
+
+    def is_state_changing_reqresp(self, reqresp):
+        return reqresp.request.changingstate
+
+    def reset_web_application(self):
+        print "resetting the web application"
+        if self.command_to_reset:
+            result = self.run_command(self.command_to_reset)
+            print result[0]
+            print result[1]
+
+    def run_command(self, command):
+        return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True).communicate()
 
     def send_fuzzing_request(self, new_req):
         # Make the request and return a new response
-        htmlunit_page = self.cr.webclient.getPage(new_req.webrequest)
-        page = Page(htmlunit_page, initial_url=self.cr.initial_url, webclient=self.cr.webclient)
-        webresponse = htmlunit_page.getWebResponse()
+        start_time = time.time()
+        generic_page = self.cr.webclient.getPage(new_req.webrequest)
+        htmlpage = None
+        try:
+            htmlpage = htmlunit.HtmlPage.cast_(generic_page)
+        except:
+            pass
+        if htmlpage:
+            page = Page(htmlpage, initial_url=self.cr.initial_url, webclient=self.cr.webclient)
+        else:
+            page = Page(generic_page.getWebResponse(), error=True, initial_url=self.cr.initial_url, webclient=self.cr.webclient)
+            
+        webresponse = generic_page.getWebResponse()
+
         response = Response(webresponse, page=page)
+        response.time = time.time()-start_time
         reqresp = RequestResponse(new_req, response)
 
         new_req.reqresp = reqresp
         page.reqresp = reqresp
 
         return response
-
-        
-
-    def changed_state(self):
-        # return true if the state has changed
-        return False
-
-    def put_back_to_previous_state(self):
-        # Put the application back into the previous state
-        pass
 
     def cluster_everything(self, statechangescores):
         pc = PageClusterer(self.cr.headreqresp)
@@ -2076,7 +2179,7 @@ def writeColorableStateGraph(allstates, differentpairs):
         f.write(dot.to_string())
 
 if __name__ == "__main__":
-    optslist, args = getopt.getopt(sys.argv[1:], "l:d:saD")
+    optslist, args = getopt.getopt(sys.argv[1:], "l:d:R:Dsa")
     opts = dict(optslist) if optslist else {}
 
     level = logging.INFO
@@ -2089,8 +2192,14 @@ if __name__ == "__main__":
     except KeyError:
         logging.basicConfig(level=level)
 
+    command_to_reset = None
+    if opts.has_key('-R'):
+        command_to_reset = opts['-R']
+
+    print "COMMAND", command_to_reset
+
     write_ar_test = opts.has_key('-a')
-    write_state_graph = opts.has_key('-s')    
+    write_state_graph = opts.has_key('-s')
 
     dumpdir = None
     try:
@@ -2121,7 +2230,7 @@ if __name__ == "__main__":
     ff.add_named_params(["email", "mail", "User/Email"], "adoupe@cs.ucsb.edu")
     ff.add_named_params(["url"], "http://example.com/")
     ff.add_named_params(["hpt"], "")
-    e = Engine(ff, dumpdir)
+    e = Engine(ff, dumpdir, command_to_reset)
     try:
         e.main(args, write_state_graph, write_ar_test)
     except:

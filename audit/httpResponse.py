@@ -284,7 +284,11 @@ class httpResponse(object):
                     
                     # Use the default
                     charset = DEFAULT_CHARSET
-                    unicode_str = body.decode(charset, 'returnEscapedChar')
+                    unicode_str = body.encode('ascii', 'ignore').decode(charset, 'returnEscapedChar')
+                except UnicodeEncodeError:
+                    # Use the default
+                    charset = DEFAULT_CHARSET
+                    unicode_str = body.encode('ascii', 'ignore').decode(charset, 'returnEscapedChar')
                
                 # Now we use the unicode_str to create a utf-8 string that will be used in all w3af
                 self._body = unicode_str.encode('utf-8')

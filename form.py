@@ -52,8 +52,8 @@ class Form(Link):
         tag = e.getTagName().upper()
         if tag == FormField.Tag.INPUT:
             etype = e.getAttribute('type').lower()
-            name = e.getAttribute('name')
-            value = e.getAttribute('value')
+            name = e.getAttribute('name').encode('ascii', 'ignore')
+            value = e.getAttribute('value').encode('ascii', 'ignore')
             if etype == "hidden":
                 type = FormField.Type.HIDDEN
             elif etype == "text":
@@ -74,14 +74,14 @@ class Form(Link):
                 type = FormField.Type.OTHER
         elif tag == FormField.Tag.TEXTAREA:
             type = None
-            name = e.getAttribute('name')
+            name = e.getAttribute('name').encode('ascii', 'ignore')
             textarea = htmlunit.HtmlTextArea.cast_(e)
             value = textarea.getText()
         elif tag == FormField.Tag.BUTTON and \
                 e.getAttribute('type').upper() == FormField.Type.SUBMIT:
             type = FormField.Type.SUBMIT
-            name = e.getAttribute('name')
-            value = e.getAttribute('value')
+            name = e.getAttribute('name').encode('ascii', 'ignore')
+            value = e.getAttribute('value').encode('ascii', 'ignore')
         else:
             raise RuntimeError("unexpcted form field tag %s" % tag)
 

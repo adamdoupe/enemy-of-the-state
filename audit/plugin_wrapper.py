@@ -80,7 +80,7 @@ def mutant_to_request(mutant):
     if data:
         v = htmlunit.Vector()
         for data_name, data_value in data.iteritems():
-            name_value_pair = htmlunit.NameValuePair(data_name, data_value[0])
+            name_value_pair = htmlunit.NameValuePair(data_name, str(data_value[0]))
             v.add(name_value_pair)
         webrequest.setRequestParameters(v)    
 
@@ -133,5 +133,5 @@ def response_to_w3af_response(response):
         value = nv.getValue()
         headers[name] = value
     
-    w3af_response = httpResponse(code, actual_data, headers, request_url, request_url)
+    w3af_response = httpResponse(code, actual_data, headers, request_url, request_url, time=response.time)
     return w3af_response
