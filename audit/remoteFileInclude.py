@@ -19,8 +19,6 @@ along with w3af; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 '''
-from __future__ import with_statement
-
 import outputManager as om
 
 from baseAuditPlugin import baseAuditPlugin
@@ -40,8 +38,6 @@ import w3afPorts as w3afPorts
 
 import os
 import socket
-
-kb=kb.kb
 
 CONFIG_ERROR_MSG = 'audit.remoteFileInclude plugin has to be correctly ' \
 'configured to use. Please set the correct values for local address and ' \
@@ -101,7 +97,7 @@ class remoteFileInclude(baseAuditPlugin):
         listen_port = self._listen_port
         
         if listen_address and listen_port:
-            with self._plugin_lock:
+            if True:
                 # If we have an active instance then we're OK!
                 if webserver.is_running(listen_address, 
                                                self._listen_port):
@@ -201,7 +197,7 @@ class remoteFileInclude(baseAuditPlugin):
         #   vulnerability only once, and by only adding the "if self._hasNoBug" statement, that
         #   could not be done.
         #
-        with self._plugin_lock:
+        if True:
             
             #
             #   I will only report the vulnerability once.

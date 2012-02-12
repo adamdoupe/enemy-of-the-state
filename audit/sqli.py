@@ -19,8 +19,6 @@ along with w3af; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 '''
-from __future__ import with_statement
-
 import outputManager as om
 
 from baseAuditPlugin import baseAuditPlugin
@@ -33,8 +31,6 @@ import vuln as vuln
 import severity as severity
 
 import re
-
-kb=kb.kb
 
 class sqli(baseAuditPlugin):
     '''
@@ -77,7 +73,7 @@ class sqli(baseAuditPlugin):
         #   vulnerability only once, and by only adding the "if self._hasNoBug" statement, that
         #   could not be done.
         #
-        with self._plugin_lock:
+        if True:
             
             #
             #   I will only report the vulnerability once.

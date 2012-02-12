@@ -19,8 +19,6 @@ along with w3af; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 '''
-from __future__ import with_statement
-
 
 from baseAuditPlugin import baseAuditPlugin
 from fuzzer import createMutants, createRandAlNum
@@ -238,6 +236,8 @@ class xss(baseAuditPlugin):
         # sensitive function (if 'script' in user_input...
         # if 'SCRIPT' in user_input)
         xss_tests.append(('<SCrIPT>alert("RANDOMIZE")</SCrIPT>', [browsers.ALL, ]))
+
+        xss_tests.append(('<a href="blah" onmouseover=alert("RANDOMIZE")>blah</a>', [browsers.ALL, ]))
         
         # No quotes, with tag
         xss_tests.append(("<ScRIPT>a=/RANDOMIZE/\nalert(a.source)</SCRiPT>", [browsers.ALL, ]))
@@ -329,7 +329,7 @@ class xss(baseAuditPlugin):
         #   vulnerability only once, and by only adding the "if self._hasNoBug" statement, that
         #   could not be done.
         #
-        with self._plugin_lock:
+        if True:
             
             #
             #   I will only report the XSS vulnerability once.

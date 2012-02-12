@@ -77,7 +77,8 @@ RUNNING_AVG_SIZE = 10
 
 # running htmlunit via JCC will override the signal handlers, so make sure the
 # SIGINT handler is set after starting htmlunit
-htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true')
+#htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true', initialheap='2024m', maxheap='10216m')
+htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true', initialheap='512m', maxheap='2024m')
 
 wanttoexit = False
 
@@ -966,13 +967,16 @@ class Crawler(object):
         assert self.dumpdir
         basedir = "%s/%d" % (self.dumpdir, reqresp.instance)
         os.mkdir(basedir)
-        with open("%s/request" % basedir, "w") as f:
-            f.write(reqresp.request.dump.encode('utf8'))
-        with open("%s/response" % basedir, "w") as f:
-            f.write(reqresp.response.content.encode('utf8'))
+        f = open("%s/request" % basedir, "w")
+        f.write(reqresp.request.dump.encode('utf8'))
+        f.close()
+        f = open("%s/response" % basedir, "w")
+        f.write(reqresp.response.content.encode('utf8'))
+        f.close()
         if reqresp.response.page.isHtmlPage:
-            with open("%s/page" % basedir, "w") as f:
-                f.write(reqresp.response.page.content.encode('utf8'))
+            f = open("%s/page" % basedir, "w")
+            f.write(reqresp.response.page.content.encode('utf8'))
+            f.close()
 
     def open(self, url):
         del self.refresh_urls[:]
@@ -1499,9 +1503,11 @@ class Engine(object):
         # divide othernvisits by 3, so it weights less and for the first 3
         # visists it is 1
         othernvisits = int(math.ceil(othernvisits/3.0))
+        
+        # other_link_visits = sum(i.nvisits for i in link.targets.itervalues())
+        # other_link_visits = int(math.ceil(other_link_visits/3.0))
 
-        other_link_visits = sum(i.nvisits for i in link.targets.itervalues())
-        other_link_visits = int(math.ceil(other_link_visits/3.0))
+        other_link_visits = 0
 
         dist = linkweigh(link, nvisits, othernvisits, other_link_visits, statechange)
 
@@ -1535,9 +1541,9 @@ class Engine(object):
             newdist = dist
         heapq.heappush(candidates, Candidate(priority, newdist, path, self.getCounter()))
 
-    def findPathToUnvisited(self, startpage, startstate, recentlyseen):
+    def findPathToUnvisited(self, startreqresp, startstate, recentlyseen):
         # recentlyseen is the set of requests done since last state change
-        heads = [(Dist(), startpage, startstate, [])]
+        heads = [(Dist(), startreqresp.response.page.abspage, startstate, [])]
         seen = set()
         candidates = []
         while heads:
@@ -1549,7 +1555,6 @@ class Engine(object):
             for idx, link in head.abslinks.iteritems():
                 if link.skip:
                     continue
-                newpath = [PathStep(head, idx, state)] + headpath
                 if state in link.targets:
                     linktgt = link.targets[state]
                     if isinstance(linktgt, FormTarget):
@@ -1558,12 +1563,11 @@ class Engine(object):
                         nextabsrequests = [(None, linktgt.target)]
                     for formparams, nextabsreq in nextabsrequests:
                         # Check to see if this next abstract request is the same 
-                        # abstract request that was made previously
-                        prevreqresps = head.statereqrespsmap[state]
+                        # abstract request that was made previously. Only if its the start page
+
                         if nextabsreq.request_actually_made():
-                            for prevreqresp in prevreqresps:
-                                if nextabsreq == prevreqresp.request.absrequest:
-                                    continue
+                            if (not headpath) and nextabsreq == startreqresp.request.absrequest:
+                                continue
 
                         if state == startstate and nextabsreq.statehints and \
                                 not nextabsreq.changingstate and \
@@ -1592,6 +1596,7 @@ class Engine(object):
                             continue
                         formidx = LinkIdx(idx.type, idx.path, formparams)
                         newdist = dist + self.linkcost(head, formidx, link, state)
+                        newpath = [PathStep(head, formidx, state)] + headpath                
                         heapq.heappush(heads, (newdist, tgt.target, tgt.transition, newpath))
                 else:
                     if not unvlinks_added:
@@ -1696,7 +1701,7 @@ class Engine(object):
                 if found:
                     break
                 rr = rr.prev
-            path, nvisited = self.findPathToUnvisited(reqresp.response.page.abspage, self.state, recentlyseen)
+            path, nvisited = self.findPathToUnvisited(reqresp, self.state, recentlyseen)
             if self.ag:
                 # the running average history will be reset at envery discovery
                 # of new abstract pages
@@ -1743,7 +1748,7 @@ class Engine(object):
         """
         c = 2
 
-        return self.since_last_ar_change <= (c * self.last_ap_pages)
+        return (self.since_last_ar_change <= (c * self.last_ap_pages)) and (self.num_requests < 1800)
 
     def submitForm(self, form, params):
         if params is None:
@@ -1788,7 +1793,7 @@ class Engine(object):
 
         return newstate
 
-    def main(self, urls, write_state_graph = False, write_ar_test = False):
+    def main(self, urls, write_state_graph = False, write_ar_test = False, fuzz=True):
         
         ar_through_time = None
         if write_ar_test:
@@ -1852,7 +1857,7 @@ class Engine(object):
                     statechangescores = self.cluster_everything(statechangescores)
 
                 self.num_requests += 1
-
+                
                 if write_ar_test:
                     ar_through_time.write("%d %d %d %d\n" % (self.num_requests, len(self.ag.absrequests), len([ar for ar in self.ag.absrequests if ar.request_actually_made()]), len(self.pc.getAbstractPages())))
                     ar_through_time.flush()
@@ -1875,16 +1880,31 @@ class Engine(object):
                 if write_state_graph and self.num_requests % 100 == 0:
                     self.writeStateDot()
 
-        # Done with crawling the website, time to fuzz.
-        # Now, don't throw an exception when we fail
-        self.cr.webclient.setThrowExceptionOnFailingStatusCode(False);
-            
         # cluster (for the last time)
         statechangescores = self.cluster_everything(statechangescores)
+        self.writeStateDot()
+
+        if not fuzz:
+            return
 
         # Init the plugin_wrappers
         plugins = [plugin_wrapper(getattr(ap,name)) for ap, name in audit_plugins]
-                    
+
+        self.fuzzing_web_client = htmlunit.WebClient()
+        self.fuzzing_web_client.setThrowExceptionOnScriptError(False);
+
+        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(True);
+        self.fuzzing_web_client.setUseInsecureSSL(True)
+        self.fuzzing_web_client.setRedirectEnabled(False)
+        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(False);
+
+        # WE'RE GOING TO FUCKING TEST THE SHIT OUT OF THIS MEMORY LEAK
+        last_request = reqresp
+
+        while True:
+            self.reset_until(last_request)
+
+
         # Go through the requests and uniquely fuzz them
         self.reset_web_application()
         requests_states_already_fuzzed = set()
@@ -1977,9 +1997,19 @@ class Engine(object):
 
         return toReturn
 
-            
-
     def reset_until(self, reqresp):
+        
+        self.fuzzing_web_client.closeAllWindows()
+
+
+        self.fuzzing_web_client = htmlunit.WebClient()
+        self.fuzzing_web_client.setThrowExceptionOnScriptError(False)
+
+        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(True)
+        self.fuzzing_web_client.setUseInsecureSSL(True)
+        self.fuzzing_web_client.setRedirectEnabled(False)
+        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(False)
+
         self.reset_web_application()
         cur_reqresp = self.cr.headreqresp
         while cur_reqresp != reqresp:
@@ -2011,16 +2041,16 @@ class Engine(object):
     def send_fuzzing_request(self, new_req):
         # Make the request and return a new response
         start_time = time.time()
-        generic_page = self.cr.webclient.getPage(new_req.webrequest)
+        generic_page = self.fuzzing_web_client.getPage(new_req.webrequest)
         htmlpage = None
         try:
             htmlpage = htmlunit.HtmlPage.cast_(generic_page)
         except:
             pass
         if htmlpage:
-            page = Page(htmlpage, initial_url=self.cr.initial_url, webclient=self.cr.webclient)
+            page = Page(htmlpage, initial_url=self.cr.initial_url, webclient=self.fuzzing_web_client)
         else:
-            page = Page(generic_page.getWebResponse(), error=True, initial_url=self.cr.initial_url, webclient=self.cr.webclient)
+            page = Page(generic_page.getWebResponse(), error=True, initial_url=self.cr.initial_url, webclient=self.fuzzing_web_client)
             
         webresponse = generic_page.getWebResponse()
 
@@ -2126,8 +2156,9 @@ class Engine(object):
                 edge.set_color("blue")
 
         dot.write_ps('graph.ps')
-        with open('graph.dot', 'w') as f:
-            f.write(dot.to_string())
+        f = open('graph.dot', 'w')
+        f.write(dot.to_string())
+        f.close()
 
     def writeStateDot(self):
         if not self.ag:
@@ -2156,8 +2187,9 @@ class Engine(object):
             dot.add_node(n)
 
         dot.write_ps('stategraph.ps')
-        with open('stategraph.dot', 'w') as f:
-            f.write(dot.to_string())
+        f = open('stategraph.dot', 'w')
+        f.write(dot.to_string())
+        f.close()
 
 
 def writeColorableStateGraph(allstates, differentpairs):
@@ -2175,11 +2207,12 @@ def writeColorableStateGraph(allstates, differentpairs):
         dot.add_edge(edge)
 
     dot.write_ps('colorablestategraph.ps')
-    with open('colorablestategraph.dot', 'w') as f:
-        f.write(dot.to_string())
+    f = open('colorablestategraph.dot', 'w')
+    f.write(dot.to_string())
+    f.close()
 
 if __name__ == "__main__":
-    optslist, args = getopt.getopt(sys.argv[1:], "l:d:R:Dsa")
+    optslist, args = getopt.getopt(sys.argv[1:], "l:d:R:DsaF")
     opts = dict(optslist) if optslist else {}
 
     level = logging.INFO
@@ -2200,6 +2233,8 @@ if __name__ == "__main__":
 
     write_ar_test = opts.has_key('-a')
     write_state_graph = opts.has_key('-s')
+
+    fuzz = not opts.has_key('-F')
 
     dumpdir = None
     try:
@@ -2232,7 +2267,7 @@ if __name__ == "__main__":
     ff.add_named_params(["hpt"], "")
     e = Engine(ff, dumpdir, command_to_reset)
     try:
-        e.main(args, write_state_graph, write_ar_test)
+        e.main(args, write_state_graph, write_ar_test, fuzz)
     except:
         traceback.print_exc()
         if level == logging.DEBUG:

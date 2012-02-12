@@ -19,7 +19,6 @@ along with w3af; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 '''
-from __future__ import with_statement
 
 from w3afException import w3afException
 import threading
@@ -50,7 +49,7 @@ class knowledgeBase:
         else:
             name = callingInstance.getName()
         
-        with self._kb_lock:
+        if True:
             if name not in self._kb.keys():
                 self._kb[ name ] = {variableName: value}
             else:
@@ -65,7 +64,7 @@ class knowledgeBase:
         else:
             name = callingInstance.getName()
         
-        with self._kb_lock:
+        if True:
             if name not in self._kb.keys():
                 self._kb[ name ] = {variableName:[value,]}
             else:
@@ -93,7 +92,7 @@ class knowledgeBase:
             
         res = []
         
-        with self._kb_lock:
+        if True:
             if name not in self._kb.keys():
                 res = []
             else:
@@ -112,7 +111,7 @@ class knowledgeBase:
         '''
         res = []
         
-        with self._kb_lock:
+        if True:
             for pluginName in self._kb:
                 for savedName in self._kb[ pluginName ]:
                     if isinstance( self._kb[ pluginName ][ savedName ], list ):
@@ -147,7 +146,7 @@ class knowledgeBase:
         '''
         Cleanup internal data.
         '''
-        with self._kb_lock:
+        if True:
             self._kb.clear()
         
 kb = knowledgeBase()

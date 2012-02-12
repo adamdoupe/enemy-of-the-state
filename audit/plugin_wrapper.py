@@ -80,7 +80,14 @@ def mutant_to_request(mutant):
     if data:
         v = htmlunit.Vector()
         for data_name, data_value in data.iteritems():
-            name_value_pair = htmlunit.NameValuePair(data_name, str(data_value[0]))
+            data = data_value[0]
+            if isinstance(data, str):
+                pass
+            elif isinstance(data, unicode):
+                data = data.encode('ascii', 'ignore')
+            else:
+                data = str(data)
+            name_value_pair = htmlunit.NameValuePair(data_name, data)
             v.add(name_value_pair)
         webrequest.setRequestParameters(v)    
 
