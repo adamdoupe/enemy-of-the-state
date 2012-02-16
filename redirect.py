@@ -1,4 +1,5 @@
-import htmlunit
+import com.gargoylesoftware.htmlunit as htmlunit
+import java
 
 from lazyproperty import lazyproperty
 from ignore_urls import filterIgnoreUrlParts
@@ -18,7 +19,7 @@ class Redirect(Link):
 
     @property
     def linkvector(self):
-        return urlvector(htmlunit.URL(self.reqresp.request.webrequest.getUrl(), self.location))
+        return urlvector(java.net.URL(self.reqresp.request.webrequest.getUrl(), self.location))
 
     @lazyproperty
     def dompath(self):

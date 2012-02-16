@@ -1,4 +1,4 @@
-import htmlunit
+import com.gargoylesoftware.htmlunit as htmlunit
 
 from ignore_urls import filterIgnoreUrlParts
 from lazyproperty import lazyproperty
@@ -100,7 +100,7 @@ class Request(object):
         lines = []
         lines.append(self.method + " " + self.fullpathref)
         for h in self.webrequest.getAdditionalHeaders().entrySet():
-            me = htmlunit.Map.Entry.cast_(h)
+            me = h
             lines.append("%s: %s" % (me.key, me.value))
         body = self.webrequest.getRequestBody()
         if body:

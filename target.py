@@ -63,12 +63,12 @@ class FormTarget(Target):
         Target.__init__(self, target, transition, nvisits)
         self._target = FormTarget.Dict(self, target)
 
-    @property
-    def target(self):
+    def get_target(self):
         return self._target
 
-    @target.setter
-    def target(self, target):
+    def set_target(self, target):
         assert isinstance(target, dict)
         self._target = FormTarget.Dict(self, target)
+
+    target = property(get_target, set_target)
 

@@ -1,4 +1,4 @@
-import urlparse
+from cgi import parse_qs
 
 def urlvector(request):
     """ /path/to/path.html?p1=v1&p2=v2
@@ -14,7 +14,7 @@ def urlvector(request):
         urltoks = ['<SAME/PAGE>']
     query = request.query
     if query:
-        keys, values = zip(*[(k, tuple(v)) for k, v in urlparse.parse_qs(query, True).iteritems()])
+        keys, values = zip(*[(k, tuple(v)) for k, v in parse_qs(query, True).iteritems()])
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     return tuple(urltoks)
@@ -27,7 +27,7 @@ def formvector(method, action, inputs, hiddens):
     urltoks.extend([i if i  else '/' for i in action.path.split('/')])
     query = action.query
     if query:
-        keys, values = zip(*[(k, tuple(v)) for k, v in urlparse.parse_qs(action.query, True).iteritems()])
+        keys, values = zip(*[(k, tuple(v)) for k, v in parse_qs(action.query, True).iteritems()])
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     if hiddens:
@@ -39,7 +39,7 @@ def post_request_vector(method, action, inputs, values):
     urltoks = [method] + [i if i  else '/' for i in action.path.split('/')]
     query = action.query
     if query:
-        keys, values = zip(*[(k, tuple(v)) for k, v in urlparse.parse_qs(action.query, True).iteritems()])
+        keys, values = zip(*[(k, tuple(v)) for k, v in parse_qs(action.query, True).iteritems()])
         urltoks.append(tuple(keys))
         urltoks.append(tuple(values))
     if inputs:

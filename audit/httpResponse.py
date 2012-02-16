@@ -24,7 +24,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 import copy
 import re
 import httplib
-from lxml import etree
 
 import outputManager as om
 from urlParser import url_object
@@ -148,6 +147,7 @@ class httpResponse(object):
         
         @return: The DOM, or None if the HTML normalization failed.
         '''
+        raise Exception("WE DON'T HAVE AN HTMLPARSER FOR JYTHON")
         if self._dom is None:
             try:
                 parser = etree.HTMLParser(recover=True)

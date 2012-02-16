@@ -10,7 +10,8 @@ from httpResponse import httpResponse
 from dataContainer import dataContainer
 
 
-import htmlunit
+import com.gargoylesoftware.htmlunit as htmlunit
+import java
 from request import Request
 
 class plugin_wrapper(object):
@@ -40,8 +41,8 @@ class plugin_wrapper(object):
                 w3af_response = response_to_w3af_response(response)
                 self.response_queue.put(w3af_response)
             else:
-                time.sleep(1)                
-            done = self.audit_done.is_set()
+                time.sleep(.0001)                
+            done = self.audit_done.isSet()
 
     def communicate_with_actual(self):
         while True:
@@ -70,7 +71,7 @@ def mutant_to_request(mutant):
 
     method = mutant.getMethod()
 
-    webrequest = htmlunit.WebRequest(htmlunit.URL(url), method_to_htmlunit_http_method(method))
+    webrequest = htmlunit.WebRequest(java.net.URL(url), method_to_htmlunit_http_method(method))
 
     # set the headers
     for header_name, value in headers.iteritems():
@@ -78,7 +79,7 @@ def mutant_to_request(mutant):
 
     # set the data
     if data:
-        v = htmlunit.Vector()
+        v = java.util.Vector()
         for data_name, data_value in data.iteritems():
             data = data_value[0]
             if isinstance(data, str):
@@ -87,7 +88,7 @@ def mutant_to_request(mutant):
                 data = data.encode('ascii', 'ignore')
             else:
                 data = str(data)
-            name_value_pair = htmlunit.NameValuePair(data_name, data)
+            name_value_pair = htmlunit.util.NameValuePair(data_name, data)
             v.add(name_value_pair)
         webrequest.setRequestParameters(v)    
 

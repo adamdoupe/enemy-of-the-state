@@ -4,7 +4,6 @@ from collections import defaultdict, deque, namedtuple
 import errno
 import getopt
 import heapq
-import htmlunit
 import itertools
 import logging
 import math
@@ -12,7 +11,7 @@ import os
 import os.path
 import output
 import pdb
-import pydot
+#import pydot
 import random
 import re
 import shutil
@@ -53,6 +52,8 @@ from abstract_map import AbstractMap
 from pair_counter import PairCounter
 from classifier import Classifier
 
+import java
+import com.gargoylesoftware.htmlunit as htmlunit
 
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "audit"))
 
@@ -78,21 +79,9 @@ RUNNING_AVG_SIZE = 10
 # running htmlunit via JCC will override the signal handlers, so make sure the
 # SIGINT handler is set after starting htmlunit
 #htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true', initialheap='2024m', maxheap='10216m')
-htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true', initialheap='512m', maxheap='2024m')
+#htmlunit.initVM(':'.join([htmlunit.CLASSPATH, '.']), vmargs='-Djava.awt.headless=true', initialheap='512m', maxheap='2024m')
 
 wanttoexit = False
-
-def gracefulexit():
-    global wanttoexit
-    wanttoexit = True
-
-def signalhandler(signum, frame):
-    if wanttoexit:
-        raise KeyboardInterrupt
-    else:
-        gracefulexit()
-
-signal.signal(signal.SIGINT, signalhandler)
 
 def handleError(self, record):
       raise
@@ -914,9 +903,7 @@ class AppGraphGenerator(object):
                     rr.request.changingstate = True
 
 
-
-
-class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
+class DeferringRefreshHandler(htmlunit.ImmediateRefreshHandler):
 
     def __init__(self, refresh_urls=[]):
         super(DeferringRefreshHandler, self).__init__()
@@ -924,10 +911,7 @@ class DeferringRefreshHandler(htmlunit.PythonRefreshHandler):
         self.refresh_urls = refresh_urls
 
     def handleRefresh(self, page, url, seconds):
-        pageUrl = filterIgnoreUrlParts(str(page.getUrl()))
-        rurl = filterIgnoreUrlParts(str(url))
-        self.refresh_urls.append(url)
-
+        pass
 
 class Crawler(object):
 
@@ -950,11 +934,11 @@ class Crawler(object):
         self.webclient = htmlunit.WebClient()
         self.webclient.setThrowExceptionOnScriptError(False);
 
-        self.webclient.setThrowExceptionOnFailingStatusCode(True);
+        self.webclient.setThrowExceptionOnFailingStatusCode(False);
         self.webclient.setUseInsecureSSL(True)
         self.webclient.setRedirectEnabled(False)
+
         self.refresh_urls = []
-        # XXX the refresh handler does not tget called, why?
         self.webclient.setRefreshHandler(DeferringRefreshHandler(self.refresh_urls))
         # last generated RequestResponse object
         self.lastreqresp = None
@@ -980,7 +964,7 @@ class Crawler(object):
 
     def open(self, url):
         del self.refresh_urls[:]
-        htmlpage = htmlunit.HtmlPage.cast_(self.webclient.getPage(url))
+        htmlpage = self.webclient.getPage(url)
         # TODO: handle HTTP redirects, they will throw an exception
         return self.newPage(htmlpage)
 
@@ -997,14 +981,9 @@ class Crawler(object):
             fqurl = lastvalidpage.internal.getFullyQualifiedUrl(redirect.location)
         else:
             fqurl = redirect.location
-        try:
-            page = self.webclient.getPage(fqurl)
-            htmlpage = htmlunit.HtmlPage.cast_(page)
-            reqresp = self.newPage(htmlpage)
-        except htmlunit.JavaError, e:
-            reqresp = self.handleNavigationException(e)
-        except TypeError, e:
-            reqresp = self.handleNavigationException(e)
+
+        page = self.webclient.getPage(fqurl)
+        reqresp = self.reqresp_from_page(page)
 
         redirect.to.append(reqresp)
         return reqresp
@@ -1066,9 +1045,9 @@ class Crawler(object):
             self.logger.info(output.purple("unexpected page"))
             reqresp = self.newHttpError(response)
         else:
-            javaex = e.getJavaException()
-            if htmlunit.FailingHttpStatusCodeException.instance_(javaex):
-                httpex = htmlunit.FailingHttpStatusCodeException.cast_(javaex)
+            javaex = e
+            if isinstance(javaex, htmlunit.FailingHttpStatusCodeException):
+                httpex = javaex
                 strhttpex = filterIgnoreUrlParts(str(httpex))
                 self.logger.info("%s" % strhttpex)
                 statuscode = httpex.getStatusCode()
@@ -1090,17 +1069,25 @@ class Crawler(object):
                 raise
         return reqresp
 
+
+    def reqresp_from_page(self, page):
+        webresponse = page.getWebResponse()
+
+        if isinstance(page, htmlunit.html.HtmlPage):
+            reqresp = self.newPage(page)
+        else:
+            response_code = webresponse.getStatusCode()
+            if response_code == 303 or response_code == 302:
+                reqresp = self.newHttpRedirect(webresponse)
+            else:
+                reqresp = self.newHttpError(webresponse)
+
+        return reqresp
+
     def click(self, anchor):
 
-        try:
-            page = anchor.click()
-            htmlpage = htmlunit.HtmlPage.cast_(page)
-
-            reqresp = self.newPage(htmlpage)
-        except htmlunit.JavaError, e:
-            reqresp = self.handleNavigationException(e)
-        except TypeError, e:
-            reqresp = self.handleNavigationException(e)
+        generic_page = anchor.click()
+        reqresp = self.reqresp_from_page(generic_page)
         anchor.to.append(reqresp)
         return reqresp
 
@@ -1115,28 +1102,26 @@ class Crawler(object):
 
         for k, vv in params.iteritems():
             for i, v in zip(iform.getInputsByName(k), vv):
-                if htmlunit.HtmlCheckBoxInput.instance_(i):
+                if isinstance(i, htmlunit.html.HtmlCheckBoxInput):
                     if v:
                         # XXX if we really care, we should move the value of input checkboxes into the key name
                         #assert i.getValueAttribute() == v
                         i.setChecked(True)
                     else:
                         i.setChecked(False)
-                elif htmlunit.HtmlSubmitInput.instance_(i):
+                elif isinstance(i, htmlunit.html.HtmlSubmitInput):
                     pass
                 else:
                     i.setValueAttribute(v)
 
             for i, v in zip(iform.getTextAreasByName(k), vv):
-                textarea = htmlunit.HtmlTextArea.cast_(i)
+                textarea = i
                 textarea.setText(v)
 
 
     @staticmethod
     def getInternalSubmitter(iform, submitter):
-        isubmitters = list(htmlunit.HtmlElement.cast_(i)
-                for i in iform.getElementsByAttribute(
-                submitter.tag, "type", submitter.type.lower()))
+        isubmitters = list(i for i in iform.getElementsByAttribute(submitter.tag, "type", submitter.type.lower()))
         if len(isubmitters) == 0:
             return None
         if len(isubmitters) == 1:
@@ -1150,6 +1135,7 @@ class Crawler(object):
                             i.getAttribute("value").encode('ascii', 'ignore') == submitter.value):
                     assert isubmitter is None
                     isubmitter = i
+                    break
             assert isubmitter
         return isubmitter
 
@@ -1164,36 +1150,30 @@ class Crawler(object):
 
         self.fillForm(iform, params, self.logger)
 
-        try:
-            # TODO: explore clickable regions in input type=image
-            submitter = params.submitter
-            if submitter is None:
-                if not form.submittables:
-                    self.logger.warn("no submittable item found for form %s %r",
-                            form.method,
-                            form.action)
-                    raise Crawler.UnsubmittableForm()
-                submitter = form.submittables[0]
-
-            isubmitter = self.getInternalSubmitter(iform, submitter)
-
-            attrs = list(iform.getAttributesMap().keySet())
-
-            page = isubmitter.click()
-            htmlpage = htmlunit.HtmlPage.cast_(page)
-            if htmlpage == self.lastreqresp.response.page.internal:
-                # submit did not work
-                self.logger.warn("unable to submit form %s %r in page",
-                        form.method,
-                        form.action)
+        # TODO: explore clickable regions in input type=image
+        submitter = params.submitter
+        if submitter is None:
+            if not form.submittables:
+                self.logger.warn("no submittable item found for form %s %r",
+                                 form.method,
+                                 form.action)
                 raise Crawler.UnsubmittableForm()
+            submitter = form.submittables[0]
 
-            reqresp = self.newPage(htmlpage)
+        isubmitter = self.getInternalSubmitter(iform, submitter)
 
-        except htmlunit.JavaError, e:
-            reqresp = self.handleNavigationException(e)
-        except TypeError, e:
-            reqresp = self.handleNavigationException(e)
+        attrs = list(iform.getAttributesMap().keySet())
+
+        page = isubmitter.click()
+        htmlpage = page
+        if htmlpage == self.lastreqresp.response.page.internal:
+            # submit did not work
+            self.logger.warn("unable to submit form %s %r in page",
+                             form.method,
+                             form.action)
+            raise Crawler.UnsubmittableForm()
+
+        reqresp = self.reqresp_from_page(page)
 
         reqresp.request.formparams = params
         form.to.append(reqresp)
@@ -1218,7 +1198,7 @@ class Crawler(object):
                 if len(link.hrefs) == 1:
                     href = iter(link.hrefs).next()
             if href and not href.strip().lower().startswith("javascript:"):
-                    url = htmlunit.URL(page.internal.getWebRequest().getUrl(),
+                    url = java.net.URL(page.internal.getWebRequest().getUrl(),
                             href)
                     return htmlunit.WebRequest(url)
         assert not isinstance(link, AbstractForm)
@@ -1235,8 +1215,7 @@ class Crawler(object):
             # XXX no garantee link.forms[0] is a good one
             form = link.forms[0]
             for f in formfiller.get(link.elemset, form):
-                iform = htmlunit.HtmlForm.cast_(
-                        page.links[idx].internal.cloneNode(True))
+                iform = page.links[idx].internal.cloneNode(True)
                 self.fillForm(iform, f, self.logger)
 
                 if f.submitter is None:
@@ -1254,7 +1233,7 @@ class Crawler(object):
                     # couldn't find a submit button, skip creating this form.
                     continue
                 newreq = iform.getWebRequest(isubmitter)
-                if htmlunit.HtmlImageInput.instance_(isubmitter):
+                if isinstance(isubmitter, htmlunit.html.HtmlImageInput):
                     url = newreq.getUrl()
                     urlstr = url.getPath()
                     if urlstr.find('?') == -1:
@@ -1267,7 +1246,7 @@ class Crawler(object):
                             urlstr = urlstr[:-2]
                         urlstr += '&'
                     urlstr += "x=0&y=0"
-                    newurl = htmlunit.URL(url, urlstr)
+                    newurl = java.net.URL(url, urlstr)
                     newreq.setUrl(newurl)
                 newrequests.append(newreq)
                 requestparams.append(f)
@@ -1746,7 +1725,7 @@ class Engine(object):
         """
         This function returns true if we should continue looking for links, false otherwise
         """
-        c = 2
+        c = 4
 
         return (self.since_last_ar_change <= (c * self.last_ap_pages)) and (self.num_requests < 1800)
 
@@ -1845,8 +1824,8 @@ class Engine(object):
                 self.logger.info("%s", reqresp)
                 try:
                     if nextAction[0] == Engine.Actions.FORM or sinceclustered > 15:
-                        # do not even try to merge forms
-                        raise PageMergeException()
+                         # do not even try to merge forms
+                         raise PageMergeException()
                     self.state = self.tryMergeInGraph(reqresp)
                     maxstate += 1
                     self.logger.info(output.green("estimated current state %d (%d)"), self.state, maxstate)
@@ -1855,6 +1834,10 @@ class Engine(object):
                     self.logger.info("need to recompute graph")
                     sinceclustered = 0
                     statechangescores = self.cluster_everything(statechangescores)
+                    # Assume that a form submission changed the state, until we recluster and discover otherwise
+                    # if nextAction[0] == Engine.Actions.FORM:
+                    #     self.state = maxstate
+
 
                 self.num_requests += 1
                 
@@ -1891,18 +1874,19 @@ class Engine(object):
         plugins = [plugin_wrapper(getattr(ap,name)) for ap, name in audit_plugins]
 
         self.fuzzing_web_client = htmlunit.WebClient()
+        self.fuzzing_web_client.setRefreshHandler(DeferringRefreshHandler())
         self.fuzzing_web_client.setThrowExceptionOnScriptError(False);
 
-        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(True);
+        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(False);
         self.fuzzing_web_client.setUseInsecureSSL(True)
         self.fuzzing_web_client.setRedirectEnabled(False)
         self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(False);
 
         # WE'RE GOING TO FUCKING TEST THE SHIT OUT OF THIS MEMORY LEAK
-        last_request = reqresp
+        # last_request = reqresp
 
-        while True:
-            self.reset_until(last_request)
+        # while True:
+        #     self.reset_until(last_request)
 
 
         # Go through the requests and uniquely fuzz them
@@ -2003,6 +1987,7 @@ class Engine(object):
 
 
         self.fuzzing_web_client = htmlunit.WebClient()
+        self.fuzzing_web_client.setRefreshHandler(DeferringRefreshHandler())
         self.fuzzing_web_client.setThrowExceptionOnScriptError(False)
 
         self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(True)
@@ -2044,10 +2029,10 @@ class Engine(object):
         generic_page = self.fuzzing_web_client.getPage(new_req.webrequest)
         htmlpage = None
         try:
-            htmlpage = htmlunit.HtmlPage.cast_(generic_page)
+            htmlpage = generic_page
         except:
             pass
-        if htmlpage:
+        if isinstance(htmlpage, htmlunit.html.HtmlPage):
             page = Page(htmlpage, initial_url=self.cr.initial_url, webclient=self.fuzzing_web_client)
         else:
             page = Page(generic_page.getWebResponse(), error=True, initial_url=self.cr.initial_url, webclient=self.fuzzing_web_client)
@@ -2166,9 +2151,9 @@ class Engine(object):
             return
 
         self.logger.info("creating state DOT graph")
-        dot = pydot.Dot()
-        nodes = ParamDefaultDict(lambda x: pydot.Node(str(x)))
 
+        nodes = {}
+        
         for p in self.ag.allabsrequests:
             for s, t in p.targets.iteritems():
                 if s != t.transition:
@@ -2177,19 +2162,85 @@ class Engine(object):
                         requestset = requestset[:5]
                         
                     name = str('\\n'.join(requestset))
-                    
-                    edge = pydot.Edge(nodes[s], nodes[t.transition])
-                    edge.set_label(name)
-                    dot.add_edge(edge)
 
+                    initial_state = str(s)
+                    transition = str(t.transition)
+                    nodes[(initial_state, transition)] = name
 
-        for n in nodes.itervalues():
-            dot.add_node(n)
-
-        dot.write_ps('stategraph.ps')
         f = open('stategraph.dot', 'w')
-        f.write(dot.to_string())
+        f.write("digraph G {\n")
+
+        for (states, request_names) in nodes.iteritems():
+            initial_state = states[0]
+            transition = states[1]
+            f.write(initial_state)
+            f.write(" -> ")
+            f.write(transition)
+            f.write(" [label=")
+            f.write(quote_if_necessary(request_names))
+            f.write("];\n")
+            
+        f.write("}\n")
+
         f.close()
+
+dot_keywords = ['graph', 'subgraph', 'digraph', 'node', 'edge', 'strict']
+
+id_re_alpha_nums = re.compile('^[_a-zA-Z][a-zA-Z0-9_:,]*$')
+id_re_num = re.compile('^[0-9,]+$')
+id_re_with_port = re.compile('^([^:]*):([^:]*)$')
+id_re_dbl_quoted = re.compile('^\".*\"$', re.S)
+id_re_html = re.compile('^<.*>$', re.S)
+
+
+def needs_quotes( s ):
+    """Checks whether a string is a dot language ID.
+    
+    It will check whether the string is solely composed
+    by the characters allowed in an ID or not.
+    If the string is one of the reserved keywords it will
+    need quotes too.
+    """
+        
+    if s in dot_keywords:
+        return False
+
+    chars = [ord(c) for c in s if ord(c)>0x7f or ord(c)==0]
+    if chars and not id_re_dbl_quoted.match(s):
+        return True
+        
+    for test in [id_re_alpha_nums, id_re_num, id_re_dbl_quoted, id_re_html]:
+        if test.match(s):
+            return False
+
+    m = id_re_with_port.match(s)
+    if m:
+        return needs_quotes(m.group(1)) or needs_quotes(m.group(2))
+
+    return True
+
+
+def quote_if_necessary(s):
+
+    if isinstance(s, bool):
+        if s is True:
+            return 'True'
+        return 'False'
+
+    if not isinstance( s, basestring ):
+        return s
+
+    if needs_quotes(s):
+        replace = {'"'  : r'\"',
+                   "\n" : r'\n',
+                   "\r" : r'\r'}
+        for (a,b) in replace.items():
+            s = s.replace(a, b)
+
+        return '"' + s + '"'
+     
+    return s   
+
 
 
 def writeColorableStateGraph(allstates, differentpairs):
@@ -2275,7 +2326,6 @@ if __name__ == "__main__":
     finally:
         pass
     print kb.kb.getAllVulns()
-    sys.exit(0)
 
 
 # vim:sw=4:et:

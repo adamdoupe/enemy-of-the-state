@@ -1,4 +1,4 @@
-import htmlunit
+import com.gargoylesoftware.htmlunit as htmlunit
 
 class FakeHtmlUnitAnchor(object):
 
@@ -28,7 +28,7 @@ class FakeHtmlUnitAnchor(object):
         return self.href
 
     def click(self):
-        return htmlunit.HtmlPage.cast_(self.webclient.getPage(self.href))
+        return self.webclient.getPage(self.href)
 
     def getCanonicalXPath(self):
         return self.dom

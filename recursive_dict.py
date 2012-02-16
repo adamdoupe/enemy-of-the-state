@@ -12,11 +12,7 @@ class RecursiveDict(defaultdict):
         # XXX no more general :(
         self.abspages = {}
         self.value = None
-
-    def __missing__(self, key):
-        v = RecursiveDict(nleavesfunc=self.nleavesfunc, nleavesaggregator=self.nleavesaggregator)
-        self.__setitem__(key, v)
-        return v
+        defaultdict.__init__(self, lambda : RecursiveDict(nleavesfunc=self.nleavesfunc, nleavesaggregator=self.nleavesaggregator))
 
     @property
     def nleaves(self):

@@ -1,4 +1,5 @@
-import htmlunit
+import com.gargoylesoftware.htmlunit as htmlunit
+import java
 
 from lazyproperty import lazyproperty
 from anchor import Anchor, AbstractAnchor
@@ -47,7 +48,7 @@ class Page(object):
     def redirects(self):
         if self.redirect:
             redirect_location = self.internal.getResponseHeaderValue("Location")
-            redirect_url = htmlunit.URL(self.reqresp.request.webrequest.getUrl(), redirect_location).toString()
+            redirect_url = java.net.URL(self.reqresp.request.webrequest.getUrl(), redirect_location).toString()
             if redirect_url == self.reqresp.request.webrequest.getUrl().toString():
                 redirect_url = self.initial_url
             return [Redirect(redirect_url, self.reqresp)]
@@ -73,7 +74,7 @@ class Page(object):
 
     @lazyproperty
     def isHtmlPage(self):
-        return htmlunit.HtmlPage.instance_(self.internal)
+        return isinstance(self.internal, htmlunit.html.HtmlPage)
 
 from collections import defaultdict
 from abstract_links import AbstractLinks

@@ -65,8 +65,8 @@ class xss(baseAuditPlugin):
         '''
         om.out.debug( 'Xss plugin is testing: ' + freq.getURL() )
         
-        # Save it here, so I can search for permanent XSS
-        self._fuzzableRequests.append( freq )
+        # Save it here, so I can search for permanent XSS We never call end, so don't worry about this shit
+        #self._fuzzableRequests.append( freq )
         
         # This list is just to test if the parameter is echoed back
         fake_mutants = createMutants( freq , ['', ] )

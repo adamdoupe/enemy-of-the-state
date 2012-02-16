@@ -1,5 +1,5 @@
 import urlparse
-import htmlunit
+import com.gargoylesoftware.htmlunit as htmlunit
 
 from lazyproperty import lazyproperty
 from ignore_urls import filterIgnoreUrlParts
@@ -75,7 +75,7 @@ class Form(Link):
         elif tag == FormField.Tag.TEXTAREA:
             type = None
             name = e.getAttribute('name').encode('ascii', 'ignore')
-            textarea = htmlunit.HtmlTextArea.cast_(e)
+            textarea = e
             value = textarea.getText()
         elif tag == FormField.Tag.BUTTON and \
                 e.getAttribute('type').upper() == FormField.Type.SUBMIT:
@@ -113,21 +113,21 @@ class Form(Link):
     @lazyproperty
     def inputs(self):
         return [self.buildFormField(e)
-                for e in (htmlunit.HtmlElement.cast_(i)
+                for e in (i
                     for i in self.internal.getHtmlElementsByTagName('input'))
                 if e.getAttribute('type').lower() not in ["hidden", "button", "submit"] ]
 
     @lazyproperty
     def hiddens(self):
         return [self.buildFormField(e)
-                for e in (htmlunit.HtmlElement.cast_(i)
+                for e in (i
                     for i in self.internal.getHtmlElementsByTagName('input'))
                 if e.getAttribute('type').lower() == "hidden"]
 
     @lazyproperty
     def textareas(self):
         return [self.buildFormField(e)
-                for e in (htmlunit.HtmlElement.cast_(i)
+                for e in (i
                     for i in self.internal.getHtmlElementsByTagName('textarea'))]
 
     @lazyproperty
@@ -142,12 +142,11 @@ class Form(Link):
             try:
                 submitters = self.internal.getElementsByAttribute(*submittable)
 
-                result.extend(self.buildFormField(
-                    htmlunit.HtmlElement.cast_(i)) for i in submitters)
+                result.extend(self.buildFormField(i) for i in submitters)
 
-            except htmlunit.JavaError, e:
-                javaex = e.getJavaException()
-                if not htmlunit.ElementNotFoundException.instance_(javaex):
+            except java.lang.Exception, e:
+                javaex = e
+                if not isinstance(javaex, htmlunit.ElementNotFoundException):
                     raise
                 continue
         return result

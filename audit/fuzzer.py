@@ -36,7 +36,6 @@ from w3afException import w3afException
 # The data containers
 from cookie import cookie as cookie
 from dataContainer import dataContainer as dc
-import simplejson as json
 
 from httpPostDataRequest import httpPostDataRequest
 from httpQsRequest import httpQsRequest

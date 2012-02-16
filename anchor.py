@@ -1,5 +1,5 @@
 import urlparse
-import htmlunit
+import com.gargoylesoftware.htmlunit as htmlunit
 
 from lazyproperty import lazyproperty
 from link import Link, Links, AbstractLink
@@ -31,7 +31,7 @@ class Anchor(Link):
         if isinstance(self.internal, FakeHtmlUnitAnchor):
             return self.internal.click()
         else:
-            element = htmlunit.HtmlElement.cast_(self.internal)
+            element = self.internal
             return element.click(False, False, False, False)
 
     @lazyproperty
