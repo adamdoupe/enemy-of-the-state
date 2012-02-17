@@ -1150,6 +1150,7 @@ class Crawler(object):
                             i.getAttribute("value").encode('ascii', 'ignore') == submitter.value):
                     assert isubmitter is None
                     isubmitter = i
+                    break
             assert isubmitter
         return isubmitter
 
@@ -1746,7 +1747,7 @@ class Engine(object):
         """
         This function returns true if we should continue looking for links, false otherwise
         """
-        c = 2
+        c = 4
 
         return (self.since_last_ar_change <= (c * self.last_ap_pages)) and (self.num_requests < 1800)
 
