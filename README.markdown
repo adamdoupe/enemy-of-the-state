@@ -73,5 +73,9 @@ may be wrong.
 * -d <dumpdir> - Directory to dump all the HTTP requests and
    responses. Can take up a lot of space.
 
+## Credits
+
+The fuzzing components are taken from [w3af](http://w3af.sourceforge.net/).
+
 
 
