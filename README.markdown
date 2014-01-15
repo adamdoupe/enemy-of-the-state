@@ -47,7 +47,21 @@ may be wrong.
 
 ### jython
 
-* Install jython.
+* Packages to install
+
+Here are the ubuntu packages to install:
+openjdk-7-jre-headless jython
+
+* _Important note_
+
+Your java version must be OpenJDK IcedTea >= 2.3.12 and Jython >= 2.5.2.
+
+The jython version _does not work in Ubuntu 12.04._ However, it does
+work in Ubuntu 13.10. I'm not sure why it doesn't work, and at this
+point it's not worth spending the time to investigate further.
+
+* Switch to the jython git branch
+  git checkout jython
 
 * Run the following command to tell jython to use the following
   htmlunit jars:
