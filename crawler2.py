@@ -59,7 +59,8 @@ sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "audit
 
 print sys.path
 
-audit_plugins_names = ['xss', 'sqli', 'remoteFileInclude', 'osCommanding', 'localFileInclude', 'eval', 'blindSqli']
+# there are problems with the blindSqli-plugin
+audit_plugins_names = ['xss', 'sqli', 'remoteFileInclude', 'osCommanding', 'localFileInclude', 'eval'] #'blindSqli']
 audit_plugins = map((lambda x:(__import__(x), x)), audit_plugins_names)
 
 from plugin_wrapper import plugin_wrapper
@@ -932,11 +933,22 @@ class Crawler(object):
         self.initial_url = None
 
         self.webclient = htmlunit.WebClient()
-        self.webclient.setThrowExceptionOnScriptError(False);
 
-        self.webclient.setThrowExceptionOnFailingStatusCode(False);
-        self.webclient.setUseInsecureSSL(True)
-        self.webclient.setRedirectEnabled(False)
+        # new syntax for htmlunit 2.36
+        options = htmlunit.WebClient.getOptions(self.webclient)
+
+        # seems to work as well as
+        # options = self.webclient.getOptions()
+
+        options.setThrowExceptionOnScriptError(False)
+
+        options.setThrowExceptionOnFailingStatusCode(False)
+        options.setUseInsecureSSL(True)
+        options.setRedirectEnabled(False)
+
+        # optional addition for silencing CSS errors and ignoring JavaScript:
+        # self.webclient.setCssErrorHandler(htmlunit.SilentCssErrorHandler())
+        # options.setJavaScriptEnabled(False)
 
         self.refresh_urls = []
         self.webclient.setRefreshHandler(DeferringRefreshHandler(self.refresh_urls))
@@ -1121,7 +1133,7 @@ class Crawler(object):
 
     @staticmethod
     def getInternalSubmitter(iform, submitter):
-        isubmitters = list(i for i in iform.getElementsByAttribute(submitter.tag, "type", submitter.type.lower()))
+        isubmitters = list(i for i in iform.getElementsByAttribute(submitter.tag, "type", submitter.type.lower())) + list(i for i in iform.getLostChildren())
         if len(isubmitters) == 0:
             return None
         if len(isubmitters) == 1:
@@ -1164,7 +1176,8 @@ class Crawler(object):
 
         attrs = list(iform.getAttributesMap().keySet())
 
-        page = isubmitter.click()
+        # parameters needed to tell htmlunit to ignore visibility of button
+        page = isubmitter.click(False, False, False, False, True, False)
         htmlpage = page
         if htmlpage == self.lastreqresp.response.page.internal:
             # submit did not work
@@ -1874,13 +1887,20 @@ class Engine(object):
         plugins = [plugin_wrapper(getattr(ap,name)) for ap, name in audit_plugins]
 
         self.fuzzing_web_client = htmlunit.WebClient()
-        self.fuzzing_web_client.setRefreshHandler(DeferringRefreshHandler())
-        self.fuzzing_web_client.setThrowExceptionOnScriptError(False);
+        # new syntax for htmlunit 2.36
+        fuzzing_options = htmlunit.WebClient.getOptions(self.fuzzing_web_client)
 
-        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(False);
-        self.fuzzing_web_client.setUseInsecureSSL(True)
-        self.fuzzing_web_client.setRedirectEnabled(False)
-        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(False);
+        self.fuzzing_web_client.setRefreshHandler(DeferringRefreshHandler())
+
+        fuzzing_options.setThrowExceptionOnScriptError(False);
+
+        fuzzing_options.setThrowExceptionOnFailingStatusCode(False);
+        fuzzing_options.setUseInsecureSSL(True)
+        fuzzing_options.setRedirectEnabled(False)
+        fuzzing_options.setThrowExceptionOnFailingStatusCode(False);
+
+        # optional addition to ignore JavaScript
+        # fuzzing_options.setJavaScriptEnabled(False)
 
         # WE'RE GOING TO FUCKING TEST THE SHIT OUT OF THIS MEMORY LEAK
         # last_request = reqresp
@@ -1957,8 +1977,7 @@ class Engine(object):
                         except StopIteration:
                             pass
                 else:
-                    print "SKIPPING", 
-                requests_states_already_fuzzed.add((cur_reqresp.request.signature_vector, cur_state))
+                    print "SKIPPING", requests_states_already_fuzzed.add((cur_reqresp.request.signature_vector, cur_state))
 
                 # Make the actual request
                 self.send_fuzzing_request(cur_reqresp.request)
@@ -1982,18 +2001,25 @@ class Engine(object):
         return toReturn
 
     def reset_until(self, reqresp):
-        
-        self.fuzzing_web_client.closeAllWindows()
 
+        # new method for htnmlunit 2.36
+        self.fuzzing_web_client.close()
 
         self.fuzzing_web_client = htmlunit.WebClient()
-        self.fuzzing_web_client.setRefreshHandler(DeferringRefreshHandler())
-        self.fuzzing_web_client.setThrowExceptionOnScriptError(False)
+        # new syntax for htmlunit 2.36
+        fuzzing_options = htmlunit.WebClient.getOptions(self.fuzzing_web_client)
 
-        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(True)
-        self.fuzzing_web_client.setUseInsecureSSL(True)
-        self.fuzzing_web_client.setRedirectEnabled(False)
-        self.fuzzing_web_client.setThrowExceptionOnFailingStatusCode(False)
+        self.fuzzing_web_client.setRefreshHandler(DeferringRefreshHandler())
+
+        fuzzing_options.setThrowExceptionOnScriptError(False);
+
+        fuzzing_options.setThrowExceptionOnFailingStatusCode(False);
+        fuzzing_options.setUseInsecureSSL(True)
+        fuzzing_options.setRedirectEnabled(False)
+        fuzzing_options.setThrowExceptionOnFailingStatusCode(False);
+
+        # optional addition to ignore JavaScript
+        # fuzzing_options.setJavaScriptEnabled(False)
 
         self.reset_web_application()
         cur_reqresp = self.cr.headreqresp

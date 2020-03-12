@@ -32,7 +32,8 @@ class Anchor(Link):
             return self.internal.click()
         else:
             element = self.internal
-            return element.click(False, False, False, False)
+            # parameters needed to tell htmlunit to ignore visibility of button
+            return element.click(False, False, False, False, True, False)
 
     @lazyproperty
     def _str(self):

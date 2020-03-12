@@ -7,11 +7,13 @@ class FormField(object):
 
     Type = Constants("CHECKBOX", "TEXT", "PASSWORD", "HIDDEN", "SUBMIT", "IMAGE", "FILE", "BUTTON", "OTHER")
 
-    def __init__(self, tag, type, name, value=None):
+    def __init__(self, tag, type, name, value=None, placeholder=False):
         self.tag = tag
         self.type = type
         self.name = name
         self.value = value
+        # new html element attribute
+        self.placeholder = placeholder
 
     def __str__(self):
         return self._str

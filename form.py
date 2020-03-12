@@ -46,7 +46,8 @@ class Form(Link):
 
     @lazyproperty
     def elems(self):
-        return self.inputs + self.textareas + self.selects + self.submittables
+        # extension of elements by lost inputs due to incorrect html code
+        return self.inputs + self.textareas + self.selects + self.submittables + self.lost_inputs
 
     def buildFormField(self, e):
         tag = e.getTagName().upper()
@@ -54,6 +55,8 @@ class Form(Link):
             etype = e.getAttribute('type').lower()
             name = e.getAttribute('name').encode('ascii', 'ignore')
             value = e.getAttribute('value').encode('ascii', 'ignore')
+            # value of placeholder is irrelevant for FormFilling, so a boolean sufficients
+            placeholder = e.hasAttribute("placeholder")
             if etype == "hidden":
                 type = FormField.Type.HIDDEN
             elif etype == "text":
@@ -77,11 +80,15 @@ class Form(Link):
             name = e.getAttribute('name').encode('ascii', 'ignore')
             textarea = e
             value = textarea.getText()
+            # new html element attribute
+            placeholder = False
         elif tag == FormField.Tag.BUTTON and \
                 e.getAttribute('type').upper() == FormField.Type.SUBMIT:
             type = FormField.Type.SUBMIT
             name = e.getAttribute('name').encode('ascii', 'ignore')
             value = e.getAttribute('value').encode('ascii', 'ignore')
+            # new html element attribute
+            placeholder = False
         else:
             raise RuntimeError("unexpcted form field tag %s" % tag)
 
@@ -91,7 +98,7 @@ class Form(Link):
             if a.startswith("on") or a == "target":
                 e.removeAttribute(a)
 
-        return FormField(tag, type, name, value)
+        return FormField(tag, type, name, value, placeholder)
 
 
     @lazyproperty
@@ -112,23 +119,35 @@ class Form(Link):
 
     @lazyproperty
     def inputs(self):
+        # getHtmlElementsByTagName changed to a htmlunit 2.36 method
         return [self.buildFormField(e)
                 for e in (i
-                    for i in self.internal.getHtmlElementsByTagName('input'))
+                    for i in self.internal.getElementsByTagName('input'))
                 if e.getAttribute('type').lower() not in ["hidden", "button", "submit"] ]
 
     @lazyproperty
-    def hiddens(self):
+    def lost_inputs(self):
+        # in case of incorrect HTML code
+        """This method will find the form elements that may be submitted but that do not belong to the forms children in the DOM.
+        See also http://htmlunit.sourceforge.net/apidocs/com/gargoylesoftware/htmlunit/html/HtmlForm.html"""
         return [self.buildFormField(e)
                 for e in (i
-                    for i in self.internal.getHtmlElementsByTagName('input'))
+                          for i in self.internal.getLostChildren())]
+
+    @lazyproperty
+    def hiddens(self):
+        # getHtmlElementsByTagName changed to a htmlunit 2.36 method
+        return [self.buildFormField(e)
+                for e in (i
+                    for i in self.internal.getElementsByTagName('input'))
                 if e.getAttribute('type').lower() == "hidden"]
 
     @lazyproperty
     def textareas(self):
+        # getHtmlElementsByTagName changed to a htmlunit 2.36 method
         return [self.buildFormField(e)
                 for e in (i
-                    for i in self.internal.getHtmlElementsByTagName('textarea'))]
+                    for i in self.internal.getElementsByTagName('textarea'))]
 
     @lazyproperty
     def selects(self):
@@ -140,7 +159,8 @@ class Form(Link):
         result = []
         for submittable in Form.SUBMITTABLES:
             try:
-                submitters = self.internal.getElementsByAttribute(*submittable)
+                # also lost children can be submittable
+                submitters = self.internal.getElementsByAttribute(*submittable) + [i for i in self.internal.getLostChildren() if i.getAttribute("type") == "submit"]
 
                 result.extend(self.buildFormField(i) for i in submitters)
 

@@ -116,6 +116,12 @@ class FormFiller(object):
                     value = password
                 elif f.type == FormField.Type.FILE:
                     value = "blank.jpg"
+                # the placeholder attribute is fillable
+                elif f.placeholder:
+                    if f.name in self.namedparams:
+                        value = self.namedparams[f.name]
+                    else:
+                        value = FormFiller.rng.getWords()
             elif f.tag == FormField.Tag.TEXTAREA:
                 if f.name in self.namedparams:
                     value = self.namedparams[f.name]
@@ -123,7 +129,7 @@ class FormFiller(object):
                     value = FormFiller.rng.getWords(10)
             res[f.name].extend(utils.string_or_list_into_list(value))
         if samepass and not multiplepass:
-            # if we were asked to use the same password, but there were no muitple password fields, return None
+            # if we were asked to use the same password, but there were no multiple password fields, return None
             return None
         res.submitter = submitter
         return res
